@@ -5,8 +5,8 @@ standorte <- read.csv("https://docs.google.com/spreadsheets/d/e/2PACX-1vSrcomkkw
 graswachstum <- read.csv(
   "https://docs.google.com/spreadsheets/d/e/2PACX-1vSrcomkkwzl7-XESOTZLhk0XOCQMq5cz1kkcMif7sl8PGybv_nHK8ite3eMM_-UKLKC1hHEHVHlx_lc/pub?gid=513247593&single=true&output=csv"
   ) %>% 
-  select(Standort, Erhebungsdatum, Graswachstum..kg.TS.ha.Tag.) %>% 
-  rename(growth=Graswachstum..kg.TS.ha.Tag., date=Erhebungsdatum, place=Standort)
+  select(Standort, Erhebungsdatum, Graswachstum..kg.TS.ha.Tag., AFC.Average.Farm.Cover.AFC..kg.TS.ha.) %>% 
+  rename(growth=Graswachstum..kg.TS.ha.Tag., afc=AFC.Average.Farm.Cover.AFC..kg.TS.ha.,date=Erhebungsdatum, place=Standort)
 standardkurven <- read.csv("https://docs.google.com/spreadsheets/d/e/2PACX-1vSrcomkkwzl7-XESOTZLhk0XOCQMq5cz1kkcMif7sl8PGybv_nHK8ite3eMM_-UKLKC1hHEHVHlx_lc/pub?gid=1040229080&single=true&output=csv") 
 
 
@@ -16,6 +16,31 @@ daten <- daten %>% mutate(Ort = factor(Ort))
 
 daten$date <- as.Date(daten$date,format="%d.%m.%Y")
 daten$weeknum <- as.integer(strftime(daten$date, format = '%V'))
+
+
+
+today <- Sys.Date()
+week <- as.integer(strftime(today, format = "%V"))
+#week <- 17
+weeks <- c(week, week-1)
+weeks <- c(week, week-1)
+daten$daysold <- today - daten$date
+#weeks <- c(week)
+
+
+currentdaten <- daten  %>% group_by(place) %>%
+  filter(daysold < 15) %>% 
+  group_by(place) %>%
+  filter(date == max(date))
+
+
+maxdaten <- currentdaten  
+
+Jahr <- strftime(maxdaten$date[1], format = "%Y")
+#Datum <- as.Date(week, format="%V")
+Datum = ""
+Kalenderwoche <- paste("KW ",week,Datum,sep="") 
+
 
 #daten_std <- standardkurven %>% mutate(place="Durchschnitt_", p)
   
