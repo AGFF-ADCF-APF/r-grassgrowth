@@ -7,6 +7,11 @@ curvefile_ftp <- paste0("Graswachstumskurve_", Jahr, ".svg")
 curvefile_plotly_ftp <- paste0("Graswachstumskurve_ohneLegende_", Jahr, ".html")
 
 
+## configure your own ftp settings
+#ftpserver <- ""
+#ftpuser <- ""
+#ftppasswd <- kb$get("")
+
 #weeknum
 ftpurl <- paste("ftp://",ftpuser,":",ftppasswd,"@",ftpserver,"/archive/",mapfile_ftp,sep="")
 ftpUpload(mapfile,ftpurl)
