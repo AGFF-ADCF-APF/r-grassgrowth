@@ -7,7 +7,7 @@ graswachstum <- read.csv(
   ) %>% 
   select(Standort, Erhebungsdatum, Graswachstum..kg.TS.ha.Tag., AFC.Average.Farm.Cover.AFC..kg.TS.ha.) %>% 
   rename(growth=Graswachstum..kg.TS.ha.Tag., afc=AFC.Average.Farm.Cover.AFC..kg.TS.ha.,date=Erhebungsdatum, place=Standort)
-standardkurven <- read.csv("https://docs.google.com/spreadsheets/d/e/2PACX-1vSrcomkkwzl7-XESOTZLhk0XOCQMq5cz1kkcMif7sl8PGybv_nHK8ite3eMM_-UKLKC1hHEHVHlx_lc/pub?gid=1040229080&single=true&output=csv") 
+standardkurven <- read.csv("https://docs.google.com/spreadsheets/d/e/2PACX-1vSrcomkkwzl7-XESOTZLhk0XOCQMq5cz1kkcMif7sl8PGybv_nHK8ite3eMM_-UKLKC1hHEHVHlx_lc/pubhtml?gid=513247593&single=true") 
 
 
 # Kombinieren Sie Standortdaten und Graswachstumsdaten
