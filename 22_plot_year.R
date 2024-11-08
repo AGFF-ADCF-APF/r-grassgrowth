@@ -59,8 +59,19 @@ grassgrowth_curve <- ggplot(daten, aes(x = weeknum, y = growth, color = Ort)) +
   theme(legend.position = "right")
 
 grassgrowth_curve
-curvefile_simple <- paste("outputs/Graswachstumskurve_ohneLegende_", Jahr, ".svg", sep="")
+curvefile_simple <- paste0("outputs/Graswachstumskurve_ohneLegende_", Jahr, ".svg")
 ggsave(file=curvefile_simple, width=10, height=7.5)
+
+
+# plotly -----------------
+library(tidyr)
+library(plotly);
+library(htmlwidgets);
+
+# Save ggplotly as widget in file test.html
+curvefile_plotly <- paste0("outputs/Graswachstumskurve_ohneLegende_", Jahr, ".html")
+
+saveWidget(ggplotly(grassgrowth_curve), file = curvefile_plotly);
 
 
 #fstr(daten)

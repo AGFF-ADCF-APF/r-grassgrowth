@@ -1,9 +1,10 @@
 
 library(RCurl)
 
-mapfile_ftp <- paste("Graswachstumkarte_", Jahr, "KW",week, ".svg", sep="")
-mapfile_current_ftp <- paste("Graswachstumskarte_aktuell", ".svg", sep="")
-curvefile_ftp <- paste("Graswachstumskurve_", Jahr, ".svg", sep="")
+mapfile_ftp <- paste0("Graswachstumkarte_", Jahr, "KW",week, ".svg")
+mapfile_current_ftp <- paste0("Graswachstumskarte_aktuell", ".svg")
+curvefile_ftp <- paste0("Graswachstumskurve_", Jahr, ".svg")
+curvefile_plotly_ftp <- paste0("Graswachstumskurve_ohneLegende_", Jahr, ".html")
 
 
 ftpserver <- "w006fba4.kasserver.com"
@@ -20,4 +21,8 @@ ftpUpload(mapfile,ftpurl)
 #curves
 ftpurl <- paste("ftp://",ftpuser,":",ftppasswd,"@",ftpserver,"/",curvefile_ftp,sep="")
 ftpUpload(curvefile,ftpurl)
+
+#curves
+ftpurl <- paste("ftp://",ftpuser,":",ftppasswd,"@",ftpserver,"/",curvefile_plotly_ftp,sep="")
+ftpUpload(curvefile_plotly,ftpurl)
 

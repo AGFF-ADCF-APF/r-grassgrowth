@@ -9,6 +9,8 @@ library(plotly)
 library(packcircles)
 
 
+data(shp_sf)
+
 swk_shp <- shp_sf[["g1k15"]] %>%
   st_as_sfc() |>
   sf::st_sfc(crs = 21781) |>
