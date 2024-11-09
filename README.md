@@ -1,5 +1,8 @@
 # r-grassgrowth
 
+Some R-scripts to collect and plot graphs and maps of grassgrowth. 
+
+Developed for "Messnetzwerk der AGFF". Results are published on https://graswachstum.ch/ (German only).
 
 
 ## steps to go
