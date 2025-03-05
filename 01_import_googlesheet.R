@@ -1,18 +1,35 @@
 library(dplyr)
-standorte <- read.csv("https://docs.google.com/spreadsheets/d/e/2PACX-1vSrcomkkwzl7-XESOTZLhk0XOCQMq5cz1kkcMif7sl8PGybv_nHK8ite3eMM_-UKLKC1hHEHVHlx_lc/pub?gid=1641924839&single=true&output=csv", skip = 0) %>% 
+
+# standorte2024 <- read.csv("https://docs.google.com/spreadsheets/d/e/2PACX-1vSrcomkkwzl7-XESOTZLhk0XOCQMq5cz1kkcMif7sl8PGybv_nHK8ite3eMM_-UKLKC1hHEHVHlx_lc/pub?gid=1641924839&single=true&output=csv", skip = 0) %>% 
+#   select(Ort, Standort, lon, lat) %>% 
+#   rename(place=Standort)
+# graswachstum2024 <- read.csv(
+#   "https://docs.google.com/spreadsheets/d/e/2PACX-1vSrcomkkwzl7-XESOTZLhk0XOCQMq5cz1kkcMif7sl8PGybv_nHK8ite3eMM_-UKLKC1hHEHVHlx_lc/pub?gid=513247593&single=true&output=csv"
+#   ) %>% 
+#   select(Standort, Erhebungsdatum, Graswachstum..kg.TS.ha.Tag., AFC.Average.Farm.Cover.AFC..kg.TS.ha.) %>% 
+#   rename(growth=Graswachstum..kg.TS.ha.Tag., afc=AFC.Average.Farm.Cover.AFC..kg.TS.ha.,date=Erhebungsdatum, place=Standort)
+
+standorte <- read.csv("https://docs.google.com/spreadsheets/d/e/2PACX-1vS0e9CDB7EvsOzwUo6gs5G4WvdXewECJIVGy8tgdjl7za-Zv25zQsEVuJoPk6bI8SwhYwP20y6Ky9Gq/pub?gid=1641924839&single=true&output=csv", skip = 0) %>% 
   select(Ort, Standort, lon, lat) %>% 
   rename(place=Standort)
+
 graswachstum <- read.csv(
-  "https://docs.google.com/spreadsheets/d/e/2PACX-1vSrcomkkwzl7-XESOTZLhk0XOCQMq5cz1kkcMif7sl8PGybv_nHK8ite3eMM_-UKLKC1hHEHVHlx_lc/pub?gid=513247593&single=true&output=csv"
-  ) %>% 
+  "https://docs.google.com/spreadsheets/d/e/2PACX-1vS0e9CDB7EvsOzwUo6gs5G4WvdXewECJIVGy8tgdjl7za-Zv25zQsEVuJoPk6bI8SwhYwP20y6Ky9Gq/pub?gid=339537904&single=true&output=csv"
+) %>% 
   select(Standort, Erhebungsdatum, Graswachstum..kg.TS.ha.Tag., AFC.Average.Farm.Cover.AFC..kg.TS.ha.) %>% 
   rename(growth=Graswachstum..kg.TS.ha.Tag., afc=AFC.Average.Farm.Cover.AFC..kg.TS.ha.,date=Erhebungsdatum, place=Standort)
-standardkurven <- read.csv("https://docs.google.com/spreadsheets/d/e/2PACX-1vSrcomkkwzl7-XESOTZLhk0XOCQMq5cz1kkcMif7sl8PGybv_nHK8ite3eMM_-UKLKC1hHEHVHlx_lc/pubhtml?gid=513247593&single=true") 
+
+standardkurven <- read.csv("https://docs.google.com/spreadsheets/d/e/2PACX-1vSrcomkkwzl7-XESOTZLhk0XOCQMq5cz1kkcMif7sl8PGybv_nHK8ite3eMM_-UKLKC1hHEHVHlx_lc/pub?gid=1040229080&single=true&output=csv") 
+
+standorte <- standorte %>% filter(place != "Sorens, école (CDAX)") %>% filter(place != "Posieux, Grangeneuve IAG (RPM)")
+
+graswachstum <- graswachstum %>% filter(place != "Sorens, école (CDAX)") %>% filter(place != "Posieux, Grangeneuve IAG (RPM)")
+graswachstum %>% distinct(place)
 
 
 # Kombinieren Sie Standortdaten und Graswachstumsdaten
 daten <- merge(standorte, graswachstum, by = "place")
-daten <- daten %>% mutate(Ort = factor(Ort))
+daten <- daten %>% mutate(Ort = factor(Ort)) 
 
 daten$date <- as.Date(daten$date,format="%d.%m.%Y")
 daten$weeknum <- as.integer(strftime(daten$date, format = '%V'))
