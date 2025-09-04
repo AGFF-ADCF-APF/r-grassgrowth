@@ -1,4 +1,6 @@
+#library(dplyr)
 library(dplyr)
+
 
 # standorte2024 <- read.csv("https://docs.google.com/spreadsheets/d/e/2PACX-1vSrcomkkwzl7-XESOTZLhk0XOCQMq5cz1kkcMif7sl8PGybv_nHK8ite3eMM_-UKLKC1hHEHVHlx_lc/pub?gid=1641924839&single=true&output=csv", skip = 0) %>% 
 #   select(Ort, Standort, lon, lat) %>% 
@@ -16,15 +18,20 @@ standorte <- read.csv("https://docs.google.com/spreadsheets/d/e/2PACX-1vS0e9CDB7
 graswachstum <- read.csv(
   "https://docs.google.com/spreadsheets/d/e/2PACX-1vS0e9CDB7EvsOzwUo6gs5G4WvdXewECJIVGy8tgdjl7za-Zv25zQsEVuJoPk6bI8SwhYwP20y6Ky9Gq/pub?gid=339537904&single=true&output=csv"
 ) %>% 
-  select(Standort, Erhebungsdatum, Graswachstum..kg.TS.ha.Tag., AFC.Average.Farm.Cover.AFC..kg.TS.ha.) %>% 
+  select(Standort, Erhebungsdatum, Graswachstum..kg.TS.ha.Tag., AFC.Average.Farm.Cover.AFC..kg.TS.ha., ignore) %>% 
   rename(growth=Graswachstum..kg.TS.ha.Tag., afc=AFC.Average.Farm.Cover.AFC..kg.TS.ha.,date=Erhebungsdatum, place=Standort)
+
+
 
 standardkurven <- read.csv("https://docs.google.com/spreadsheets/d/e/2PACX-1vSrcomkkwzl7-XESOTZLhk0XOCQMq5cz1kkcMif7sl8PGybv_nHK8ite3eMM_-UKLKC1hHEHVHlx_lc/pub?gid=1040229080&single=true&output=csv") 
 
 standorte <- standorte %>% filter(place != "Sorens, école (CDAX)") %>% filter(place != "Posieux, Grangeneuve IAG (RPM)")
 
+# Daten nachbearbeiten und ignore-Einträge filtern
 graswachstum <- graswachstum %>% filter(place != "Sorens, école (CDAX)") %>% filter(place != "Posieux, Grangeneuve IAG (RPM)")
+graswachstum <- graswachstum %>% filter(is.na(ignore))
 graswachstum %>% distinct(place)
+graswachstum %>% filter(ignore == T)
 
 
 # Kombinieren Sie Standortdaten und Graswachstumsdaten
@@ -53,10 +60,37 @@ currentdaten <- daten  %>% group_by(place) %>%
 
 maxdaten <- currentdaten  
 
+maxdaten <- maxdaten %>%
+  mutate(afc = case_when(
+    Ort == "Les Reusilles" ~ afc - 1500,
+    TRUE  ~ afc, 
+  ))
+
+
 Jahr <- strftime(maxdaten$date[1], format = "%Y")
 #Datum <- as.Date(week, format="%V")
 Datum = ""
 Kalenderwoche <- paste("KW ",week,Datum,sep="") 
+
+
+
+#FIXME
+#Jahr = 2024
+#Jahr = 2025
+daten$year <-  format(as.Date(daten$date, format="%d/%m/%Y"),"%Y")
+jahresdaten <- daten %>% filter(year == Jahr)
+#FIXME
+
+jahresdaten <- jahresdaten %>%
+  mutate(afc = case_when(
+    Ort == "Les Reusilles" ~ afc - 1500,
+    TRUE  ~ afc, 
+  ))
+
+
+jahresdaten <- jahresdaten %>%
+  arrange(Ort, date)
+
 
 
 #daten_std <- standardkurven %>% mutate(place="Durchschnitt_", p)
@@ -78,3 +112,4 @@ Kalenderwoche <- paste("KW ",week,Datum,sep="")
 #   Datum = as.Date(c("2024-01-23", "2024-02-07", "2024-03-12")),  # Fügen Sie die restlichen Erhebungsdaten hinzu
 #   Wachstum = c(0, 0, 0)  # Fügen Sie die restlichen Graswachstumsdaten hinzu
 # )
+

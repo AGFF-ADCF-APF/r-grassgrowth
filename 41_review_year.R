@@ -142,7 +142,7 @@ p <- ggplot(df_processed, aes(x = date, y = growth, fill = Ort)) +
   # Titel und Achsenbeschriftungen
   labs(
     title = "Graswachstum pro Ort",
-    subtitle = paste0("Mit Trendlinie und kumuliertem Ertrag bis KW", week," (schraffierte Fläche).",
+    subtitle = paste0("Mit Trendlinie und kumuliertem Ertrag bis KW", week," (schraffierte Fläche)."),
     x = "Datum",
     y = "Wachstum (kg TS/ha/Tag)"
   ) +
@@ -193,6 +193,7 @@ p <- ggplot(df_processed_1, aes(x = date, y = growth, fill = Ort)) +
   scale_y_continuous(limits = c(0, NA)) +
   # Ein Thema für bessere Optik
   theme_minimal()
+
 print(p)
 graswachstumskurven_file_1 <- paste("outputs/Graswachstumskurven-mit-Ertrag_", Jahr, "_bis-KW",week, "_Gampelen.svg", sep="")
 ggsave(file=graswachstumskurven_file_1, width=10, height=7.5)

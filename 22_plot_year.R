@@ -1,21 +1,25 @@
 
+
+
+
+
 library(ggplot2)
 
 #Kurve detailliert
-grassgrowth_curve <- ggplot(daten, aes(x = weeknum, y = growth, color = Ort)) +
+grassgrowth_curve <- ggplot(jahresdaten, aes(x = weeknum, y = growth, color = Ort)) +
   #geom_point(aes(shape=Ort), size=2) + 
-  geom_point(size=1,  show.legend = TRUE) +
-  geom_line(linewidth = 0.5) +
+  geom_point(size=1,  show.legend = TRUE, na.rm=TRUE) +
+  geom_line(linewidth = 0.5, na.rm=TRUE) +
   #stat_summary(fun = "mean", geom = "line") +
   geom_line(stat = "summary", fun = "mean", linetype="dashed", color="black", 
-            linewidth=1, aes(color="mean"), show.legend = F) +
+            linewidth=1, aes(color="mean"), show.legend = F, na.rm=TRUE) +
   
   geom_line(data=standardkurven, aes(
             x = weeknum, 
             y = Durchschnitt...700.m.ü.M...tiefgründig..frisch
             ), color="red", linetype="dotted", linewidth=1, show.legend = F) +
   labs(x = "Kalenderwoche", y = "Graswachstum (kg TS/ha/Tag)",
-            title = "Graswachstumskurven 2024") +
+            title = paste0("Graswachstumskurven ",Jahr)) +
   #scale_colour_manual(name = "",
   #                    values = "Dodger Blue 3",
   #                   labels = "c") +
@@ -25,8 +29,10 @@ grassgrowth_curve <- ggplot(daten, aes(x = weeknum, y = growth, color = Ort)) +
   theme_minimal() +
   theme(legend.position = "right")
 
+
 grassgrowth_curve
 curvefile <- paste("outputs/Graswachstumskurve_", Jahr, ".svg", sep="")
+
 ggsave(file=curvefile, width=10, height=7.5)
 
 ggplotly(grassgrowth_curve, tooltip=c("Ort", "growth"))
@@ -35,7 +41,7 @@ ggplotly(grassgrowth_curve, tooltip=c("Ort", "growth"))
 #devtools::install_github("hrbrmstr/albersusa")
 
 # Kurve vereinfacht
-grassgrowth_curve <- ggplot(daten, aes(x = weeknum, y = growth, color = Ort)) +
+grassgrowth_curve <- ggplot(jahresdaten, aes(x = weeknum, y = growth, color = Ort)) +
   #geom_point(aes(shape=Ort), size=2) + 
   #geom_point(size=1,  show.legend = FALSE) +
   geom_line(linewidth = 0.5, show.legend=F) +
@@ -48,7 +54,7 @@ grassgrowth_curve <- ggplot(daten, aes(x = weeknum, y = growth, color = Ort)) +
     y = Durchschnitt...700.m.ü.M...tiefgründig..frisch
   ), color="red", linetype="dotted", linewidth=1, show.legend = F) +
   labs(x = "Kalenderwoche", y = "Graswachstum (kg TS/ha/Tag)",
-       title = "Graswachstumskurven 2024") +
+       title = paste0("Graswachstumskurven ",Jahr)) +
   #scale_colour_manual(name = "",
   #                    values = "Dodger Blue 3",
   #                   labels = "c") +
