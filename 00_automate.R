@@ -1,5 +1,8 @@
 #Sys.setlocale(, 'German')
-Sys.setlocale("LC_TIME","de_CH")
+#Sys.setlocale("LC_TIME","de_CH")
+
+#remotes::install_github("gibonet/ggswissmaps")
+
 
 # before start: setup credentials
 #source("local/keyring.R")
