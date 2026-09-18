@@ -11,9 +11,14 @@ library(dplyr)
 #   select(Standort, Erhebungsdatum, Graswachstum..kg.TS.ha.Tag., AFC.Average.Farm.Cover.AFC..kg.TS.ha.) %>% 
 #   rename(growth=Graswachstum..kg.TS.ha.Tag., afc=AFC.Average.Farm.Cover.AFC..kg.TS.ha.,date=Erhebungsdatum, place=Standort)
 
-standorte <- read.csv("https://docs.google.com/spreadsheets/d/e/2PACX-1vS0e9CDB7EvsOzwUo6gs5G4WvdXewECJIVGy8tgdjl7za-Zv25zQsEVuJoPk6bI8SwhYwP20y6Ky9Gq/pub?gid=1641924839&single=true&output=csv", skip = 0) %>% 
-  select(Ort, Standort, lon, lat) %>% 
-  rename(place=Standort)
+standorte <- read.csv("https://docs.google.com/spreadsheets/d/e/2PACX-1vS0e9CDB7EvsOzwUo6gs5G4WvdXewECJIVGy8tgdjl7za-Zv25zQsEVuJoPk6bI8SwhYwP20y6Ky9Gq/pub?gid=1641924839&single=true&output=csv", skip = 0) %>%
+  select(Ort, Standort, lon, lat, müM) %>%
+  rename(place=Standort, masl=müM) %>%
+  # Schweizer Tausender-Trennzeichen (Apostroph, z.B. "1'059") vor
+  # as.numeric() entfernen - liefert direkt die Standort-Hoehe aus dem
+  # Sheet, ohne fuer jeden Standort einzeln die swisstopo-Hoehen-API
+  # abzufragen (siehe 26_.../27_...R).
+  mutate(masl = as.numeric(gsub("'", "", masl)))
 
 graswachstum <- read.csv(
   "https://docs.google.com/spreadsheets/d/e/2PACX-1vS0e9CDB7EvsOzwUo6gs5G4WvdXewECJIVGy8tgdjl7za-Zv25zQsEVuJoPk6bI8SwhYwP20y6Ky9Gq/pub?gid=339537904&single=true&output=csv"
@@ -71,8 +76,6 @@ Jahr <- strftime(maxdaten$date[1], format = "%Y")
 #Datum <- as.Date(week, format="%V")
 Datum = ""
 Kalenderwoche <- paste("KW ",week,Datum,sep="") 
-
-
 
 #FIXME
 #Jahr = 2024
