@@ -1892,6 +1892,7 @@ function(el, x) {
       // ausgewaehlt ist, ist also nie faelschlich sichtbar.
       if (ebeneBeimStart === 'boden') aktualisiereLayerLabels();
       if (hintergrundEbene !== ebeneBeimStart) return;
+      if (ladeHinweisEl) ladeHinweisEl.style.display = 'none';
       zeichneKartenBilder(daten.bilder[selectedYear + ' ' + selectedWeek]);
     });
   }
@@ -2147,6 +2148,7 @@ function(el, x) {
   var wertAnzeigeEl = null;
   var koordinatenEl = null;
   var ortschaftEl = null;
+  var ladeHinweisEl = null;
   var afcLegendeBox = null;
   // Kompakte AFC-Legende im Ebenen-Kasten (zusaetzlich zur grossen Ring-
   // Legende auf der Karte selbst) - nur sichtbar, wenn der AFC-Schalter an
@@ -2204,9 +2206,20 @@ function(el, x) {
     ortschaftEl = document.createElement('div');
     ortschaftEl.className = 'gw-layer-wert-anzeige gw-layer-wert-zusatz';
     ortschaftEl.textContent = 'Ort: –';
+    // Ladehinweis (blinkende Punkte, wie beim Ort/PLZ-Nachschlagen) - nur
+    // sichtbar, waehrend diese Ebene NOCH NICHT im ebenenCache liegt (siehe
+    // ladeEbene()/aktualisiereHintergrundEbene() oben): Bild und Werte-
+    // Gitter treffen typischerweise erst nach einem kurzen fetch() ein,
+    // ohne diesen Hinweis waere die Karte in der Zwischenzeit einfach leer
+    // und nicht von keine Daten fuer diese Woche zu unterscheiden.
+    ladeHinweisEl = document.createElement('div');
+    ladeHinweisEl.className = 'gw-layer-wert-anzeige';
+    ladeHinweisEl.innerHTML = 'Ebene wird geladen ' + LADE_PUNKTE_HTML;
+    ladeHinweisEl.style.display = ebenenCache[hintergrundEbene] ? 'none' : 'block';
     layerLegendeBox.appendChild(balken);
     layerLegendeBox.appendChild(skala);
     layerLegendeBox.appendChild(quelle);
+    layerLegendeBox.appendChild(ladeHinweisEl);
     layerLegendeBox.appendChild(wertAnzeigeEl);
     layerLegendeBox.appendChild(koordinatenEl);
     layerLegendeBox.appendChild(ortschaftEl);

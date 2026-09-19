@@ -72,13 +72,6 @@ ggsave(file=curvefile_simple, width=10, height=7.5)
 # plotly -----------------
 library(tidyr)
 library(plotly);
-library(htmlwidgets);
-
-# Save ggplotly as widget in file test.html
-curvefile_plotly <- paste0("outputs/Graswachstumskurve_ohneLegende_", Jahr, ".html")
-
-saveWidget(ggplotly(grassgrowth_curve), file = curvefile_plotly);
-
 
 #fstr(daten)
 # df <- as_tibble(daten)
