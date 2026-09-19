@@ -1197,129 +1197,114 @@ bodenwasser_farben <- c("firebrick", "khaki1", "steelblue")
 niederschlag_quelle <- "MeteoSchweiz RhiresD/RprelimD, 1km-Raster."
 bodenwasser_quelle <- "Bucket-Modell (Niederschlag - Hargreaves-ET0) - kein Ersatz fuer Feldmessung."
 
-# Nur fuer "Niederschlag (Vorwoche)": die ersten 5 Farben (trocken bis
-# hellblau) auf 0-30mm konzentriert statt gleichmaessig ueber den ganzen
-# Wertebereich (0-100mm) verteilt - 30mm/Woche ist bereits eine ordentliche
-# Menge, alles darueber (steelblue/darkblue) ist "ueberdurchschnittlich
-# nass" und braucht in der ohnehin kompakten Legende keinen eigenen Platz
-# (siehe niederschlag_legende_farben unten - dort werden nur die ersten 5
-# Farben gezeigt, bereich bis 30mm).
+# Waehlbare Fenstergroessen (Tage) fuer alle "gleitendes Fenster"-Ebenen
+# (Summe/Mittelwert der letzten N Tage vor dem Stichtag) - im Ebenen-Kasten
+# per Schieberegler waehlbar (JS: meteoFenster), Vorbelegung je Ebene siehe
+# meteoFensterStandard (JS). Ersetzt die bisher fest verdrahteten
+# Einzelfenster (7-Tage-"Vorwoche", 28-Tage-Kalendermonat fuer Niederschlag,
+# 14-Tage-Bodentemperatur-Daempfung).
+fenstergroessen_tage <- c(7, 14, 21, 28)
+
 niederschlag_stuetzstellen <- c(0, 7.5, 15, 22.5, 30, 65, 100) / 100
-niederschlag_legende_farben <- niederschlag_farben[1:5]
 
-## Niederschlag der VORANGEHENDEN Kalenderwoche je (Jahr, Woche) ------------
-niederschlag_bild_je_woche <- list()
-niederschlag_werte_je_woche <- list()
-if (length(jahre_mit_niederschlag) > 0) {
-  for (jr in jahre_mit_niederschlag) {
-    if (!jr %in% names(niederschlag_raster_je_jahr)) next
-    r_jahr <- niederschlag_raster_je_jahr[[jr]]
-    tage_r <- as.Date(time(r_jahr))
-    for (w in alle_wochen) {
-      vorwoche_ende <- montag_von_woche(jr, w) - 1
-      vorwoche_start <- vorwoche_ende - 6
-      if (vorwoche_start < min(tage_r) || vorwoche_ende > max(tage_r)) next
-      idx <- which(tage_r >= vorwoche_start & tage_r <= vorwoche_ende)
-      if (length(idx) == 0) next
-      r_summe <- sum(r_jahr[[idx]], na.rm = TRUE)
-      ergebnis <- raster_zu_datauri(r_summe, niederschlag_farben, c(0, 100), stuetzstellen = niederschlag_stuetzstellen)
-      niederschlag_bild_je_woche[[paste(jr, w)]] <- ergebnis$bild
-      niederschlag_werte_je_woche[[paste(jr, w)]] <- ergebnis$werte
+# Baut eine "gleitendes Fenster"-Hintergrund-Ebene fuer ALLE Fenstergroessen
+# (fenstergroessen_tage) auf einmal - raster_holen(jr) liefert je Jahr
+# list(raster=<SpatRaster>, tage=<Date-Vektor>) oder NULL (keine Daten fuer
+# dieses Jahr). Bei Summen (aggregat="summe") skaliert der Wertebereich
+# (bereich_je_7tage) PROPORTIONAL zur Fenstergroesse mit (4x mehr Tage ->
+# 4x hoehere moegliche Summe); bei Mittelwerten (aggregat="mittel") bleibt
+# er FIX - ein laengeres Fenster liefert nur einen gedaempfteren, nicht
+# systematisch groesseren/kleineren Wert. stuetzstellen (optional, Werte
+# 0..1) gilt unveraendert fuer alle Fenstergroessen, da sie sich auf den
+# ANTEIL des (mitskalierenden) Bereichs bezieht, nicht auf absolute Werte.
+# Rueckgabe: benannte Liste je Fenstergroesse mit $bilder/$werte (siehe
+# schreibe_fenster_ebenen_dateien() weiter unten).
+baue_fenster_ebenen <- function(jahre, raster_holen, aggregat, farben, bereich_je_7tage, stuetzstellen = NULL) {
+  ergebnis <- list()
+  for (fenster in fenstergroessen_tage) {
+    bild_je_woche <- list()
+    werte_je_woche <- list()
+    bereich <- if (aggregat == "summe") bereich_je_7tage * fenster / 7 else bereich_je_7tage
+    for (jr in jahre) {
+      r_info <- raster_holen(jr)
+      if (is.null(r_info)) next
+      tage_r <- r_info$tage
+      for (w in alle_wochen) {
+        fenster_ende <- montag_von_woche(jr, w) - 1
+        fenster_start <- fenster_ende - (fenster - 1)
+        if (fenster_start < min(tage_r) || fenster_ende > max(tage_r)) next
+        idx <- which(tage_r >= fenster_start & tage_r <= fenster_ende)
+        if (length(idx) == 0) next
+        r_wert <- if (aggregat == "summe") {
+          clamp(sum(r_info$raster[[idx]], na.rm = TRUE), lower = 0)
+        } else {
+          mean(r_info$raster[[idx]], na.rm = TRUE)
+        }
+        bild_ergebnis <- raster_zu_datauri(r_wert, farben, bereich, stuetzstellen = stuetzstellen)
+        bild_je_woche[[paste(jr, w)]] <- bild_ergebnis$bild
+        werte_je_woche[[paste(jr, w)]] <- bild_ergebnis$werte
+      }
     }
+    ergebnis[[as.character(fenster)]] <- list(bilder = bild_je_woche, werte = werte_je_woche)
   }
+  ergebnis
 }
-cat("Niederschlags-Hintergrundbilder erzeugt:", length(niederschlag_bild_je_woche), "\n")
 
-## Temperatur 2m der VORANGEHENDEN Kalenderwoche (Mittelwert TabsD) je
-## (Jahr, Woche) - ergaenzende Hintergrund-Ebene neben Niederschlag/
-## Bodenwasserbilanz. Farbskala orientiert an fuer Graswachstum relevanten
-## Schwellen: unter ca. 5°C kaum Wachstum, 15-20°C guenstig, ueber 25°C
-## Hitzestress (siehe i-Button-Erklaerung weiter unten).
+## Niederschlag: gleitendes Fenster (Summe) --------------------------------
+niederschlag_fenster_ergebnisse <- baue_fenster_ebenen(
+  jahre_mit_niederschlag,
+  function(jr) {
+    if (!jr %in% names(niederschlag_raster_je_jahr)) return(NULL)
+    r <- niederschlag_raster_je_jahr[[jr]]
+    list(raster = r, tage = as.Date(time(r)))
+  },
+  aggregat = "summe", farben = niederschlag_farben, bereich_je_7tage = c(0, 100),
+  stuetzstellen = niederschlag_stuetzstellen
+)
+cat("Niederschlags-Hintergrundbilder erzeugt:",
+    sum(vapply(niederschlag_fenster_ergebnisse, function(x) length(x$bilder), integer(1))), "\n")
+
+## Temperatur 2m: gleitendes Fenster (Mittelwert TabsD) --------------------
+## Farbskala orientiert an fuer Graswachstum relevanten Schwellen: unter ca.
+## 5°C kaum Wachstum, 15-20°C guenstig, ueber 25°C Hitzestress (siehe
+## i-Button-Erklaerung weiter unten).
 temperatur_farben <- c("darkblue", "steelblue", "lightskyblue", "palegreen3", "gold", "orange", "red")
 temperatur_quelle <- "MeteoSchweiz TabsD, 1km-Raster (Tagesmitteltemperatur 2m)."
 
-temperatur_bild_je_woche <- list()
-temperatur_werte_je_woche <- list()
-if (length(jahre_mit_temperatur) > 0) {
-  for (jr in jahre_mit_temperatur) {
-    if (!jr %in% names(temperatur_raster_je_jahr)) next
-    r_jahr <- temperatur_raster_je_jahr[[jr]]
-    tage_r <- as.Date(time(r_jahr))
-    for (w in alle_wochen) {
-      vorwoche_ende <- montag_von_woche(jr, w) - 1
-      vorwoche_start <- vorwoche_ende - 6
-      if (vorwoche_start < min(tage_r) || vorwoche_ende > max(tage_r)) next
-      idx <- which(tage_r >= vorwoche_start & tage_r <= vorwoche_ende)
-      if (length(idx) == 0) next
-      r_mittel <- mean(r_jahr[[idx]], na.rm = TRUE)
-      ergebnis <- raster_zu_datauri(r_mittel, temperatur_farben, c(0, 30))
-      temperatur_bild_je_woche[[paste(jr, w)]] <- ergebnis$bild
-      temperatur_werte_je_woche[[paste(jr, w)]] <- ergebnis$werte
-    }
-  }
-}
-cat("Temperatur-Hintergrundbilder erzeugt:", length(temperatur_bild_je_woche), "\n")
+temperatur_fenster_ergebnisse <- baue_fenster_ebenen(
+  jahre_mit_temperatur,
+  function(jr) {
+    if (!jr %in% names(temperatur_raster_je_jahr)) return(NULL)
+    r <- temperatur_raster_je_jahr[[jr]]
+    list(raster = r, tage = as.Date(time(r)))
+  },
+  aggregat = "mittel", farben = temperatur_farben, bereich_je_7tage = c(0, 30)
+)
+cat("Temperatur-Hintergrundbilder erzeugt:",
+    sum(vapply(temperatur_fenster_ergebnisse, function(x) length(x$bilder), integer(1))), "\n")
 
-## Bodentemperatur (SCHAETZUNG): gleitender 14-Tage-Mittelwert der taeglichen
-## TabsD-Lufttemperatur bis zum Stichtag (Sonntag vor der gewaehlten Woche) -
-## kein eigenes Bodentemperatur-Rasterprodukt frei verfuegbar (MeteoSchweiz
+## Bodentemperatur (SCHAETZUNG): gleitendes Fenster (Mittelwert TabsD) -----
+## Kein eigenes Bodentemperatur-Rasterprodukt frei verfuegbar (MeteoSchweiz
 ## misst Bodentemperatur nur an einzelnen Stationen, nicht flaechendeckend
-## als Karte). Der laengere, gegenueber der Luft-Ebene traege Mittelwert
-## bildet naeherungsweise die Daempfung/Verzoegerung ab, mit der die oberste
-## Bodenschicht (ca. 5-10cm) der Lufttemperatur folgt - eine in der
-## Agrarmeteorologie gebraeuchliche Naeherung, aber KEINE Feldmessung (siehe
-## i-Button-Erklaerung weiter unten - Label/Quelle weisen entsprechend
-## explizit auf die Schaetzung hin).
-bodentemperatur_quelle <- "Schaetzung: gleitender 14-Tage-Mittelwert aus MeteoSchweiz TabsD (2m-Lufttemperatur) - keine direkte Bodenmessung."
+## als Karte). Der gleitende Mittelwert der Lufttemperatur bildet naeherungs-
+## weise die Daempfung/Verzoegerung ab, mit der die oberste Bodenschicht
+## (ca. 5-10cm) der Lufttemperatur folgt - eine in der Agrarmeteorologie
+## gebraeuchliche Naeherung, aber KEINE Feldmessung (siehe i-Button-
+## Erklaerung weiter unten). Ueber den Schieberegler laesst sich das Fenster
+## verlaengern, um mehr Daempfung zu simulieren.
+bodentemperatur_quelle <- "Schaetzung: gleitender Mittelwert aus MeteoSchweiz TabsD (2m-Lufttemperatur) - keine direkte Bodenmessung."
 
-bodentemperatur_bild_je_woche <- list()
-bodentemperatur_werte_je_woche <- list()
-if (length(jahre_mit_temperatur) > 0) {
-  for (jr in jahre_mit_temperatur) {
-    if (!jr %in% names(temperatur_raster_je_jahr)) next
-    r_jahr <- temperatur_raster_je_jahr[[jr]]
-    tage_r <- as.Date(time(r_jahr))
-    for (w in alle_wochen) {
-      stichtag_ende <- montag_von_woche(jr, w) - 1
-      stichtag_start <- stichtag_ende - 13
-      if (stichtag_start < min(tage_r) || stichtag_ende > max(tage_r)) next
-      idx <- which(tage_r >= stichtag_start & tage_r <= stichtag_ende)
-      if (length(idx) == 0) next
-      r_mittel <- mean(r_jahr[[idx]], na.rm = TRUE)
-      ergebnis <- raster_zu_datauri(r_mittel, temperatur_farben, c(0, 30))
-      bodentemperatur_bild_je_woche[[paste(jr, w)]] <- ergebnis$bild
-      bodentemperatur_werte_je_woche[[paste(jr, w)]] <- ergebnis$werte
-    }
-  }
-}
-cat("Bodentemperatur-Hintergrundbilder erzeugt (Schaetzung):", length(bodentemperatur_bild_je_woche), "\n")
-
-## Niederschlagssumme des VORMONATS (voller Kalendermonat vor dem Stichtag
-## der gewaehlten Kalenderwoche) je (Jahr, Woche) - ergaenzende Ebene neben
-## der Vorwochen-Summe fuer einen laengerfristigeren Trockenheits-/
-## Nasseueberblick.
-niederschlag_monat_bild_je_woche <- list()
-niederschlag_monat_werte_je_woche <- list()
-if (length(jahre_mit_niederschlag) > 0) {
-  for (jr in jahre_mit_niederschlag) {
-    if (!jr %in% names(niederschlag_raster_je_jahr)) next
-    r_jahr <- niederschlag_raster_je_jahr[[jr]]
-    tage_r <- as.Date(time(r_jahr))
-    for (w in alle_wochen) {
-      stichtag <- montag_von_woche(jr, w)
-      vormonat_ende <- as.Date(format(stichtag, "%Y-%m-01")) - 1
-      vormonat_start <- as.Date(format(vormonat_ende, "%Y-%m-01"))
-      if (vormonat_start < min(tage_r) || vormonat_ende > max(tage_r)) next
-      idx <- which(tage_r >= vormonat_start & tage_r <= vormonat_ende)
-      if (length(idx) == 0) next
-      r_summe <- sum(r_jahr[[idx]], na.rm = TRUE)
-      ergebnis <- raster_zu_datauri(r_summe, niederschlag_farben, c(0, 200))
-      niederschlag_monat_bild_je_woche[[paste(jr, w)]] <- ergebnis$bild
-      niederschlag_monat_werte_je_woche[[paste(jr, w)]] <- ergebnis$werte
-    }
-  }
-}
-cat("Niederschlag-Vormonat-Hintergrundbilder erzeugt:", length(niederschlag_monat_bild_je_woche), "\n")
+bodentemperatur_fenster_ergebnisse <- baue_fenster_ebenen(
+  jahre_mit_temperatur,
+  function(jr) {
+    if (!jr %in% names(temperatur_raster_je_jahr)) return(NULL)
+    r <- temperatur_raster_je_jahr[[jr]]
+    list(raster = r, tage = as.Date(time(r)))
+  },
+  aggregat = "mittel", farben = temperatur_farben, bereich_je_7tage = c(0, 30)
+)
+cat("Bodentemperatur-Hintergrundbilder erzeugt (Schaetzung):",
+    sum(vapply(bodentemperatur_fenster_ergebnisse, function(x) length(x$bilder), integer(1))), "\n")
 
 ## Bodenwasserbilanz zum Stichtag (Montag) der gewaehlten Kalenderwoche -----
 bodenwasser_bild_je_woche <- list()
@@ -1356,60 +1341,43 @@ if (file.exists(speicher_tif)) {
   cat("Bodenwasserbilanz nicht verfuegbar (", speicher_tif, " nicht gefunden)\n")
 }
 
-## Sonnenscheindauer (relativ) der VORANGEHENDEN Kalenderwoche je (Jahr,
-## Woche) - Mittelwert in Prozent, analog Temperatur.
+## Sonnenscheindauer (relativ): gleitendes Fenster (Mittelwert) -----------
 sonnenschein_farben <- c("dimgray", "gray70", "khaki1", "gold", "orange")
 sonnenschein_quelle <- "MeteoSchweiz SrelD, 1km-Raster (Sonnenscheindauer relativ zum astronomisch Moeglichen)."
 
-sonnenschein_bild_je_woche <- list()
-sonnenschein_werte_je_woche <- list()
-if (length(jahre_mit_sonnenschein) > 0) {
-  for (jr in jahre_mit_sonnenschein) {
-    if (!jr %in% names(sonnenschein_raster_je_jahr)) next
-    r_jahr <- sonnenschein_raster_je_jahr[[jr]]
-    tage_r <- as.Date(time(r_jahr))
-    for (w in alle_wochen) {
-      vorwoche_ende <- montag_von_woche(jr, w) - 1
-      vorwoche_start <- vorwoche_ende - 6
-      if (vorwoche_start < min(tage_r) || vorwoche_ende > max(tage_r)) next
-      idx <- which(tage_r >= vorwoche_start & tage_r <= vorwoche_ende)
-      if (length(idx) == 0) next
-      r_mittel <- mean(r_jahr[[idx]], na.rm = TRUE)
-      ergebnis <- raster_zu_datauri(r_mittel, sonnenschein_farben, c(0, 100))
-      sonnenschein_bild_je_woche[[paste(jr, w)]] <- ergebnis$bild
-      sonnenschein_werte_je_woche[[paste(jr, w)]] <- ergebnis$werte
-    }
-  }
-}
-cat("Sonnenschein-Hintergrundbilder erzeugt:", length(sonnenschein_bild_je_woche), "\n")
+sonnenschein_fenster_ergebnisse <- baue_fenster_ebenen(
+  jahre_mit_sonnenschein,
+  function(jr) {
+    if (!jr %in% names(sonnenschein_raster_je_jahr)) return(NULL)
+    r <- sonnenschein_raster_je_jahr[[jr]]
+    list(raster = r, tage = as.Date(time(r)))
+  },
+  aggregat = "mittel", farben = sonnenschein_farben, bereich_je_7tage = c(0, 100)
+)
+cat("Sonnenschein-Hintergrundbilder erzeugt:",
+    sum(vapply(sonnenschein_fenster_ergebnisse, function(x) length(x$bilder), integer(1))), "\n")
 
-## Verdunstung ET0 (Hargreaves) der VORANGEHENDEN Kalenderwoche je (Jahr,
-## Woche) - Summe in mm, aus dem bereits in r-futterbaugutachten berechneten
-## ET0-Raster (siehe wasserhaushalt_dir, gleiche Quelle wie die
-## Bodenwasserbilanz oben).
+## Verdunstung ET0 (Hargreaves): gleitendes Fenster (Summe) ---------------
+## Aus dem bereits in r-futterbaugutachten berechneten ET0-Raster (siehe
+## wasserhaushalt_dir, gleiche Quelle wie die Bodenwasserbilanz oben).
 et0_farben <- c("lightyellow", "gold", "orange", "red")
 et0_quelle <- "Bucket-Modell-Verdunstung (Hargreaves/FAO-56) aus r-futterbaugutachten - kein Ersatz fuer Feldmessung."
 et0_tif <- file.path(wasserhaushalt_dir, "et0_hargreaves.tif")
-et0_bild_je_woche <- list()
-et0_werte_je_woche <- list()
 if (file.exists(et0_tif)) {
   et0_r <- terra::rast(et0_tif)
   et0_tage <- as.Date(sub("^ET0_", "", names(et0_r)))
-  for (jr in alle_jahre) {
-    for (w in alle_wochen) {
-      vorwoche_ende <- montag_von_woche(jr, w) - 1
-      vorwoche_start <- vorwoche_ende - 6
-      if (vorwoche_start < min(et0_tage) || vorwoche_ende > max(et0_tage)) next
-      idx <- which(et0_tage >= vorwoche_start & et0_tage <= vorwoche_ende)
-      if (length(idx) == 0) next
-      r_summe <- clamp(sum(et0_r[[idx]], na.rm = TRUE), lower = 0)
-      ergebnis <- raster_zu_datauri(r_summe, et0_farben, c(0, 25))
-      et0_bild_je_woche[[paste(jr, w)]] <- ergebnis$bild
-      et0_werte_je_woche[[paste(jr, w)]] <- ergebnis$werte
-    }
-  }
-  cat("ET0-Hintergrundbilder erzeugt:", length(et0_bild_je_woche), "\n")
+  et0_fenster_ergebnisse <- baue_fenster_ebenen(
+    alle_jahre,
+    function(jr) list(raster = et0_r, tage = et0_tage),
+    aggregat = "summe", farben = et0_farben, bereich_je_7tage = c(0, 25)
+  )
+  cat("ET0-Hintergrundbilder erzeugt:",
+      sum(vapply(et0_fenster_ergebnisse, function(x) length(x$bilder), integer(1))), "\n")
 } else {
+  et0_fenster_ergebnisse <- setNames(
+    lapply(fenstergroessen_tage, function(f) list(bilder = list(), werte = list())),
+    as.character(fenstergroessen_tage)
+  )
   cat("ET0 nicht verfuegbar (", et0_tif, " nicht gefunden)\n")
 }
 
@@ -1460,14 +1428,28 @@ schreibe_ebene_datei <- function(name, bilder, werte, datum = NULL) {
   names(bilder)
 }
 
+# Schreibt ALLE Fenstergroessen einer "gleitendes Fenster"-Ebene als je
+# eigene Datei (<name>_<fenster>.json, siehe baue_fenster_ebenen() oben) und
+# liefert die UNION ihrer (Jahr, Woche)-Schluessel zurueck - fuer die
+# Jahres-Verfuegbarkeit des Radiobuttons (aktualisiereLayerVerfuegbarkeit(),
+# JS), unabhaengig davon, welche Fenstergroesse gerade gewaehlt ist.
+schreibe_fenster_ebenen_dateien <- function(name, fenster_ergebnisse) {
+  alle_schluessel <- character(0)
+  for (fenster in names(fenster_ergebnisse)) {
+    r <- fenster_ergebnisse[[fenster]]
+    neue_schluessel <- schreibe_ebene_datei(paste0(name, "_", fenster), r$bilder, r$werte)
+    alle_schluessel <- union(alle_schluessel, neue_schluessel)
+  }
+  alle_schluessel
+}
+
 ebenen_schluessel <- list(
-  niederschlag = schreibe_ebene_datei("niederschlag", niederschlag_bild_je_woche, niederschlag_werte_je_woche),
-  niederschlag_monat = schreibe_ebene_datei("niederschlag_monat", niederschlag_monat_bild_je_woche, niederschlag_monat_werte_je_woche),
+  niederschlag = schreibe_fenster_ebenen_dateien("niederschlag", niederschlag_fenster_ergebnisse),
   boden = schreibe_ebene_datei("boden", bodenwasser_bild_je_woche, bodenwasser_werte_je_woche, bodenwasser_datum_je_woche),
-  temperatur = schreibe_ebene_datei("temperatur", temperatur_bild_je_woche, temperatur_werte_je_woche),
-  bodentemperatur = schreibe_ebene_datei("bodentemperatur", bodentemperatur_bild_je_woche, bodentemperatur_werte_je_woche),
-  sonnenschein = schreibe_ebene_datei("sonnenschein", sonnenschein_bild_je_woche, sonnenschein_werte_je_woche),
-  et0 = schreibe_ebene_datei("et0", et0_bild_je_woche, et0_werte_je_woche),
+  temperatur = schreibe_fenster_ebenen_dateien("temperatur", temperatur_fenster_ergebnisse),
+  bodentemperatur = schreibe_fenster_ebenen_dateien("bodentemperatur", bodentemperatur_fenster_ergebnisse),
+  sonnenschein = schreibe_fenster_ebenen_dateien("sonnenschein", sonnenschein_fenster_ergebnisse),
+  et0 = schreibe_fenster_ebenen_dateien("et0", et0_fenster_ergebnisse),
   gdd = schreibe_ebene_datei("gdd", gdd_bild_je_woche, gdd_werte_je_woche)
 )
 cat("Ebenen-Dateien geschrieben in:", ebenen_dir, "\n")
@@ -1490,21 +1472,22 @@ farben_zu_hex <- function(farben) {
 # Tooltip-Quellenangabe im "Hintergrund-Ebene"-Kasten (siehe onRender()
 # weiter unten), statt Farben/Text dort ein zweites Mal von Hand nachzubauen.
 layer_legenden <- list(
-  # bereich/farben zeigen nur den "sichtbaren" Teil des Farbverlaufs
-  # (0-30mm, siehe niederschlag_stuetzstellen oben) - Werte darueber (bis
-  # 100mm, steelblue/darkblue) faerben die Karte weiterhin ein, brauchen in
-  # der kompakten Legende aber keinen eigenen Platz.
-  niederschlag = list(label = "Niederschlagssumme (7 Tage)", farben = farben_zu_hex(niederschlag_legende_farben), bereich = c(0, 30), einheit = "mm", quelle = niederschlag_quelle),
-  niederschlag_monat = list(label = "Niederschlagssumme (28 Tage)", farben = farben_zu_hex(niederschlag_farben), bereich = c(0, 200), einheit = "mm", quelle = niederschlag_quelle),
+  # symbol: "sum"/"avg" markiert eine "gleitendes Fenster"-Ebene - JS haengt
+  # dafuer den Schieberegler-Wert kompakt ans Label an (z.B. "Σ 28d"/
+  # "⌀ 7d", siehe aktualisiereLayerLabels()) statt eines ausgeschriebenen
+  # "(Summe/Mittel, N Tage)". fensterSkaliert = TRUE laesst den Wertebereich
+  # in der Legende mit der Fenstergroesse mitwachsen (nur bei Summen
+  # sinnvoll - siehe baue_fenster_ebenen()/R).
+  niederschlag = list(label = "Niederschlagssumme", farben = farben_zu_hex(niederschlag_farben), bereich = c(0, 100), fensterSkaliert = TRUE, symbol = "sum", einheit = "mm", quelle = niederschlag_quelle),
   # label OHNE Datum - das tatsaechliche Datum des Snapshots (siehe
   # bodenwasser_datum_je_woche, kann je nach Verfuegbarkeit vom Wochenbeginn
   # abweichen) wird in aktualisiereLayerLabels() live ergaenzt.
-  boden = list(label = "Bodenwasserbilanz", farben = farben_zu_hex(bodenwasser_farben), bereich = c(0, 100), einheit = "mm, von 100", quelle = bodenwasser_quelle),
-  temperatur = list(label = "Temperatur 2m (Vorwoche, Mittel)", farben = farben_zu_hex(temperatur_farben), bereich = c(0, 30), einheit = "°C", quelle = temperatur_quelle),
-  bodentemperatur = list(label = "Bodentemperatur (geschaetzt)", farben = farben_zu_hex(temperatur_farben), bereich = c(0, 30), einheit = "°C", quelle = bodentemperatur_quelle),
-  sonnenschein = list(label = "Sonnenscheindauer (Vorwoche, Mittel)", farben = farben_zu_hex(sonnenschein_farben), bereich = c(0, 100), einheit = "%", quelle = sonnenschein_quelle),
-  et0 = list(label = "Verdunstung ET0 (Vorwoche, Summe)", farben = farben_zu_hex(et0_farben), bereich = c(0, 25), einheit = "mm", quelle = et0_quelle),
-  gdd = list(label = "Wachstumsgradtage (kumuliert)", farben = farben_zu_hex(gdd_farben), bereich = c(0, 2500), einheit = "°C-Tage", quelle = gdd_quelle)
+  boden = list(label = "Bodenwasserbilanz", farben = farben_zu_hex(bodenwasser_farben), bereich = c(0, 100), fensterSkaliert = FALSE, symbol = NULL, einheit = "mm, von 100", quelle = bodenwasser_quelle),
+  temperatur = list(label = "Temperatur 2m", farben = farben_zu_hex(temperatur_farben), bereich = c(0, 30), fensterSkaliert = FALSE, symbol = "avg", einheit = "°C", quelle = temperatur_quelle),
+  bodentemperatur = list(label = "Bodentemperatur", farben = farben_zu_hex(temperatur_farben), bereich = c(0, 30), fensterSkaliert = FALSE, symbol = "avg", einheit = "°C", quelle = bodentemperatur_quelle),
+  sonnenschein = list(label = "Sonnenscheindauer", farben = farben_zu_hex(sonnenschein_farben), bereich = c(0, 100), fensterSkaliert = FALSE, symbol = "avg", einheit = "%", quelle = sonnenschein_quelle),
+  et0 = list(label = "Verdunstung ET0", farben = farben_zu_hex(et0_farben), bereich = c(0, 25), fensterSkaliert = TRUE, symbol = "sum", einheit = "mm", quelle = et0_quelle),
+  gdd = list(label = "Wachstumsgradtage", farben = farben_zu_hex(gdd_farben), bereich = c(0, 2500), fensterSkaliert = FALSE, symbol = NULL, einheit = "°C-Tage", quelle = gdd_quelle)
 )
 
 ########################################################################
@@ -1540,6 +1523,20 @@ function(el, x) {
   // ebenenCache haelt sie danach im Speicher (kein wiederholtes Nachladen).
   var ebenenSchluessel = __EBENEN_SCHLUESSEL__;
   var ebenenCache = {};
+  // Ebenen mit waehlbarer Fenstergroesse (Schieberegler oberhalb der
+  // Legende, siehe macheMeteoFensterSchieberegler() weiter unten) - deren
+  // Datei-/Cache-Schluessel ist <name>_<meteoFenster> statt nur <name>
+  // (jede Fenstergroesse ist eine eigene JSON-Datei, siehe R:
+  // schreibe_fenster_ebenen_dateien()). meteoFensterStandard legt fest, auf
+  // welchen Wert der Schieberegler bei Auswahl der jeweiligen Ebene
+  // automatisch zurueckspringt (siehe makeLayerRadio()-Aufrufe unten).
+  var meteoFensterEbenen = ['niederschlag', 'temperatur', 'bodentemperatur', 'sonnenschein', 'et0'];
+  var meteoFensterStandard = { niederschlag: 28, temperatur: 7, bodentemperatur: 7, sonnenschein: 7, et0: 7 };
+  // Diskrete Schieberegler-Stufen (Tage) - siehe R: fenstergroessen_tage.
+  var meteoFensterStufen = [7, 14, 21, 28];
+  var meteoFenster = 7;
+  function istFensterEbene(name) { return meteoFensterEbenen.indexOf(name) !== -1; }
+  function ebeneDateiSchluessel(name) { return istFensterEbene(name) ? name + '_' + meteoFenster : name; }
   function ebeneHatJahr(name, jahr) {
     var schluessel = ebenenSchluessel[name];
     if (!schluessel) return false;
@@ -1548,19 +1545,22 @@ function(el, x) {
     }
     return false;
   }
-  // Laedt die JSON-Datei einer Ebene genau EINMAL (Cache-Treffer bei jedem
-  // weiteren Aufruf) und ruft dann callback(daten) auf; daten hat die Form
-  // { bilder: {...}, werte: {...}, datum: {...} (nur bei boden) }. Bricht
-  // eine noch laufende Anfrage NICHT ab, wenn zwischenzeitlich eine andere
-  // Ebene gewaehlt wurde - die Aufrufer (aktualisiereHintergrundEbene() etc.)
-  // pruefen deshalb nach Abschluss jeweils selbst, ob ihre Ebene noch aktiv
-  // ist, bevor sie das Ergebnis anwenden.
-  function ladeEbene(name, callback) {
-    if (ebenenCache[name]) { callback(ebenenCache[name]); return; }
-    fetch('ebenen/' + name + '.json')
+  // Laedt die JSON-Datei einer Ebene genau EINMAL je Datei-Schluessel
+  // (Cache-Treffer bei jedem weiteren Aufruf mit demselben Schluessel) und
+  // ruft dann callback(daten) auf; daten hat die Form { bilder: {...},
+  // werte: {...}, datum: {...} (nur bei boden) }. dateiSchluessel ist bei
+  // Fenster-Ebenen NAME_FENSTER (siehe ebeneDateiSchluessel()), sonst nur
+  // NAME. Bricht eine noch laufende Anfrage NICHT ab, wenn zwischenzeitlich
+  // eine andere Ebene/Fenstergroesse gewaehlt wurde - die Aufrufer
+  // (aktualisiereHintergrundEbene() etc.) pruefen deshalb nach Abschluss
+  // jeweils selbst, ob ihr Schluessel noch aktuell ist, bevor sie das
+  // Ergebnis anwenden.
+  function ladeEbene(dateiSchluessel, callback) {
+    if (ebenenCache[dateiSchluessel]) { callback(ebenenCache[dateiSchluessel]); return; }
+    fetch('ebenen/' + dateiSchluessel + '.json')
       .then(function(r) { return r.json(); })
-      .then(function(daten) { ebenenCache[name] = daten; callback(daten); })
-      .catch(function(err) { console.error('Ebene ' + name + ' konnte nicht geladen werden:', err); });
+      .then(function(daten) { ebenenCache[dateiSchluessel] = daten; callback(daten); })
+      .catch(function(err) { console.error('Ebene ' + dateiSchluessel + ' konnte nicht geladen werden:', err); });
   }
   var graswachstumBilder = __GRASWACHSTUM_BILDER__;
   var afcRingBilder = __AFC_RING_BILDER__;
@@ -1829,19 +1829,37 @@ function(el, x) {
     aktualisiereSmnStationen();
   }
 
-  // Ergaenzt das tatsaechliche Datum des Bodenwasserbilanz-Snapshots im
-  // Radio-Label (kann je nach Verfuegbarkeit vom Wochenbeginn abweichen,
-  // siehe Kommentar bei bodenwasser_datum_je_woche/R) - ausserhalb von
-  // aktualisiereHintergrundEbene() aufgerufen, damit das Label auch dann
-  // aktuell bleibt, wenn die Wachstumskarte selbst noch nicht gebunden ist.
+  // Haengt an die Labels der Fenster-Ebenen (siehe meteoFensterEbenen) das
+  // Symbol (Σ Summe / ⌀ Mittel) und die aktuelle Fenstergroesse an (z.B.
+  // Niederschlagssumme Sigma 28d) und ergaenzt das tatsaechliche Datum des
+  // Bodenwasserbilanz-Snapshots im Radio-Label (kann je nach Verfuegbarkeit
+  // vom Wochenbeginn abweichen, siehe Kommentar bei bodenwasser_datum_je_
+  // woche/R) - ausserhalb von aktualisiereHintergrundEbene() aufgerufen,
+  // damit die Labels auch dann aktuell bleiben, wenn die Wachstumskarte
+  // selbst noch nicht gebunden ist.
   function aktualisiereLayerLabels() {
+    meteoFensterEbenen.forEach(function(name) {
+      var radio = radioJeEbene[name];
+      if (!radio || !radio.labelTextEl) return;
+      var info = layerLegenden[name];
+      var symbol = info.symbol === 'sum' ? 'Σ' : '⌀';
+      // Nur die AKTUELL gewaehlte Ebene zeigt den live am Schieberegler
+      // eingestellten Wert - alle anderen (nicht ausgewaehlten) Fenster-
+      // Ebenen zeigen weiterhin ihren eigenen Standard (meteoFensterStandard),
+      // da genau DAS beim Auswaehlen tatsaechlich passieren wuerde (der
+      // Schieberegler springt ja bei jedem Ebenenwechsel auf den Standard
+      // der neuen Ebene zurueck) - sonst waere hier voruebergehend ein
+      // Wert zu sehen, der beim Klick gar nicht eintritt.
+      var tage = (name === hintergrundEbene) ? meteoFenster : meteoFensterStandard[name];
+      radio.labelTextEl.textContent = info.label + ' ' + symbol + ' ' + tage + 'd';
+    });
     if (!radioBoden || !radioBoden.labelTextEl) return;
     // bodenCache.datum existiert erst, NACHDEM die Ebene einmal geladen
     // wurde (siehe ladeEbene()) - bis dahin steht im Label schlicht kein
     // Datum, statt die Ebene allein fuer dieses Label vorzuladen.
     var bodenCache = ebenenCache.boden;
     var datum = bodenCache && bodenCache.datum && bodenCache.datum[selectedYear + ' ' + selectedWeek];
-    radioBoden.labelTextEl.textContent = layerLegenden.boden.label + (datum ? ' (' + datum + ')' : '');
+    radioBoden.labelTextEl.textContent = layerLegenden.boden.label + (datum ? ' ' + datum : '');
   }
 
   // Optionale Hintergrund-Ebenen (Niederschlag Vorwoche / Bodenwasserbilanz
@@ -1883,15 +1901,19 @@ function(el, x) {
   function aktualisiereHintergrundEbene() {
     if (hintergrundEbene === 'keine') { zeichneKartenBilder(null); return; }
     var ebeneBeimStart = hintergrundEbene;
-    if (!ebenenCache[ebeneBeimStart]) zeichneKartenBilder(null);
-    ladeEbene(ebeneBeimStart, function(daten) {
+    var dateiSchluesselBeimStart = ebeneDateiSchluessel(ebeneBeimStart);
+    if (!ebenenCache[dateiSchluesselBeimStart]) zeichneKartenBilder(null);
+    ladeEbene(dateiSchluesselBeimStart, function(daten) {
       // aktualisiereLayerLabels() unabhaengig vom Noch-aktuell-Check unten
       // aufgerufen: das Bodenwasserbilanz-Datum im Radio-Label soll auch
       // dann erscheinen, wenn zwischenzeitlich eine ANDERE Ebene gewaehlt
       // wurde - das Label selbst blendet sich ja nur ein, waehrend boden
       // ausgewaehlt ist, ist also nie faelschlich sichtbar.
       if (ebeneBeimStart === 'boden') aktualisiereLayerLabels();
-      if (hintergrundEbene !== ebeneBeimStart) return;
+      // Vergleich ueber den Datei-Schluessel (nicht nur den Ebenennamen):
+      // bei Fenster-Ebenen zaehlt auch ein zwischenzeitlicher Wechsel der
+      // Fenstergroesse (Schieberegler) als nicht mehr aktuell.
+      if (ebeneDateiSchluessel(hintergrundEbene) !== dateiSchluesselBeimStart) return;
       if (ladeHinweisEl) ladeHinweisEl.style.display = 'none';
       zeichneKartenBilder(daten.bilder[selectedYear + ' ' + selectedWeek]);
     });
@@ -1933,6 +1955,9 @@ function(el, x) {
     '.gw-info-btn:hover { background: #eaf2fb; border-color: #4a90d9; color: #2a6fbf; }',
     '.gw-info-popup { position: absolute; z-index: 20; top: 20px; left: 0; width: 210px; max-width: 85vw; background: white; border: 1px solid #bbb; border-radius: 6px; padding: 10px 12px; font-size: 12px; line-height: 1.4; color: #333; box-shadow: 0 2px 10px rgba(0,0,0,0.15); cursor: auto; }',
     '.gw-layer-option input:disabled + span { color: #aaa; }',
+    '.gw-meteo-fenster { margin-top: 10px; padding-top: 10px; border-top: 1px solid #ddd; }',
+    '.gw-meteo-fenster-label { font-size: 11px; color: #555; margin-bottom: 3px; }',
+    '.gw-meteo-fenster input[type=range] { width: 100%; margin: 0; }',
     '.gw-layer-legende { margin-top: 10px; padding-top: 10px; border-top: 1px solid #ddd; }',
     '.gw-layer-legende-balken { height: 12px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.15); }',
     // Donut-Ring per Masken-Trick (radial-gradient schneidet die Mitte
@@ -2120,11 +2145,11 @@ function(el, x) {
   // Hintergrund-Ebenen - befuellen einen leeren Platzhalter-Container aus
   // dem HTML (analog zum Kalenderwochen-Schieberegler weiter unten).
   var mapControlsContainer = document.getElementById('datenexplorer-map-controls');
-  var radioNiederschlag = null, radioNiederschlagMonat = null, radioBoden = null, radioTemperatur = null, radioBodentemperatur = null;
+  var radioNiederschlag = null, radioBoden = null, radioTemperatur = null, radioBodentemperatur = null;
   var radioSonnenschein = null, radioEt0 = null, radioGdd = null;
+  var radioJeEbene = {};
   function aktualisiereLayerVerfuegbarkeit() {
     if (radioNiederschlag) radioNiederschlag.disabled = !ebeneHatJahr('niederschlag', selectedYear);
-    if (radioNiederschlagMonat) radioNiederschlagMonat.disabled = !ebeneHatJahr('niederschlag_monat', selectedYear);
     if (radioBoden) radioBoden.disabled = !ebeneHatJahr('boden', selectedYear);
     if (radioTemperatur) radioTemperatur.disabled = !ebeneHatJahr('temperatur', selectedYear);
     if (radioBodentemperatur) radioBodentemperatur.disabled = !ebeneHatJahr('bodentemperatur', selectedYear);
@@ -2132,7 +2157,6 @@ function(el, x) {
     if (radioEt0) radioEt0.disabled = !ebeneHatJahr('et0', selectedYear);
     if (radioGdd) radioGdd.disabled = !ebeneHatJahr('gdd', selectedYear);
     if ((hintergrundEbene === 'niederschlag' && radioNiederschlag && radioNiederschlag.disabled) ||
-        (hintergrundEbene === 'niederschlag_monat' && radioNiederschlagMonat && radioNiederschlagMonat.disabled) ||
         (hintergrundEbene === 'boden' && radioBoden && radioBoden.disabled) ||
         (hintergrundEbene === 'temperatur' && radioTemperatur && radioTemperatur.disabled) ||
         (hintergrundEbene === 'bodentemperatur' && radioBodentemperatur && radioBodentemperatur.disabled) ||
@@ -2192,18 +2216,23 @@ function(el, x) {
     afcLegendeBox.appendChild(ziel);
   }
   function aktualisiereLayerLegende() {
+    aktualisiereMeteoFensterSichtbarkeit();
     if (!layerLegendeBox) return;
     var info = layerLegenden[hintergrundEbene];
     if (!info) { layerLegendeBox.style.display = 'none'; wertAnzeigeEl = null; koordinatenEl = null; ortschaftEl = null; return; }
     layerLegendeBox.style.display = 'block';
     layerLegendeBox.innerHTML = '';
+    // Wertebereich bei Summen-Ebenen (info.fensterSkaliert) proportional zur
+    // aktuellen Fenstergroesse hochskaliert (siehe R: baue_fenster_ebenen())
+    // - bei Mittelwert-Ebenen bleibt der Bereich unveraendert.
+    var bereich = info.fensterSkaliert ? [info.bereich[0], Math.round(info.bereich[1] * meteoFenster / 7)] : info.bereich;
     var balken = document.createElement('div');
     balken.className = 'gw-layer-legende-balken';
     balken.style.background = 'linear-gradient(to right, ' + info.farben.join(',') + ')';
     var skala = document.createElement('div');
     skala.className = 'gw-layer-legende-skala';
-    var minEl = document.createElement('span'); minEl.textContent = info.bereich[0] + ' ' + info.einheit;
-    var maxEl = document.createElement('span'); maxEl.textContent = info.bereich[1] + ' ' + info.einheit;
+    var minEl = document.createElement('span'); minEl.textContent = bereich[0] + ' ' + info.einheit;
+    var maxEl = document.createElement('span'); maxEl.textContent = bereich[1] + ' ' + info.einheit;
     skala.appendChild(minEl);
     skala.appendChild(maxEl);
     var quelle = document.createElement('div');
@@ -2227,7 +2256,7 @@ function(el, x) {
     ladeHinweisEl = document.createElement('div');
     ladeHinweisEl.className = 'gw-layer-wert-anzeige';
     ladeHinweisEl.innerHTML = 'Ebene wird geladen ' + LADE_PUNKTE_HTML;
-    ladeHinweisEl.style.display = ebenenCache[hintergrundEbene] ? 'none' : 'block';
+    ladeHinweisEl.style.display = ebenenCache[ebeneDateiSchluessel(hintergrundEbene)] ? 'none' : 'block';
     layerLegendeBox.appendChild(balken);
     layerLegendeBox.appendChild(skala);
     layerLegendeBox.appendChild(quelle);
@@ -2250,7 +2279,7 @@ function(el, x) {
   // veralteten/falschen Werts.
   function aktivesWerteGitter() {
     if (hintergrundEbene === 'keine') return null;
-    var cache = ebenenCache[hintergrundEbene];
+    var cache = ebenenCache[ebeneDateiSchluessel(hintergrundEbene)];
     return cache ? cache.werte : null;
   }
   // Naeherungsformel swisstopo (WGS84 -> LV95, Genauigkeit ca. 1-2m,
@@ -2533,6 +2562,44 @@ function(el, x) {
     macheLayerToggle('AFC', true, function(checked) { afcOn = checked; applyState(); },
       'AFC (Average Farm Cover) schaetzt den aktuellen Grasvorrat des Betriebs in kg Trockensubstanz pro Hektare (kg TS/ha). Der Ring zeigt diesen Vorrat als Fortschrittsbalken auf einer Skala von 0 bis 1500 kg TS/ha und faerbt ihn nach dem jahreszeitlichen Zielbereich: rot = deutlich zu wenig (unter 200 kg praktisch leer), gruen = im Zielbereich, blaugruen = deutlich mehr als noetig. Der Zielbereich verschiebt sich uebers Jahr, z.B. Fruehling ca. 500-700, Sommer ca. 700-800, Herbst ca. 900-1200 kg TS/ha.');
 
+    // Schieberegler fuer die Fenstergroesse (Tage) der gleitendes-Fenster-
+    // Ebenen (meteoFensterEbenen, siehe oben) - wird OBERHALB der Legende
+    // eingefuegt (layerPanel.appendChild() hier laeuft VOR dem der Legende
+    // weiter unten) und ist nur sichtbar, waehrend eine Fenster-Ebene aktiv
+    // ist (nicht bei keine Meteodaten, Bodenwasserbilanz, Wachstumsgrad-
+    // tage - siehe aktualisiereMeteoFensterSichtbarkeit()).
+    var meteoFensterWrap = null, meteoFensterInput = null, meteoFensterLabel = null;
+    function macheMeteoFensterSchieberegler() {
+      meteoFensterWrap = document.createElement('div');
+      meteoFensterWrap.className = 'gw-meteo-fenster';
+      meteoFensterLabel = document.createElement('div');
+      meteoFensterLabel.className = 'gw-meteo-fenster-label';
+      meteoFensterInput = document.createElement('input');
+      meteoFensterInput.type = 'range';
+      meteoFensterInput.min = '0';
+      meteoFensterInput.max = String(meteoFensterStufen.length - 1);
+      meteoFensterInput.step = '1';
+      meteoFensterInput.addEventListener('input', function() {
+        meteoFenster = meteoFensterStufen[parseInt(meteoFensterInput.value, 10)];
+        aktualisiereMeteoFensterAnzeige();
+        aktualisiereHintergrundEbene();
+        aktualisiereLayerLegende();
+      });
+      meteoFensterWrap.appendChild(meteoFensterLabel);
+      meteoFensterWrap.appendChild(meteoFensterInput);
+      layerPanel.appendChild(meteoFensterWrap);
+      aktualisiereMeteoFensterAnzeige();
+      aktualisiereMeteoFensterSichtbarkeit();
+    }
+    function aktualisiereMeteoFensterAnzeige() {
+      if (meteoFensterInput) meteoFensterInput.value = String(meteoFensterStufen.indexOf(meteoFenster));
+      if (meteoFensterLabel) meteoFensterLabel.textContent = 'Zeitraum: ' + meteoFenster + ' Tage';
+      aktualisiereLayerLabels();
+    }
+    function aktualisiereMeteoFensterSichtbarkeit() {
+      if (meteoFensterWrap) meteoFensterWrap.style.display = istFensterEbene(hintergrundEbene) ? 'block' : 'none';
+    }
+
     // title (nativer Browser-Tooltip) je Option mit der Quellenangabe, wie
     // einst als Untertitel bei den Export-Grafiken (siehe layerLegenden.quelle).
     // erklaerung (optional): zusaetzlicher i-Knopf mit laengerem Klartext.
@@ -2548,7 +2615,16 @@ function(el, x) {
       radio.value = value;
       radio.checked = (value === 'keine');
       radio.addEventListener('change', function() {
-        if (radio.checked) { hintergrundEbene = value; aktualisiereHintergrundEbene(); aktualisiereLayerLegende(); }
+        if (!radio.checked) return;
+        hintergrundEbene = value;
+        // Schieberegler-Fenstergroesse springt bei JEDEM Ebenenwechsel auf
+        // den fuer die neue Ebene hinterlegten Standard zurueck (siehe
+        // meteoFensterStandard oben) - kein Merken eines individuellen
+        // Werts je Ebene.
+        if (istFensterEbene(value)) meteoFenster = meteoFensterStandard[value];
+        aktualisiereMeteoFensterAnzeige();
+        aktualisiereHintergrundEbene();
+        aktualisiereLayerLegende();
       });
       var text = document.createElement('span');
       text.textContent = labelText;
@@ -2560,21 +2636,25 @@ function(el, x) {
       layerPanel.appendChild(zeile);
       return radio;
     }
-    makeLayerRadio('keine', 'Keine');
+    makeLayerRadio('keine', 'keine Meteodaten');
     radioNiederschlag = makeLayerRadio('niederschlag', layerLegenden.niederschlag.label);
-    radioNiederschlagMonat = makeLayerRadio('niederschlag_monat', layerLegenden.niederschlag_monat.label);
     radioBoden = makeLayerRadio('boden', layerLegenden.boden.label,
       'Der Boden wird vereinfacht wie ein Eimer betrachtet: Regen fuellt ihn, Verdunstung leert ihn. Ist der Eimer voll, laeuft der Ueberschuss ungenutzt ab. Wie viel taeglich verdunstet, wird aus den Temperaturen geschaetzt - ein feuchter Boden verdunstet mehr als ein bereits trockener. Der Wert zeigt den aktuellen Fuellstand: 100 mm = Boden gut mit Wasser versorgt, 0 mm = ausgetrocknet.');
     radioTemperatur = makeLayerRadio('temperatur', layerLegenden.temperatur.label,
-      'Mittlere Lufttemperatur (2m) der Woche vor dem gewaehlten Stichtag. Graswachstum beginnt erst ab einer Basistemperatur von ca. 5 Grad C spuerbar (darunter praktisch Wachstumsstillstand), das Optimum liegt bei ca. 15-20 Grad C. Ueber ca. 25 Grad C bremst Hitzestress das Wachstum trotz ausreichend Wasser wieder. Als Faustregel fuer den Wachstumsantrieb ueber mehrere Tage dient die Wachstumsgradtagsumme: Summe aus (Tagesmitteltemperatur minus 5 Grad C) an allen Tagen mit Werten darueber.');
+      'Mittlere Lufttemperatur (2m) im oben gewaehlten Zeitraum vor dem Stichtag. Graswachstum beginnt erst ab einer Basistemperatur von ca. 5 Grad C spuerbar (darunter praktisch Wachstumsstillstand), das Optimum liegt bei ca. 15-20 Grad C. Ueber ca. 25 Grad C bremst Hitzestress das Wachstum trotz ausreichend Wasser wieder. Als Faustregel fuer den Wachstumsantrieb ueber mehrere Tage dient die Wachstumsgradtagsumme: Summe aus (Tagesmitteltemperatur minus 5 Grad C) an allen Tagen mit Werten darueber.');
     radioBodentemperatur = makeLayerRadio('bodentemperatur', layerLegenden.bodentemperatur.label,
-      'ACHTUNG SCHAETZUNG, keine Feldmessung: MeteoSchweiz misst Bodentemperatur nur an einzelnen Stationen, nicht flaechendeckend als Karte. Gezeigt wird stattdessen der gleitende 14-Tage-Mittelwert der Lufttemperatur (2m) - eine grobe Naeherung an die traegere, gedaempfte oberste Bodenschicht (ca. 5-10cm). Bodentemperatur ist u.a. fuer den Vegetationsbeginn im Fruehling und die Stickstoff-Mineralisierung im Boden relevant: beides kommt unter ca. 5-8 Grad C weitgehend zum Erliegen.');
+      'ACHTUNG SCHAETZUNG, keine Feldmessung: MeteoSchweiz misst Bodentemperatur nur an einzelnen Stationen, nicht flaechendeckend als Karte. Gezeigt wird stattdessen der gleitende Mittelwert der Lufttemperatur (2m) im oben gewaehlten Zeitraum - eine grobe Naeherung an die traegere, gedaempfte oberste Bodenschicht (ca. 5-10cm); ein laengerer Zeitraum simuliert mehr Daempfung. Bodentemperatur ist u.a. fuer den Vegetationsbeginn im Fruehling und die Stickstoff-Mineralisierung im Boden relevant: beides kommt unter ca. 5-8 Grad C weitgehend zum Erliegen.');
     radioSonnenschein = makeLayerRadio('sonnenschein', layerLegenden.sonnenschein.label,
-      'Sonnenscheindauer der Woche vor dem gewaehlten Stichtag, relativ zur astronomisch maximal moeglichen Tagesdauer (0-100%, MeteoSchweiz SrelD). Mehr Sonne treibt die Photosynthese und damit das Wachstum an, erhoeht aber auch die Verdunstung (siehe ET0/Bodenwasserbilanz). Diese Daten werden erst mit 1-2 Monaten Verzoegerung aufbereitet - die allerneuesten Wochen sind deshalb oft noch nicht verfuegbar.');
+      'Sonnenscheindauer im oben gewaehlten Zeitraum vor dem Stichtag, relativ zur astronomisch maximal moeglichen Tagesdauer (0-100%, MeteoSchweiz SrelD). Mehr Sonne treibt die Photosynthese und damit das Wachstum an, erhoeht aber auch die Verdunstung (siehe ET0/Bodenwasserbilanz). Diese Daten werden erst mit 1-2 Monaten Verzoegerung aufbereitet - die allerneuesten Wochen sind deshalb oft noch nicht verfuegbar.');
     radioEt0 = makeLayerRadio('et0', layerLegenden.et0.label,
-      'Potenzielle Verdunstung (Evapotranspiration) nach der Hargreaves-Formel (FAO-56), Summe der Woche vor dem gewaehlten Stichtag - dieselbe Berechnung, die auch ins Bucket-Modell der Bodenwasserbilanz einfliesst. Zeigt, wie viel Wasser dem Boden allein durch Verdunstung entzogen wird: hohe Werte bei gleichzeitig wenig Niederschlag beguenstigen Trockenstress.');
+      'Potenzielle Verdunstung (Evapotranspiration) nach der Hargreaves-Formel (FAO-56), Summe im oben gewaehlten Zeitraum vor dem Stichtag - dieselbe Berechnung, die auch ins Bucket-Modell der Bodenwasserbilanz einfliesst. Zeigt, wie viel Wasser dem Boden allein durch Verdunstung entzogen wird: hohe Werte bei gleichzeitig wenig Niederschlag beguenstigen Trockenstress.');
     radioGdd = makeLayerRadio('gdd', layerLegenden.gdd.label,
       'Kumulierte Wachstumsgradtage seit Beginn der lokal vorhandenen Temperaturdaten: Summe aus (Tagesmitteltemperatur minus 5 Grad C) an allen Tagen mit Werten darueber, laufend aufaddiert (MeteoSchweiz TabsD). Eine in der Agronomie gebraeuchliche Faustregel fuer die pflanzenverfuegbare Waermesumme seit Vegetationsbeginn - hoehere Werte bedeuten mehr angesammelte Wachstumsbedingungen.');
+    // Nachschlagetabelle Ebenenname -> Radio, fuer aktualisiereLayerLabels()
+    // (haengt dort das Symbol/die Fenstergroesse an alle 5 Fenster-Ebenen).
+    radioJeEbene = { niederschlag: radioNiederschlag, temperatur: radioTemperatur, bodentemperatur: radioBodentemperatur, sonnenschein: radioSonnenschein, et0: radioEt0 };
+    macheMeteoFensterSchieberegler();
+    aktualisiereLayerLabels();
     layerLegendeBox = document.createElement('div');
     layerLegendeBox.className = 'gw-layer-legende';
     layerLegendeBox.style.display = 'none';
