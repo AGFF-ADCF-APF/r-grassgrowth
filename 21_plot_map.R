@@ -9,16 +9,30 @@ library(plotly)
 library(packcircles)
 
 
+# ggswissmaps' Kantons-/Seen-Polygone tragen ein veraltetes CRS-Format aus
+# einer alteren PROJ/GDAL-Version. Beim Ueberschreiben mit dem tatsaechlichen
+# CRS (21781) gibt GDAL/PROJ dafuer "old-style crs object detected..." direkt
+# auf stderr aus - UNABHAENGIG vom R-Warnungssystem (suppressWarnings() faengt
+# das deshalb nicht ab). Harmlos (das Zielkoordinatensystem stimmt trotzdem),
+# aber stoert bei jedem Lauf mehrfach die Konsolenausgabe - hier gezielt nur
+# fuer diesen einen Aufruf weggefiltert.
+ohne_veraltete_crs_meldung <- function(expr) {
+  puffer_verbindung <- textConnection("crs_meldung_puffer", "w", local = TRUE)
+  sink(puffer_verbindung, type = "message")
+  on.exit({ sink(type = "message"); close(puffer_verbindung) }, add = TRUE)
+  force(expr)
+}
+
 data(shp_sf)
 
 swk_shp <- shp_sf[["g1k15"]] %>%
-  st_as_sfc() |>
-  sf::st_sfc(crs = 21781) |>
+  st_as_sfc() %>%
+  { ohne_veraltete_crs_meldung(sf::st_sfc(., crs = 21781)) } %>%
   sf::st_transform(crs = 'WGS84')
 
 swl_shp <- shp_sf[["g1s15"]] %>%
-  st_as_sfc() |>
-  sf::st_sfc(crs = 21781) |>
+  st_as_sfc() %>%
+  { ohne_veraltete_crs_meldung(sf::st_sfc(., crs = 21781)) } %>%
   sf::st_transform(crs = 'WGS84')
 
 
