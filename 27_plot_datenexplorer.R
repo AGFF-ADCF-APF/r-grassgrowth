@@ -1935,6 +1935,11 @@ function(el, x) {
     '.gw-layer-option input:disabled + span { color: #aaa; }',
     '.gw-layer-legende { margin-top: 10px; padding-top: 10px; border-top: 1px solid #ddd; }',
     '.gw-layer-legende-balken { height: 12px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.15); }',
+    // Donut-Ring per Masken-Trick (radial-gradient schneidet die Mitte
+    // transparent) statt eines SVG - conic-gradient uebernimmt die
+    // Farbverlauf-Stuetzstellen 1:1 vom vorherigen linear-gradient-Balken.
+    '.gw-afc-ring-wrap { display: flex; justify-content: center; margin-bottom: 2px; }',
+    '.gw-afc-ring { width: 56px; height: 56px; border-radius: 50%; -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 10px), #000 calc(100% - 10px)); mask: radial-gradient(farthest-side, transparent calc(100% - 10px), #000 calc(100% - 10px)); }',
     '.gw-layer-legende-skala { display: flex; justify-content: space-between; font-size: 11px; color: #555; margin-top: 3px; }',
     '.gw-layer-legende-quelle { font-size: 10px; color: #888; margin-top: 4px; }',
     '.gw-layer-wert-anzeige { font-size: 12px; font-weight: 600; margin-top: 8px; padding-top: 8px; border-top: 1px solid #eee; }',
@@ -2163,9 +2168,16 @@ function(el, x) {
     if (!verlauf) { afcLegendeBox.style.display = 'none'; return; }
     afcLegendeBox.style.display = 'block';
     afcLegendeBox.innerHTML = '';
-    var balken = document.createElement('div');
-    balken.className = 'gw-layer-legende-balken';
-    balken.style.background = 'linear-gradient(to right, ' + verlauf.farben.join(',') + ')';
+    // Ring statt Balken - passend zum grossen AFC-Ring auf der Karte selbst
+    // (baue_afc_ring_bild()/R): conic-gradient beginnt wie dort bei 12 Uhr
+    // und laeuft im Uhrzeigersinn von 0 bis 1500 kg, dieselben Farb-
+    // Stuetzstellen (verlauf.farben) wie zuvor beim linear-gradient-Balken.
+    var ringWrap = document.createElement('div');
+    ringWrap.className = 'gw-afc-ring-wrap';
+    var ring = document.createElement('div');
+    ring.className = 'gw-afc-ring';
+    ring.style.background = 'conic-gradient(' + verlauf.farben.join(',') + ')';
+    ringWrap.appendChild(ring);
     var skala = document.createElement('div');
     skala.className = 'gw-layer-legende-skala';
     var minEl = document.createElement('span'); minEl.textContent = '0 kg';
@@ -2175,7 +2187,7 @@ function(el, x) {
     var ziel = document.createElement('div');
     ziel.className = 'gw-layer-legende-quelle';
     ziel.textContent = 'Zielbereich (aktuelle Woche): ' + verlauf.low + '–' + verlauf.high + ' kg TS/ha';
-    afcLegendeBox.appendChild(balken);
+    afcLegendeBox.appendChild(ringWrap);
     afcLegendeBox.appendChild(skala);
     afcLegendeBox.appendChild(ziel);
   }
