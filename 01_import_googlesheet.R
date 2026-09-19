@@ -46,6 +46,21 @@ daten <- daten %>% mutate(Ort = factor(Ort))
 daten$date <- as.Date(daten$date,format="%d.%m.%Y")
 daten$weeknum <- as.integer(strftime(daten$date, format = '%V'))
 
+# Doppelte Eintraege (derselbe Standort UND dasselbe Datum) kommen im Sheet
+# gelegentlich vor (z.B. versehentlich zweimal erfasste Erhebung, teils mit
+# unterschiedlichen Werten) und wuerden sonst ueberall, wo "daten" verwendet
+# wird (Karte, Kurve, Datenexplorer), zwei Punkte fuer denselben Standort am
+# selben Tag erzeugen. Nur eine Warnung mit den betroffenen Zeilen - die
+# eigentliche Korrektur/Entscheidung, welcher Wert stimmt, gehoert ins Sheet
+# (z.B. per "ignore"-Spalte, siehe oben bei graswachstum) - hier wird
+# defensiv nur die ERSTE Zeile behalten statt beide anzuzeigen.
+duplikate <- daten %>% group_by(place, date) %>% filter(n() > 1) %>% ungroup()
+if (nrow(duplikate) > 0) {
+  warning("Doppelte Eintraege (Standort + Datum) im Sheet gefunden - bitte pruefen/bereinigen (z.B. per ignore-Spalte):", call. = FALSE)
+  print(duplikate %>% select(place, Ort, date, growth, afc) %>% arrange(place, date))
+}
+daten <- daten %>% group_by(place, date) %>% filter(row_number() == 1) %>% ungroup()
+
 
 
 today <- Sys.Date()
@@ -58,12 +73,12 @@ daten$daysold <- today - daten$date
 
 
 currentdaten <- daten  %>% group_by(place) %>%
-  filter(daysold < 16) %>% 
+  filter(daysold < 16) %>%
   group_by(place) %>%
   filter(date == max(date))
 
 
-maxdaten <- currentdaten  
+maxdaten <- currentdaten
 
 maxdaten <- maxdaten %>%
   mutate(afc = case_when(
