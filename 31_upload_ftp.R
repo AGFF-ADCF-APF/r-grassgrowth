@@ -80,17 +80,27 @@ ftp_upload_file <- function(local_path, ftp_base_url, remote_rel_path, curl_hand
 # Legt einen Ordner direkt unter der FTP-Wurzel explizit per MKD an, STATT
 # sich allein auf ftp.create.missing.dirs beim eigentlichen Datei-Upload zu
 # verlassen (bei einem noch NIE existierenden Ordner hat sich das auf
-# diesem Server als unzuverlaessig erwiesen). Nutzt denselben geteilten
-# curl_handle wie alle anderen Uploads - existiert der Ordner schon
-# (Normalfall bei jedem weiteren Lauf), liefert MKD einen harmlosen Fehler,
-# der hier bewusst verschluckt wird.
-ftp_ordner_erstellen <- function(ftp_root_url, ordner_name, curl_handle) {
+# diesem Server als unzuverlaessig erwiesen).
+#
+# WICHTIG: nutzt einen EIGENEN, kurzlebigen Handle - NICHT den Handle, der
+# danach fuer die Datei-Uploads verwendet wird. Grund (per verbose-Log
+# gefunden): die "quote"-Option (der MKD-Befehl) bleibt an einem Curl-Handle
+# HAFTEN und wird bei JEDEM weiteren Request auf demselben Handle erneut
+# ausgefuehrt. Existiert der Ordner schon (Normalfall), schlaegt MKD mit
+# "550 File exists" fehl - was libcurl als Abbruch des GESAMTEN Requests
+# behandelt und die Verbindung schliesst. Mit einem geteilten Handle fuehrte
+# das dazu, dass buchstaeblich JEDER nachfolgende Datei-Upload denselben
+# (haengengebliebenen) MKD-Befehl erneut versuchte, erneut scheiterte und
+# die Verbindung erneut schloss - daher schlugen ausnahmslos ALLE Uploads
+# fehl, nicht wegen eines Server-Verbindungslimits.
+ftp_ordner_erstellen <- function(ftp_root_url, ordner_name, user, passwd) {
   tryCatch({
+    ordner_handle <- RCurl::getCurlHandle(userpwd = paste0(user, ":", passwd))
     RCurl::curlPerform(
       url = ftp_root_url,
       quote = paste0("MKD ", ordner_name),
       dirlistonly = TRUE,
-      curl = curl_handle
+      curl = ordner_handle
     )
     invisible(TRUE)
   }, error = function(e) invisible(FALSE))
@@ -120,6 +130,10 @@ ftp_upload_recursive <- function(local_dir, ftp_root_url, ordner_name, user, pas
   ftp_base_url <- paste0(ftp_root_url, ordner_name, "/")
   batches <- split(files, ceiling(seq_along(files) / batch_groesse))
 
+  # Nur EINMAL fuer den ganzen Ordner (nicht je Staffel) - ueber einen
+  # eigenen, kurzlebigen Handle (siehe Kommentar bei ftp_ordner_erstellen()).
+  ftp_ordner_erstellen(ftp_root_url, ordner_name, user, passwd)
+
   uploaded <- 0L
   for (batch_idx in seq_along(batches)) {
     batch <- batches[[batch_idx]]
@@ -127,7 +141,6 @@ ftp_upload_recursive <- function(local_dir, ftp_root_url, ordner_name, user, pas
     curl_handle <- RCurl::getCurlHandle(
       userpwd = paste0(user, ":", passwd), ftp.create.missing.dirs = TRUE, verbose = verbose
     )
-    ftp_ordner_erstellen(ftp_root_url, ordner_name, curl_handle)
     for (f in batch) {
       local_path <- file.path(local_dir, f)
       ok <- tryCatch({
