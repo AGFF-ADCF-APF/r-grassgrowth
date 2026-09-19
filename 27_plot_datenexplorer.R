@@ -242,6 +242,111 @@ if (length(jahre_mit_niederschlag) > 0) {
   }
 }
 
+## Temperatur 2m: nur fuer Jahre mit lokal vorhandenen TabsD-Rasterdaten.
+## TabsD wird (anders als RhiresD) durchgehend unter demselben Produktcode
+## taeglich publiziert - keine separate "prelim"-Variante fuer die
+## juengsten Tage noetig.
+jahr_hat_temperatur <- function(jr) any(grepl(paste0("^tabsd_", jr), list.files(geodata_dir)))
+jahre_mit_temperatur <- alle_jahre[vapply(alle_jahre, jahr_hat_temperatur, logical(1))]
+cat("Temperaturdaten lokal vorhanden fuer:", paste(jahre_mit_temperatur, collapse = ", "), "\n")
+
+temperatur_raster_je_jahr <- list()
+if (length(jahre_mit_temperatur) > 0) {
+  lade_temp_monatlich <- function(jahr_monat) {
+    f <- file.path(geodata_dir, paste0("tabsd_", jahr_monat, ".nc"))
+    if (!file.exists(f)) return(NULL)
+    rast(f)
+  }
+  lade_temp_taeglich <- function(tag) {
+    tag_id <- gsub("-", "", as.character(tag))
+    f <- file.path(geodata_dir, paste0("tabsd_", tag_id, ".nc"))
+    if (!file.exists(f)) return(NULL)
+    rast(f)
+  }
+  for (jr in jahre_mit_temperatur) {
+    monate_konsolidiert <- sprintf("%s%02d", jr, 1:12)
+    teile <- lapply(monate_konsolidiert, lade_temp_monatlich)
+    if (jr == neuestes_jahr) {
+      tage_ohne_monatsdatei <- seq(as.Date(paste0(jr, "-08-01")), Sys.Date() - 1, by = "day")
+      teile <- c(teile, lapply(tage_ohne_monatsdatei, lade_temp_taeglich))
+    }
+    teile <- teile[!vapply(teile, is.null, logical(1))]
+    if (length(teile) == 0) next
+    temperatur_raster_je_jahr[[jr]] <- rast(teile)
+    tage_temp <- as.Date(time(temperatur_raster_je_jahr[[jr]]))
+    cat("Temperatur", jr, "geladen:", format(min(tage_temp), "%d.%m.%Y"), "-", format(max(tage_temp), "%d.%m.%Y"), "\n")
+  }
+}
+
+## Sonnenscheindauer (relativ, SrelD): anders als Niederschlag/Temperatur
+## NICHT vom Nachbarrepo (r-futterbaugutachten) vorbereitet - hier selbst per
+## STAC-API heruntergeladen, aus derselben Sammlung (ch.meteoschweiz.ogd-
+## surface-derived-grid) wie RhiresD/TabsD. KEINE "prelim"-Variante fuer den
+## laufenden Monat vorhanden - fuer die letzten 1-2 Monate fehlen die Daten
+## deshalb oft noch (die betroffenen Wochen werden wie bei fehlenden
+## Niederschlagsdaten automatisch als nicht verfuegbar behandelt).
+sonnenschein_stac_base <- "https://data.geo.admin.ch/api/stac/v1/collections/ch.meteoschweiz.ogd-surface-derived-grid/items/"
+lade_sonnenschein_monat <- function(jahr_monat) {
+  dest <- file.path(geodata_dir, paste0("sreld_", jahr_monat, ".nc"))
+  if (file.exists(dest)) return(invisible(TRUE))
+  item <- tryCatch(jsonlite::fromJSON(paste0(sonnenschein_stac_base, jahr_monat, "-ch"), simplifyVector = FALSE), error = function(e) NULL)
+  if (is.null(item) || length(item$assets) == 0) return(invisible(FALSE))
+  key <- names(item$assets)[grepl("\\.sreld_", names(item$assets))]
+  if (length(key) == 0) return(invisible(FALSE))
+  href <- item$assets[[key[1]]]$href
+  tryCatch({
+    download.file(href, destfile = dest, quiet = TRUE, mode = "wb")
+    invisible(TRUE)
+  }, error = function(e) { unlink(dest); invisible(FALSE) })
+}
+# Nur fuer Jahre versucht, fuer die ohnehin schon TabsD/RhiresD lokal
+# vorhanden sind (jahre_mit_temperatur) - fuer andere Jahre hat dieses Projekt
+# ohnehin keine sonstigen Rasterdaten, ein Versuch waere reine Netzwerklast.
+for (jr in jahre_mit_temperatur) {
+  for (m in 1:12) {
+    monatsanfang <- as.Date(sprintf("%s-%02d-01", jr, m))
+    if (monatsanfang > Sys.Date()) next
+    lade_sonnenschein_monat(sprintf("%s%02d", jr, m))
+  }
+}
+jahr_hat_sonnenschein <- function(jr) any(grepl(paste0("^sreld_", jr), list.files(geodata_dir)))
+jahre_mit_sonnenschein <- alle_jahre[vapply(alle_jahre, jahr_hat_sonnenschein, logical(1))]
+cat("Sonnenscheindaten lokal vorhanden fuer:", paste(jahre_mit_sonnenschein, collapse = ", "), "\n")
+
+sonnenschein_raster_je_jahr <- list()
+if (length(jahre_mit_sonnenschein) > 0) {
+  for (jr in jahre_mit_sonnenschein) {
+    monat_dateien <- file.path(geodata_dir, paste0("sreld_", sprintf("%s%02d", jr, 1:12), ".nc"))
+    monat_dateien <- monat_dateien[file.exists(monat_dateien)]
+    if (length(monat_dateien) == 0) next
+    sonnenschein_raster_je_jahr[[jr]] <- rast(lapply(monat_dateien, rast))
+    tage_sonne <- as.Date(time(sonnenschein_raster_je_jahr[[jr]]))
+    cat("Sonnenschein", jr, "geladen:", format(min(tage_sonne), "%d.%m.%Y"), "-", format(max(tage_sonne), "%d.%m.%Y"), "\n")
+  }
+}
+
+## Kumulierte Wachstumsgradtage (Basis 5 Grad C) seit Beginn der lokal
+## vorhandenen Temperaturdaten (siehe temperatur_raster_je_jahr oben) - Mass
+## fuer die pflanzenverfuegbare Waermesumme seit Saisonbeginn (Faustregel:
+## Tagesmitteltemperatur minus 5 Grad C, negative Tage zaehlen als 0,
+## fortlaufend aufsummiert - siehe auch i-Button-Erklaerung weiter unten).
+gdd_kumuliert_je_jahr <- list()
+for (jr in names(temperatur_raster_je_jahr)) {
+  r_jahr <- temperatur_raster_je_jahr[[jr]]
+  gdd_taeglich <- clamp(r_jahr - 5, lower = 0)
+  gdd_kum <- rast(gdd_taeglich)
+  lauf <- gdd_taeglich[[1]] * 0
+  for (i in seq_len(nlyr(gdd_taeglich))) {
+    lauf <- lauf + gdd_taeglich[[i]]
+    gdd_kum[[i]] <- lauf
+  }
+  # Erst NACH der Schlaufe benennen (wie beim Bucket-Modell in
+  # 44_wasserhaushalt_meteoschweiz.R) - jede Zuweisung gdd_kum[[i]] <- lauf
+  # uebernimmt sonst zwischenzeitlich den generischen Namen von lauf.
+  time(gdd_kum) <- time(r_jahr)
+  gdd_kumuliert_je_jahr[[jr]] <- gdd_kum
+}
+
 wochen_tooltip <- function(jr, w) paste0("KW ", w, " (Woche ab ", format(montag_von_woche(jr, w), "%d.%m.%Y"), ")")
 
 # Fixer Y-Achsen-Bereich fuer BEIDE Achsen (Graswachstum links, Niederschlag
@@ -355,7 +460,7 @@ for (jr in alle_jahre) {
       d$tooltip <- wochen_tooltip(jr, d$weeknum)
       d$precip_week_gekappt <- pmin(d$precip_week, niederschlag_y_max)
       fig_kurve <- fig_kurve %>% add_trace(
-        data = d, x = ~weeknum, y = ~precip_week_gekappt, type = "bar", yaxis = "y2",
+        data = d, x = ~weeknum, y = ~precip_week_gekappt, type = "bar", yaxis = "y2", width = 0.7,
         name = paste("Niederschlag", ort), marker = list(color = "steelblue", opacity = 0.4),
         customdata = lapply(seq_len(nrow(d)), function(i) list(d$tooltip[i], d$precip_week[i])),
         hovertemplate = paste0("Niederschlag ", ort, ": %{customdata[1]:.0f} mm<br>%{customdata[0]}<extra></extra>"),
@@ -387,7 +492,7 @@ for (jr in alle_jahre) {
       d$error_oben_gekappt <- pmin(d$max_mm, niederschlag_y_max) - d$mean_mm_gekappt
       d$error_unten_gekappt <- pmax(d$mean_mm_gekappt - d$min_mm, 0)
       fig_kurve <- fig_kurve %>% add_trace(
-        data = d, x = ~weeknum, y = ~mean_mm_gekappt, type = "bar", yaxis = "y2",
+        data = d, x = ~weeknum, y = ~mean_mm_gekappt, type = "bar", yaxis = "y2", width = 0.7,
         name = paste("Niederschlag", g$label), marker = list(color = "steelblue", opacity = 0.4),
         error_y = list(type = "data", symmetric = FALSE, array = ~error_oben_gekappt, arrayminus = ~error_unten_gekappt, color = "steelblue"),
         customdata = lapply(seq_len(nrow(d)), function(i) list(d$tooltip[i], d$mean_mm[i])),
@@ -431,7 +536,7 @@ fig_kurve <- fig_kurve %>% layout(
   # aktualisiert, siehe onRender()-Block).
   shapes = list(list(type = "line", x0 = 1, x1 = 1, y0 = 0, y1 = 1, yref = "paper",
                       line = list(color = "#999", width = 1.5, dash = "dot")))
-) %>% config(responsive = TRUE)
+) %>% config(responsive = TRUE, scrollZoom = TRUE)
 
 ########################################################################
 ## 2. Kartenbasis (Kantone, Seen) - identisch zu 21_plot_map.R --------
@@ -548,7 +653,7 @@ get_afc_targets <- function(reference_date) {
   mmdd <- format(as.Date(reference_date), "%m-%d")
   match_idx <- which(mmdd >= afc_optimum_windows$start_mmdd & mmdd <= afc_optimum_windows$end_mmdd)[1]
   if (is.na(match_idx)) match_idx <- 2
-  afc_optimum_windows[match_idx, ]
+  cbind(afc_optimum_windows[match_idx, ], fenster_idx = match_idx)
 }
 afc_to_color <- function(x, optimum_low, optimum_high) {
   x <- pmax(afc_min, pmin(x, afc_max))
@@ -605,13 +710,13 @@ tage_farbe <- function(daysold) {
   grDevices::rgb(rgb_w[, 1], rgb_w[, 2], rgb_w[, 3], maxColorValue = 255)
 }
 
-baue_afc_ring_bild <- function(snap, referenzdatum) {
+# Aufgeteilt in ZWEI unabhaengige Bild-Ebenen (frueher ein einziges Bild) -
+# Graswachstum (Kreis+Zahl) und AFC (Ring+Ringlegende) sind seither je ueber
+# einen eigenen Schieberegler im Ebenen-Kasten unabhaengig ein-/ausblendbar.
+# Beide auf denselben Koordinaten (lon_range_erweitert/lat_range) gerendert,
+# damit sie deckungsgleich uebereinander liegen, wenn beide aktiv sind.
+baue_graswachstum_bild <- function(snap) {
   if (nrow(snap) == 0) return(NULL)
-  targets <- get_afc_targets(referenzdatum)
-  opt_low <- targets$optimum_low[[1]]; opt_high <- targets$optimum_high[[1]]
-  snap$has_afc <- !is.na(snap$afc)
-  snap$afc_progress <- (pmax(afc_min, pmin(snap$afc, afc_max)) - afc_min) / (afc_max - afc_min)
-  snap$afc_ring_color <- afc_to_color(snap$afc, opt_low, opt_high)
   snap$daysold_col <- tage_farbe(snap$daysold)
   snap$lon_scale <- 1 / pmax(cos(snap$lat * pi / 180), 1e-6)
 
@@ -620,15 +725,52 @@ baue_afc_ring_bild <- function(snap, referenzdatum) {
     data.frame(id = i, x = snap$lon[i] + ring_radius * snap$lon_scale[i] * cos(theta),
                y = snap$lat[i] + ring_radius * sin(theta), col = snap$daysold_col[i])
   }))
+
+  p <- ggplot() +
+    geom_polygon(data = center_circles, aes(x = x, y = y, group = id, fill = col), color = "black", linewidth = 0.6, show.legend = FALSE) +
+    geom_text(data = snap, aes(x = lon, y = lat, label = round(growth, 0)), fontface = "bold", size = 3) +
+    scale_fill_identity() +
+    coord_sf(crs = sf::st_crs(4326), xlim = lon_range_erweitert, ylim = lat_range, expand = FALSE) +
+    theme_void()
+
+  tmp_png <- tempfile(fileext = ".png")
+  hoehe_zoll <- 9 * diff(lat_range) / diff(lon_range_erweitert) * karten_scaleratio
+  ggsave(tmp_png, p, width = 9, height = hoehe_zoll, dpi = 130, bg = "transparent")
+  b64 <- base64enc::base64encode(tmp_png)
+  unlink(tmp_png)
+  list(
+    source = paste0("data:image/png;base64,", b64),
+    xref = "x", yref = "y",
+    x = lon_range_erweitert[1], y = lat_range[2],
+    sizex = diff(lon_range_erweitert), sizey = diff(lat_range),
+    xanchor = "left", yanchor = "top", sizing = "stretch", layer = "above"
+  )
+}
+
+# Gibt list(bild=..., fensterIdx=...) zurueck - fensterIdx (Index in
+# afc_optimum_windows) wird auch dann geliefert, wenn kein Standort diese
+# Woche einen AFC-Wert hat (bild dann NULL), damit die kompakte AFC-Legende
+# im Ebenen-Kasten den jahreszeitlichen Zielkorridor trotzdem anzeigen kann.
+baue_afc_ring_bild <- function(snap, referenzdatum) {
+  targets <- get_afc_targets(referenzdatum)
+  opt_low <- targets$optimum_low[[1]]; opt_high <- targets$optimum_high[[1]]
+  fenster_idx <- targets$fenster_idx[[1]]
+  if (nrow(snap) == 0) return(list(bild = NULL, fensterIdx = fenster_idx))
+  snap$has_afc <- !is.na(snap$afc)
+  snap$afc_progress <- (pmax(afc_min, pmin(snap$afc, afc_max)) - afc_min) / (afc_max - afc_min)
+  snap$afc_ring_color <- afc_to_color(snap$afc, opt_low, opt_high)
+  snap$daysold_col <- tage_farbe(snap$daysold)
+  snap$lon_scale <- 1 / pmax(cos(snap$lat * pi / 180), 1e-6)
+
   ring_hat_afc <- which(snap$has_afc)
-  # col = daysold_col (wie center_circles) - der Ring-Hintergrund war bisher
-  # fest auf "gray80" gesetzt, unabhaengig von "Tage seit Messung"; jetzt
-  # dieselbe Graustufen-Codierung wie der Wachstumskreis in der Mitte.
-  ring_bg <- if (length(ring_hat_afc) > 0) do.call(rbind, lapply(ring_hat_afc, function(i) {
+  if (length(ring_hat_afc) == 0) return(list(bild = NULL, fensterIdx = fenster_idx))
+  # col = daysold_col (wie der Wachstumskreis) - der Ring-Hintergrund war
+  # bisher fest auf "gray80" gesetzt, unabhaengig von "Tage seit Messung".
+  ring_bg <- do.call(rbind, lapply(ring_hat_afc, function(i) {
     theta <- seq(start_angle, start_angle - 2 * pi, length.out = ring_steps)
     data.frame(id = i, x = snap$lon[i] + ring_radius_outer * snap$lon_scale[i] * cos(theta),
                y = snap$lat[i] + ring_radius_outer * sin(theta), col = snap$daysold_col[i])
-  })) else NULL
+  }))
   ring_vorne <- which(snap$has_afc & snap$afc_progress > 0)
   ring_fg <- if (length(ring_vorne) > 0) do.call(rbind, lapply(ring_vorne, function(i) {
     prog <- snap$afc_progress[i]
@@ -681,10 +823,8 @@ baue_afc_ring_bild <- function(snap, referenzdatum) {
   )
 
   p <- ggplot() +
-    { if (!is.null(ring_bg)) geom_path(data = ring_bg, aes(x = x, y = y, group = id, color = col), linewidth = 1.95, lineend = "round") } +
+    geom_path(data = ring_bg, aes(x = x, y = y, group = id, color = col), linewidth = 1.95, lineend = "round") +
     { if (!is.null(ring_fg)) geom_path(data = ring_fg, aes(x = x, y = y, group = id, color = color), linewidth = 3.15, lineend = "butt", show.legend = FALSE) } +
-    geom_polygon(data = center_circles, aes(x = x, y = y, group = id, fill = col), color = "black", linewidth = 0.6, show.legend = FALSE) +
-    geom_text(data = snap, aes(x = lon, y = lat, label = round(growth, 0)), fontface = "bold", size = 3) +
     geom_segment(data = legend_ring, aes(x = x, y = y, xend = xend, yend = yend, color = farbe), linewidth = 3, lineend = "butt") +
     geom_segment(data = legend_ticks2, aes(x = x, y = y, xend = xend, yend = yend), color = "black", linewidth = 0.5) +
     geom_text(data = legend_labels2, aes(x = x, y = y, label = label, hjust = hjust, vjust = vjust),
@@ -692,7 +832,7 @@ baue_afc_ring_bild <- function(snap, referenzdatum) {
     annotate("text", x = legend_center_x, y = legend_center_y + legend_radius + 0.06,
              label = "AFC-Ziel (Grasvorrat)", hjust = 0.5, vjust = 0, fontface = "bold",
              size = legenden_ggplot_titel_size, family = "sans") +
-    scale_color_identity() + scale_fill_identity() +
+    scale_color_identity() +
     coord_sf(crs = sf::st_crs(4326), xlim = lon_range_erweitert, ylim = lat_range, expand = FALSE) +
     theme_void()
 
@@ -702,13 +842,30 @@ baue_afc_ring_bild <- function(snap, referenzdatum) {
   b64 <- base64enc::base64encode(tmp_png)
   unlink(tmp_png)
   list(
-    source = paste0("data:image/png;base64,", b64),
-    xref = "x", yref = "y",
-    x = lon_range_erweitert[1], y = lat_range[2],
-    sizex = diff(lon_range_erweitert), sizey = diff(lat_range),
-    xanchor = "left", yanchor = "top", sizing = "stretch", layer = "above"
+    bild = list(
+      source = paste0("data:image/png;base64,", b64),
+      xref = "x", yref = "y",
+      x = lon_range_erweitert[1], y = lat_range[2],
+      sizex = diff(lon_range_erweitert), sizey = diff(lat_range),
+      xanchor = "left", yanchor = "top", sizing = "stretch", layer = "above"
+    ),
+    fensterIdx = fenster_idx
   )
 }
+
+# Vorgerechneter Farbverlauf je Zielkorridor-Fenster (nur 4 verschiedene
+# Fenster ueber das ganze Jahr, siehe afc_optimum_windows) - fuer die
+# kompakte AFC-Legende im Ebenen-Kasten (CSS-Farbverlauf aus vielen
+# Stuetzstellen angenaehert, da afc_to_color() kein einfacher linearer
+# Verlauf ist).
+afc_verlauf_stuetzstellen <- seq(afc_min, afc_max, length.out = 30)
+afc_verlaeufe_je_fenster <- lapply(seq_len(nrow(afc_optimum_windows)), function(i) {
+  low <- afc_optimum_windows$optimum_low[i]; high <- afc_optimum_windows$optimum_high[i]
+  list(
+    farben = afc_to_color(afc_verlauf_stuetzstellen, low, high),
+    low = low, high = high
+  )
+})
 
 baue_kartenwerte_trace <- function(fig, snap, wertspalte, einheit, titel) {
   snap$wert <- snap[[wertspalte]]
@@ -760,7 +917,9 @@ baue_kartenwerte_trace <- function(fig, snap, wertspalte, einheit, titel) {
 
 fig_wachstum <- plot_ly(height = 560)
 map_point_orts <- list()
+graswachstum_bild_je_woche <- list()
 afc_ring_bild_je_woche <- list()
+afc_fenster_je_woche <- list()
 
 for (i in seq_len(nrow(map_wochen))) {
   jr <- map_wochen$jahr[i]; w <- map_wochen$week[i]
@@ -768,9 +927,119 @@ for (i in seq_len(nrow(map_wochen))) {
   fig_wachstum <- baue_kartenwerte_trace(fig_wachstum, snap, "growth", "kg TS/ha/Tag",
                                           paste("Wachstum", jr, "KW", w))
   map_point_orts[[i]] <- as.character(snap$Ort)
-  afc_ring_bild_je_woche[[paste(jr, w)]] <- baue_afc_ring_bild(snap, montag_von_woche(jr, w))
+  graswachstum_bild_je_woche[[paste(jr, w)]] <- baue_graswachstum_bild(snap)
+  afc_ergebnis <- baue_afc_ring_bild(snap, montag_von_woche(jr, w))
+  afc_ring_bild_je_woche[[paste(jr, w)]] <- afc_ergebnis$bild
+  afc_fenster_je_woche[[paste(jr, w)]] <- afc_ergebnis$fensterIdx
 }
+cat("Graswachstums-Hintergrundbilder erzeugt:", sum(!vapply(graswachstum_bild_je_woche, is.null, logical(1))), "\n")
 cat("AFC-Ring-Hintergrundbilder erzeugt:", sum(!vapply(afc_ring_bild_je_woche, is.null, logical(1))), "\n")
+
+########################################################################
+## 1b. MeteoSchweiz-Wetterstationen (Referenz-Ebene, standardmaessig aus) -
+##     eigener Umschalter neben "Messnetz-Standorte": zeigt die oeffentlich
+##     gemeldeten MeteoSchweiz-Automatikstationen (SwissMetNet) mit ihren
+##     aktuellsten Tageswerten (Lufttemperatur, Bodentemperatur - nur an
+##     einem Teil der Stationen gemessen -, Niederschlag, Globalstrahlung,
+##     Sonnenscheindauer). Von der Kalenderwoche UNABHAENGIG (immer der
+##     aktuellste verfuegbare Wert) - anders als die AGFF-Grasmessungen sind
+##     dies rein meteorologische Referenzstationen, kein Vegetationsbezug.
+## Quelle: ch.meteoschweiz.ogd-smn (opendata.swiss). Bodentemperatur wird
+## (Stand 2026) nur an rund 20 der 158 Automatikstationen gemessen - an
+## allen anderen zeigt der Tooltip dafuer "keine Daten".
+########################################################################
+smn_basis_url <- "https://data.geo.admin.ch/ch.meteoschweiz.ogd-smn/"
+smn_dir <- file.path(geodata_dir, "smn")
+dir.create(smn_dir, recursive = TRUE, showWarnings = FALSE)
+smn_spalten <- c("tre200d0", "tso005d0", "tso010d0", "tso020d0", "rre150d0", "gre000d0", "sre000d0")
+
+smn_daten <- tryCatch({
+  # Metadaten (Stationsliste, Parameterverfuegbarkeit je Station) - guenstig
+  # dauerhaft zwischengespeichert (aendert sich praktisch nie), anders als
+  # die taeglichen Werte-CSVs unten, die bei JEDEM Lauf frisch geladen
+  # werden (sollen den jeweils aktuellsten Stand zeigen).
+  smn_stationen_datei <- file.path(smn_dir, "meta_stations.csv")
+  if (!file.exists(smn_stationen_datei)) {
+    download.file(paste0(smn_basis_url, "ogd-smn_meta_stations.csv"), smn_stationen_datei, quiet = TRUE, mode = "wb")
+  }
+  smn_inventar_datei <- file.path(smn_dir, "meta_datainventory.csv")
+  if (!file.exists(smn_inventar_datei)) {
+    download.file(paste0(smn_basis_url, "ogd-smn_meta_datainventory.csv"), smn_inventar_datei, quiet = TRUE, mode = "wb")
+  }
+  smn_stationen_meta <- read.csv(smn_stationen_datei, sep = ";", fileEncoding = "ISO-8859-1", stringsAsFactors = FALSE)
+  smn_inventar <- read.csv(smn_inventar_datei, sep = ";", fileEncoding = "ISO-8859-1", stringsAsFactors = FALSE)
+
+  # Nur Stationen, die AKTUELL (kein Enddatum) Lufttemperatur melden -
+  # filtert stillgelegte/rein historische Stationen heraus.
+  smn_aktive_abbr <- unique(smn_inventar$station_abbr[
+    smn_inventar$parameter_shortname == "tre200d0" & trimws(smn_inventar$data_till) == ""
+  ])
+  smn_stationen_meta <- smn_stationen_meta[smn_stationen_meta$station_abbr %in% smn_aktive_abbr, ]
+  cat("MeteoSchweiz-Stationen (aktiv):", nrow(smn_stationen_meta), "\n")
+
+  # Aktuellste Tageswerte je Station: "d_recent.csv" ist ein rollierendes
+  # Jahres-CSV (laufendes Jahr bis gestern) - hier wird nur die LETZTE Zeile
+  # gebraucht, das ganze File aber trotzdem geladen (kein Teil-Download-
+  # Mechanismus fuer CSVs auf dieser Plattform verfuegbar). Fehlende Spalten
+  # (z.B. Bodentemperatur an Stationen ohne diesen Sensor) werden auf NA
+  # gesetzt statt read.csv abstuerzen zu lassen.
+  lade_smn_aktuellwert <- function(abbr) {
+    url <- paste0(smn_basis_url, tolower(abbr), "/ogd-smn_", tolower(abbr), "_d_recent.csv")
+    df <- read.csv(url, sep = ";", stringsAsFactors = FALSE)
+    if (nrow(df) == 0) return(NULL)
+    for (sp in smn_spalten) if (!sp %in% names(df)) df[[sp]] <- NA_real_
+    df[nrow(df), c("station_abbr", "reference_timestamp", smn_spalten)]
+  }
+  smn_werte_liste <- lapply(smn_stationen_meta$station_abbr, function(abbr) {
+    tryCatch(lade_smn_aktuellwert(abbr), error = function(e) NULL)
+  })
+  smn_werte_liste <- smn_werte_liste[!vapply(smn_werte_liste, is.null, logical(1))]
+  smn_werte_df <- dplyr::bind_rows(smn_werte_liste)
+  cat("MeteoSchweiz-Aktuellwerte geladen:", nrow(smn_werte_df), "von", nrow(smn_stationen_meta), "\n")
+
+  ergebnis <- smn_stationen_meta %>%
+    inner_join(smn_werte_df, by = "station_abbr") %>%
+    rename(lat = station_coordinates_wgs84_lat, lon = station_coordinates_wgs84_lon,
+           name = station_name, kanton = station_canton, hoehe = station_height_masl)
+
+  # Bodentemperatur-Zeile nur zeigen, wenn MINDESTENS eine der drei Tiefen
+  # einen Wert hat (Stationen ohne diesen Sensor haben grundsaetzlich NA in
+  # allen dreien) - einzelne fehlende Tiefen (z.B. Tagesluecke) werden als
+  # "-" statt "NA" dargestellt.
+  fmt1 <- function(x) ifelse(is.na(x), "-", formatC(x, format = "f", digits = 1))
+  fmt0 <- function(x) ifelse(is.na(x), "keine Daten", formatC(x, format = "f", digits = 0))
+  tso_zeile <- ifelse(
+    is.na(ergebnis$tso005d0) & is.na(ergebnis$tso010d0) & is.na(ergebnis$tso020d0),
+    "keine Daten",
+    paste0(fmt1(ergebnis$tso005d0), " / ", fmt1(ergebnis$tso010d0), " / ", fmt1(ergebnis$tso020d0), " °C")
+  )
+  ergebnis$hover <- paste0(
+    "<b>", ergebnis$name, "</b> (", ergebnis$kanton, ", ", round(ergebnis$hoehe), " m ü. M.)",
+    "<br>Lufttemperatur (Tagesmittel): ", ifelse(is.na(ergebnis$tre200d0), "keine Daten", paste0(fmt1(ergebnis$tre200d0), " °C")),
+    "<br>Bodentemperatur 5/10/20cm: ", tso_zeile,
+    "<br>Niederschlag (Vortag): ", ifelse(is.na(ergebnis$rre150d0), "keine Daten", paste0(fmt1(ergebnis$rre150d0), " mm")),
+    "<br>Globalstrahlung (Tagesmittel): ", ifelse(is.na(ergebnis$gre000d0), "keine Daten", paste0(fmt0(ergebnis$gre000d0), " W/m²")),
+    "<br>Sonnenscheindauer: ", ifelse(is.na(ergebnis$sre000d0), "keine Daten", paste0(fmt0(ergebnis$sre000d0), " Min")),
+    "<br>Stand: ", ergebnis$reference_timestamp
+  )
+  ergebnis
+}, error = function(e) {
+  cat("MeteoSchweiz-Stationen: Laden fehlgeschlagen -", conditionMessage(e), "\n")
+  data.frame(lon = numeric(0), lat = numeric(0), hover = character(0))
+})
+
+# Naechster (0-basierter) Trace-Index in fig_wachstum: die per-Woche-
+# Snapshot-Traces oben belegen exakt die Indizes 0..(nrow(map_wochen)-1), die
+# neue Stationen-Trace kommt direkt danach - unabhaengig von Jahr/Woche
+# EINMALIG angelegt, nicht Teil des mapWochen-Sichtbarkeits-Arrays in
+# applyMapState() (JS), daher ein eigener, separat gemerkter Index.
+smn_stationen_trace_idx <- nrow(map_wochen)
+fig_wachstum <- fig_wachstum %>% add_trace(
+  data = smn_daten, x = ~lon, y = ~lat, type = "scatter", mode = "markers",
+  marker = list(symbol = "diamond", size = 9, color = "#2b2b2b", line = list(color = "white", width = 1)),
+  hovertext = ~hover, hoverinfo = "text",
+  showlegend = FALSE, visible = FALSE, name = "MeteoSchweiz-Stationen"
+)
 
 fig_wachstum <- fig_wachstum %>% layout(
   title = list(text = "Graswachstum (kg TS/ha/Tag)", font = list(size = 16)),
@@ -778,7 +1047,7 @@ fig_wachstum <- fig_wachstum %>% layout(
   yaxis = list(visible = FALSE, range = lat_range, scaleanchor = "x", scaleratio = karten_scaleratio),
   margin = list(t = 40, b = 10, l = 10, r = 10),
   images = list(kartenbild_hintergrund)
-) %>% config(responsive = FALSE)
+) %>% config(responsive = FALSE, scrollZoom = TRUE)
 # responsive=FALSE: mit responsive=TRUE hat Plotly die Karte in der
 # kombinierten Seite (htmltools::save_html(), mehrere Widgets) wiederholt
 # auf eine falsche, zu grosse Hoehe aufgeblasen (Ueberlappung mit dem
@@ -794,15 +1063,61 @@ fig_wachstum <- fig_wachstum %>% layout(
 # INTERNER layout-Zustand korrekt 560 zeigt. Ein einmaliger, expliziter
 # Resize-Aufruf beim Binden des Widgets erzwingt die korrekte Groesse, ohne
 # die Ueberlappungs-Problematik von responsive=TRUE wieder einzufuehren.
-fig_wachstum <- htmlwidgets::onRender(fig_wachstum, "
+# scrollZoom=TRUE: erlaubt Zwei-Finger-Pinch-Zoom auf Touchgeraeten (und
+# Mausrad-Zoom) - ohne diese Option liess sich die Karte auf Mobile gar
+# nicht vergroessern (Ein-Finger-Ziehen scrollt nur die Seite).
+fig_wachstum <- htmlwidgets::onRender(fig_wachstum, sprintf("
 function(el, x) {
+  // Feste Kartenausmasse aus R (lon_range_erweitert/lat_range/
+  // karten_scaleratio) - fuer die Mobile-Neuberechnung unten EXPLIZIT
+  // mitgegeben statt sich auf Plotlys eigene scaleanchor/scaleratio-
+  // Bereichsanpassung zu verlassen: die hat sich bei mehreren
+  // relayout()-Aufrufen (Breite/Hoehe aendert sich mehrfach) als instabil
+  // erwiesen - je nach vorherigem Zwischenzustand blieb mal die x-, mal die
+  // y-Achse auf einen viel zu grossen Bereich gestreckt, mit einem winzigen
+  // Kartenfleck inmitten viel Leerraum als Resultat.
+  var xMin = %s, xMax = %s, yMitte = %s, scaleratio = %s;
+  var xSpan = xMax - xMin;
+  // Nur die Standort-Snapshot-Traces (eine je Jahr/Woche) haben ueberhaupt
+  // eine sinnvolle 'Tage seit Messung'-Farbskala - explizit auf diese
+  // Indizes beschraenkt, statt showscale ohne Index-Array zu setzen (das
+  // wuerde JEDE Trace treffen, auch spaeter hinzugefuegte wie die
+  // MeteoSchweiz-Stationen, und dort eine bedeutungslose Leer-Colorbar
+  // erzeugen).
+  var snapshotTraceIdx = Array.from({ length: %s }, function(_, i) { return i; });
   function fixiereGroesse() {
-    Plotly.relayout(el, { width: el.parentElement.clientWidth, height: 560 });
+    var breite = el.parentElement.clientWidth;
+    if (breite < 700) {
+      // Schmaler (Mobile-)Container: eigene Hoehe UND eigener y-Achsen-
+      // Bereich, beide explizit auf das Kartenformat berechnet, statt der
+      // festen Desktop-Hoehe (560px) mit Plotlys eigener (siehe oben
+      // instabiler) Bereichsanpassung. x bleibt immer auf dem vollen
+      // lon_range_erweitert (nutzt die volle Breite), y wird so berechnet,
+      // dass bei diesem Seitenverhaeltnis exakt keine Rand-Leerflaeche
+      // entsteht (weder gestaucht noch gestreckt).
+      var plotBreite = breite - 20, hoehe = Math.round(Math.max(200, plotBreite * 0.65 + 50));
+      var plotHoehe = hoehe - 50;
+      var ySpan = xSpan * plotHoehe / (scaleratio * plotBreite);
+      // Tage-seit-Messung-Farblegende (Colorbar) auf dem schmalen
+      // Handy-Bildschirm ausgeblendet: sie nimmt proportional viel Platz
+      // weg, die Graustufen sind an den Standort-Kreisen selbst ohnehin
+      // ablesbar. Per restyle (nicht nur CSS), damit Plotly den dafuer
+      // reservierten Rand auch wirklich freigibt.
+      Plotly.restyle(el, { 'marker.showscale': false }, snapshotTraceIdx);
+      Plotly.relayout(el, {
+        width: breite, height: hoehe,
+        'xaxis.range': [xMin, xMax],
+        'yaxis.range': [yMitte - ySpan / 2, yMitte + ySpan / 2]
+      });
+    } else {
+      Plotly.restyle(el, { 'marker.showscale': true }, snapshotTraceIdx);
+      Plotly.relayout(el, { width: breite, height: 560 });
+    }
   }
   fixiereGroesse();
   window.addEventListener('resize', fixiereGroesse);
 }
-")
+", lon_range_erweitert[1], lon_range_erweitert[2], mean(lat_range), karten_scaleratio, nrow(map_wochen)))
 
 ########################################################################
 ## 3b. Optionale Hintergrund-Ebenen: Niederschlag (Vorwoche) und
@@ -915,6 +1230,70 @@ if (length(jahre_mit_niederschlag) > 0) {
 }
 cat("Niederschlags-Hintergrundbilder erzeugt:", length(niederschlag_bild_je_woche), "\n")
 
+## Temperatur 2m der VORANGEHENDEN Kalenderwoche (Mittelwert TabsD) je
+## (Jahr, Woche) - ergaenzende Hintergrund-Ebene neben Niederschlag/
+## Bodenwasserbilanz. Farbskala orientiert an fuer Graswachstum relevanten
+## Schwellen: unter ca. 5°C kaum Wachstum, 15-20°C guenstig, ueber 25°C
+## Hitzestress (siehe i-Button-Erklaerung weiter unten).
+temperatur_farben <- c("darkblue", "steelblue", "lightskyblue", "palegreen3", "gold", "orange", "red")
+temperatur_quelle <- "MeteoSchweiz TabsD, 1km-Raster (Tagesmitteltemperatur 2m)."
+
+temperatur_bild_je_woche <- list()
+temperatur_werte_je_woche <- list()
+if (length(jahre_mit_temperatur) > 0) {
+  for (jr in jahre_mit_temperatur) {
+    if (!jr %in% names(temperatur_raster_je_jahr)) next
+    r_jahr <- temperatur_raster_je_jahr[[jr]]
+    tage_r <- as.Date(time(r_jahr))
+    for (w in alle_wochen) {
+      vorwoche_ende <- montag_von_woche(jr, w) - 1
+      vorwoche_start <- vorwoche_ende - 6
+      if (vorwoche_start < min(tage_r) || vorwoche_ende > max(tage_r)) next
+      idx <- which(tage_r >= vorwoche_start & tage_r <= vorwoche_ende)
+      if (length(idx) == 0) next
+      r_mittel <- mean(r_jahr[[idx]], na.rm = TRUE)
+      ergebnis <- raster_zu_datauri(r_mittel, temperatur_farben, c(0, 30))
+      temperatur_bild_je_woche[[paste(jr, w)]] <- ergebnis$bild
+      temperatur_werte_je_woche[[paste(jr, w)]] <- ergebnis$werte
+    }
+  }
+}
+cat("Temperatur-Hintergrundbilder erzeugt:", length(temperatur_bild_je_woche), "\n")
+
+## Bodentemperatur (SCHAETZUNG): gleitender 14-Tage-Mittelwert der taeglichen
+## TabsD-Lufttemperatur bis zum Stichtag (Sonntag vor der gewaehlten Woche) -
+## kein eigenes Bodentemperatur-Rasterprodukt frei verfuegbar (MeteoSchweiz
+## misst Bodentemperatur nur an einzelnen Stationen, nicht flaechendeckend
+## als Karte). Der laengere, gegenueber der Luft-Ebene traege Mittelwert
+## bildet naeherungsweise die Daempfung/Verzoegerung ab, mit der die oberste
+## Bodenschicht (ca. 5-10cm) der Lufttemperatur folgt - eine in der
+## Agrarmeteorologie gebraeuchliche Naeherung, aber KEINE Feldmessung (siehe
+## i-Button-Erklaerung weiter unten - Label/Quelle weisen entsprechend
+## explizit auf die Schaetzung hin).
+bodentemperatur_quelle <- "Schaetzung: gleitender 14-Tage-Mittelwert aus MeteoSchweiz TabsD (2m-Lufttemperatur) - keine direkte Bodenmessung."
+
+bodentemperatur_bild_je_woche <- list()
+bodentemperatur_werte_je_woche <- list()
+if (length(jahre_mit_temperatur) > 0) {
+  for (jr in jahre_mit_temperatur) {
+    if (!jr %in% names(temperatur_raster_je_jahr)) next
+    r_jahr <- temperatur_raster_je_jahr[[jr]]
+    tage_r <- as.Date(time(r_jahr))
+    for (w in alle_wochen) {
+      stichtag_ende <- montag_von_woche(jr, w) - 1
+      stichtag_start <- stichtag_ende - 13
+      if (stichtag_start < min(tage_r) || stichtag_ende > max(tage_r)) next
+      idx <- which(tage_r >= stichtag_start & tage_r <= stichtag_ende)
+      if (length(idx) == 0) next
+      r_mittel <- mean(r_jahr[[idx]], na.rm = TRUE)
+      ergebnis <- raster_zu_datauri(r_mittel, temperatur_farben, c(0, 30))
+      bodentemperatur_bild_je_woche[[paste(jr, w)]] <- ergebnis$bild
+      bodentemperatur_werte_je_woche[[paste(jr, w)]] <- ergebnis$werte
+    }
+  }
+}
+cat("Bodentemperatur-Hintergrundbilder erzeugt (Schaetzung):", length(bodentemperatur_bild_je_woche), "\n")
+
 ## Niederschlagssumme des VORMONATS (voller Kalendermonat vor dem Stichtag
 ## der gewaehlten Kalenderwoche) je (Jahr, Woche) - ergaenzende Ebene neben
 ## der Vorwochen-Summe fuer einen laengerfristigeren Trockenheits-/
@@ -977,6 +1356,87 @@ if (file.exists(speicher_tif)) {
   cat("Bodenwasserbilanz nicht verfuegbar (", speicher_tif, " nicht gefunden)\n")
 }
 
+## Sonnenscheindauer (relativ) der VORANGEHENDEN Kalenderwoche je (Jahr,
+## Woche) - Mittelwert in Prozent, analog Temperatur.
+sonnenschein_farben <- c("dimgray", "gray70", "khaki1", "gold", "orange")
+sonnenschein_quelle <- "MeteoSchweiz SrelD, 1km-Raster (Sonnenscheindauer relativ zum astronomisch Moeglichen)."
+
+sonnenschein_bild_je_woche <- list()
+sonnenschein_werte_je_woche <- list()
+if (length(jahre_mit_sonnenschein) > 0) {
+  for (jr in jahre_mit_sonnenschein) {
+    if (!jr %in% names(sonnenschein_raster_je_jahr)) next
+    r_jahr <- sonnenschein_raster_je_jahr[[jr]]
+    tage_r <- as.Date(time(r_jahr))
+    for (w in alle_wochen) {
+      vorwoche_ende <- montag_von_woche(jr, w) - 1
+      vorwoche_start <- vorwoche_ende - 6
+      if (vorwoche_start < min(tage_r) || vorwoche_ende > max(tage_r)) next
+      idx <- which(tage_r >= vorwoche_start & tage_r <= vorwoche_ende)
+      if (length(idx) == 0) next
+      r_mittel <- mean(r_jahr[[idx]], na.rm = TRUE)
+      ergebnis <- raster_zu_datauri(r_mittel, sonnenschein_farben, c(0, 100))
+      sonnenschein_bild_je_woche[[paste(jr, w)]] <- ergebnis$bild
+      sonnenschein_werte_je_woche[[paste(jr, w)]] <- ergebnis$werte
+    }
+  }
+}
+cat("Sonnenschein-Hintergrundbilder erzeugt:", length(sonnenschein_bild_je_woche), "\n")
+
+## Verdunstung ET0 (Hargreaves) der VORANGEHENDEN Kalenderwoche je (Jahr,
+## Woche) - Summe in mm, aus dem bereits in r-futterbaugutachten berechneten
+## ET0-Raster (siehe wasserhaushalt_dir, gleiche Quelle wie die
+## Bodenwasserbilanz oben).
+et0_farben <- c("lightyellow", "gold", "orange", "red")
+et0_quelle <- "Bucket-Modell-Verdunstung (Hargreaves/FAO-56) aus r-futterbaugutachten - kein Ersatz fuer Feldmessung."
+et0_tif <- file.path(wasserhaushalt_dir, "et0_hargreaves.tif")
+et0_bild_je_woche <- list()
+et0_werte_je_woche <- list()
+if (file.exists(et0_tif)) {
+  et0_r <- terra::rast(et0_tif)
+  et0_tage <- as.Date(sub("^ET0_", "", names(et0_r)))
+  for (jr in alle_jahre) {
+    for (w in alle_wochen) {
+      vorwoche_ende <- montag_von_woche(jr, w) - 1
+      vorwoche_start <- vorwoche_ende - 6
+      if (vorwoche_start < min(et0_tage) || vorwoche_ende > max(et0_tage)) next
+      idx <- which(et0_tage >= vorwoche_start & et0_tage <= vorwoche_ende)
+      if (length(idx) == 0) next
+      r_summe <- clamp(sum(et0_r[[idx]], na.rm = TRUE), lower = 0)
+      ergebnis <- raster_zu_datauri(r_summe, et0_farben, c(0, 25))
+      et0_bild_je_woche[[paste(jr, w)]] <- ergebnis$bild
+      et0_werte_je_woche[[paste(jr, w)]] <- ergebnis$werte
+    }
+  }
+  cat("ET0-Hintergrundbilder erzeugt:", length(et0_bild_je_woche), "\n")
+} else {
+  cat("ET0 nicht verfuegbar (", et0_tif, " nicht gefunden)\n")
+}
+
+## Kumulierte Wachstumsgradtage zum Stichtag (Montag) der gewaehlten
+## Kalenderwoche - aus gdd_kumuliert_je_jahr oben (bereits laufend
+## aufsummiert), exakter Tagestreffer statt Fallback wie bei der
+## Bodenwasserbilanz (temperatur_raster_je_jahr ist eine LUECKENLOSE
+## Tagesreihe, siehe Ladelogik oben - ein Fallback auf den naechstgelegenen
+## Tag ist daher nicht noetig).
+gdd_farben <- c("white", "yellow", "orange", "darkred")
+gdd_quelle <- "Kumuliert aus MeteoSchweiz TabsD (Basis 5 Grad C) seit Beginn der lokal vorhandenen Temperaturdaten."
+gdd_bild_je_woche <- list()
+gdd_werte_je_woche <- list()
+for (jr in names(gdd_kumuliert_je_jahr)) {
+  r_jahr <- gdd_kumuliert_je_jahr[[jr]]
+  tage_r <- as.Date(time(r_jahr))
+  for (w in alle_wochen) {
+    stichtag <- montag_von_woche(jr, w)
+    idx <- which(tage_r == stichtag)
+    if (length(idx) == 0) next
+    ergebnis <- raster_zu_datauri(r_jahr[[idx]], gdd_farben, c(0, 2500))
+    gdd_bild_je_woche[[paste(jr, w)]] <- ergebnis$bild
+    gdd_werte_je_woche[[paste(jr, w)]] <- ergebnis$werte
+  }
+}
+cat("Wachstumsgradtage-Hintergrundbilder erzeugt:", length(gdd_bild_je_woche), "\n")
+
 # Farbnamen -> Hex, fuer die JS-Farbverlauf-Legende (CSS linear-gradient):
 # R/X11-Farbnamen wie "khaki1" sind kein gueltiges CSS (nur das GRUND-
 # Farbwort "khaki" ist standardisiert) - ein ungueltiger Farbname macht die
@@ -1004,7 +1464,12 @@ layer_legenden <- list(
   # label OHNE Datum - das tatsaechliche Datum des Snapshots (siehe
   # bodenwasser_datum_je_woche, kann je nach Verfuegbarkeit vom Wochenbeginn
   # abweichen) wird in aktualisiereLayerLabels() live ergaenzt.
-  boden = list(label = "Bodenwasserbilanz", farben = farben_zu_hex(bodenwasser_farben), bereich = c(0, 100), einheit = "mm, von 100", quelle = bodenwasser_quelle)
+  boden = list(label = "Bodenwasserbilanz", farben = farben_zu_hex(bodenwasser_farben), bereich = c(0, 100), einheit = "mm, von 100", quelle = bodenwasser_quelle),
+  temperatur = list(label = "Temperatur 2m (Vorwoche, Mittel)", farben = farben_zu_hex(temperatur_farben), bereich = c(0, 30), einheit = "°C", quelle = temperatur_quelle),
+  bodentemperatur = list(label = "Bodentemperatur (geschaetzt)", farben = farben_zu_hex(temperatur_farben), bereich = c(0, 30), einheit = "°C", quelle = bodentemperatur_quelle),
+  sonnenschein = list(label = "Sonnenscheindauer (Vorwoche, Mittel)", farben = farben_zu_hex(sonnenschein_farben), bereich = c(0, 100), einheit = "%", quelle = sonnenschein_quelle),
+  et0 = list(label = "Verdunstung ET0 (Vorwoche, Summe)", farben = farben_zu_hex(et0_farben), bereich = c(0, 25), einheit = "mm", quelle = et0_quelle),
+  gdd = list(label = "Wachstumsgradtage (kumuliert)", farben = farben_zu_hex(gdd_farben), bereich = c(0, 2500), einheit = "°C-Tage", quelle = gdd_quelle)
 )
 
 ########################################################################
@@ -1035,6 +1500,11 @@ function(el, x) {
   var niederschlagBilder = __NIEDERSCHLAG_BILDER__;
   var niederschlagMonatBilder = __NIEDERSCHLAG_MONAT_BILDER__;
   var bodenwasserBilder = __BODENWASSER_BILDER__;
+  var temperaturBilder = __TEMPERATUR_BILDER__;
+  var bodentemperaturBilder = __BODENTEMPERATUR_BILDER__;
+  var sonnenscheinBilder = __SONNENSCHEIN_BILDER__;
+  var et0Bilder = __ET0_BILDER__;
+  var gddBilder = __GDD_BILDER__;
   var layerLegenden = __LAYER_LEGENDEN__;
   // Grobe Werte-Gitter (dieselbe, bereits stark heruntergerechnete
   // Aufloesung wie die jeweiligen Bilder) fuer die Cursor-Wertabfrage im
@@ -1042,10 +1512,22 @@ function(el, x) {
   var niederschlagWerte = __NIEDERSCHLAG_WERTE__;
   var niederschlagMonatWerte = __NIEDERSCHLAG_MONAT_WERTE__;
   var bodenwasserWerte = __BODENWASSER_WERTE__;
+  var temperaturWerte = __TEMPERATUR_WERTE__;
+  var bodentemperaturWerte = __BODENTEMPERATUR_WERTE__;
+  var sonnenscheinWerte = __SONNENSCHEIN_WERTE__;
+  var et0Werte = __ET0_WERTE__;
+  var gddWerte = __GDD_WERTE__;
   // Tatsaechlich verwendetes Datum je (Jahr, Woche) - kann vom Wochenbeginn
   // (Montag) abweichen, siehe Kommentar bei bodenwasser_datum_je_woche (R).
   var bodenwasserDatumJeWoche = __BODENWASSER_DATUM__;
+  var graswachstumBilder = __GRASWACHSTUM_BILDER__;
   var afcRingBilder = __AFC_RING_BILDER__;
+  // Index (in afc_optimum_windows/afcVerlaeufe) des jahreszeitlichen AFC-
+  // Zielkorridors je (Jahr, Woche) - fuer die kompakte AFC-Legende im
+  // Ebenen-Kasten (siehe aktualisiereAfcLegende()), unabhaengig davon, ob
+  // diese Woche ueberhaupt ein Standort mit AFC-Wert hat.
+  var afcFensterJeWoche = __AFC_FENSTER_JE_WOCHE__;
+  var afcVerlaeufe = __AFC_VERLAEUFE__;
   var kartenbildHintergrund = __KARTENBILD_HINTERGRUND__;
   var heutigeWoche = __HEUTIGE_WOCHE__;
   var standardKurveTraceIdx = __STANDARD_KURVE_TRACE_IDX__;
@@ -1064,14 +1546,33 @@ function(el, x) {
   // farbe - noetig, um sie bei Auswahl-/Jahreswechsel oder Ausschalten des
   // Schalters wieder korrekt einzufaerben (siehe aktualisiereVorjahrOverlay()).
   var vorjahrStyledTraceIdx = [];
+  // Wie vorjahrStyledTraceIdx, aber fuer die Niederschlags-Vorjahresbalken
+  // (siehe aktualisiereVorjahrOverlay()) - separat gefuehrt, da Balken andere
+  // Style-Attribute (Farbe/Breite/Fehlerbalken statt Linien-/Markerfarbe)
+  // brauchen als die Wachstumskurven.
+  var vorjahrPrecipStyledTraceIdx = [];
   var growthMapKlickGebunden = false;
   var growthMapZeigerGebunden = false;
-  // Schalter Messnetz-Daten (Ebenen-Kasten): blendet die Standort-
-  // Wachstumskreise/AFC-Ringe UND die zugehoerigen (unsichtbaren, nur fuer
-  // Hover benoetigten) Marker der Wachstumskarte komplett aus - z.B. um
-  // eine Hintergrund-Ebene (Niederschlag/Bodenwasserbilanz) ungestoert zu
-  // betrachten. Default an (Messnetz-Daten sind der Hauptzweck der Karte).
+  // Schalter Messnetz-Standorte (Ebenen-Kasten): blendet die (unsichtbaren,
+  // nur fuer Hover benoetigten) Marker der Wachstumskarte komplett aus -
+  // z.B. um eine Hintergrund-Ebene (Niederschlag/Bodenwasserbilanz)
+  // ungestoert zu betrachten. Default an (Messnetz-Standorte sind der
+  // Hauptzweck der Karte). Graswachstum-Kreis und AFC-Ring (die BILD-
+  // Ebenen) haben je einen EIGENEN Schalter, siehe graswachstumOn/afcOn.
   var messnetzOn = true;
+  var graswachstumOn = true;
+  var afcOn = true;
+  // Schalter MeteoSchweiz-Stationen (Ebenen-Kasten, neben Messnetz-
+  // Standorte): Default AUS - reine Referenz-Ebene, nicht Teil der
+  // eigentlichen AGFF-Auswertung. smnStationenTraceIdx zeigt auf die EINE,
+  // von Jahr/Woche unabhaengige Trace (siehe R: smn_stationen_trace_idx).
+  var smnStationenOn = false;
+  var smnStationenTraceIdx = __SMN_STATIONEN_TRACE_IDX__;
+  // Trace-Index des per PLZ/Ort-Suche gesetzten Fadenkreuz-Markers auf der
+  // Wachstumskarte (siehe platziereFadenkreuz()) - null, solange noch nie
+  // gesucht wurde; die Trace wird beim ersten Treffer einmalig per
+  // Plotly.addTraces() angelegt und danach nur noch verschoben.
+  var fadenkreuzTraceIdx = null;
   var hintergrundEbene = 'keine';
   var selectedYear = neuestesJahr;
   var selectedWeek = __START_WOCHE__;
@@ -1131,6 +1632,19 @@ function(el, x) {
       );
       vorjahrStyledTraceIdx = [];
     }
+    // Nur Farbe/Breite/Fehlerbalken zuruecksetzen, NICHT 'visible' - die
+    // eigentliche Sichtbarkeit je Trace wird bereits durch das volle vis[]-
+    // Array in applyState() (vor dem Aufruf dieser Funktion) korrekt gesetzt;
+    // ein zusaetzliches 'visible:false' hier wuerde einen frisch auf true
+    // gesetzten Balken sofort wieder ausblenden, falls das Vorjahr der
+    // vorherigen Auswahl zufaellig das NEU gewaehlte Jahr ist.
+    if (vorjahrPrecipStyledTraceIdx.length > 0) {
+      Plotly.restyle(el,
+        { 'marker.color': 'steelblue', width: 0.7, 'error_y.visible': true },
+        vorjahrPrecipStyledTraceIdx
+      );
+      vorjahrPrecipStyledTraceIdx = [];
+    }
     if (!vorjahrOn) return;
 
     var vorjahr = String(parseInt(selectedYear, 10) - 1);
@@ -1150,8 +1664,36 @@ function(el, x) {
       traceIdxListe.push(m.traceIdx);
       vorjahrStyledTraceIdx.push({ traceIdx: m.traceIdx, color: 'black' });
     });
-    if (traceIdxListe.length === 0) return;
-    Plotly.restyle(el, { visible: true, 'line.color': grau, 'marker.color': grau }, traceIdxListe);
+    if (traceIdxListe.length > 0) Plotly.restyle(el, { visible: true, 'line.color': grau, 'marker.color': grau }, traceIdxListe);
+
+    // Niederschlag-Vorjahresbalken: schmalere, graue Saeule fuer das Vorjahr,
+    // sichtbar HINTER dem (bereits halbtransparenten, breiteren) Balken des
+    // aktuellen Jahres - beide Traces liegen dank barmode=overlay und
+    // aufsteigend sortierter Jahresreihenfolge bereits in der richtigen
+    // Zeichenreihenfolge (Vorjahr zuerst angelegt = unten, aktuelles Jahr
+    // danach = oben), es muss also nur noch Sichtbarkeit/Stil umgeschaltet
+    // werden. Fehlerbalken (nur bei Gruppen-Niederschlag) werden fuer die
+    // Vorjahres-Saeule ausgeblendet, um die Darstellung nicht zu ueberladen.
+    if (precipOn) {
+      var precipTraceIdxListe = [];
+      sitePrecipMeta.forEach(function(m) {
+        if (m.year !== vorjahr || !el.data[m.traceIdx] || el.data[m.traceIdx].type !== 'bar') return;
+        if (!(selection.type === 'site' && m.siteIdx === selection.idx)) return;
+        precipTraceIdxListe.push(m.traceIdx);
+      });
+      groupPrecipMeta.forEach(function(m) {
+        if (m.year !== vorjahr || !el.data[m.traceIdx] || el.data[m.traceIdx].type !== 'bar') return;
+        if (selection.type !== 'group' || m.groupIdx !== selection.idx) return;
+        precipTraceIdxListe.push(m.traceIdx);
+      });
+      if (precipTraceIdxListe.length > 0) {
+        Plotly.restyle(el,
+          { visible: true, 'marker.color': 'rgba(90,90,90,0.9)', width: 0.35, 'error_y.visible': false },
+          precipTraceIdxListe
+        );
+        vorjahrPrecipStyledTraceIdx = precipTraceIdxListe;
+      }
+    }
   }
 
   function applyXAxis() {
@@ -1241,6 +1783,8 @@ function(el, x) {
     Plotly.relayout(el, { 'shapes[0].x0': selectedWeek, 'shapes[0].x1': selectedWeek });
     aktualisiereHintergrundEbene();
     aktualisiereLayerLabels();
+    aktualisiereAfcLegende();
+    aktualisiereSmnStationen();
   }
 
   // Ergaenzt das tatsaechliche Datum des Bodenwasserbilanz-Snapshots im
@@ -1273,25 +1817,48 @@ function(el, x) {
     if (hintergrundEbene === 'niederschlag') bild = niederschlagBilder[schluessel];
     else if (hintergrundEbene === 'niederschlag_monat') bild = niederschlagMonatBilder[schluessel];
     else if (hintergrundEbene === 'boden') bild = bodenwasserBilder[schluessel];
+    else if (hintergrundEbene === 'temperatur') bild = temperaturBilder[schluessel];
+    else if (hintergrundEbene === 'bodentemperatur') bild = bodentemperaturBilder[schluessel];
+    else if (hintergrundEbene === 'sonnenschein') bild = sonnenscheinBilder[schluessel];
+    else if (hintergrundEbene === 'et0') bild = et0Bilder[schluessel];
+    else if (hintergrundEbene === 'gdd') bild = gddBilder[schluessel];
     var basisBilder = bild ? [kartenbildHintergrund, bild] : [kartenbildHintergrund];
-    // AFC-Ring-Bild (Standort-Wachstumskreise + Ring) liegt IMMER ueber
-    // der Kartenbasis/optionalen Hintergrund-Ebene, unabhaengig von deren
-    // Auswahl - beide Bild-layer-Werte (below/above) werden von Plotly
-    // relativ zu allen Traces gestapelt, siehe layer:above in
-    // baue_afc_ring_bild().
-    var ringBild = messnetzOn ? afcRingBilder[schluessel] : null;
-    var alleBilder = ringBild ? basisBilder.concat([ringBild]) : basisBilder;
+    // AFC-Ring und Graswachstum-Kreis liegen IMMER ueber der Kartenbasis/
+    // optionalen Hintergrund-Ebene, unabhaengig von deren Auswahl - jede
+    // Ebene einzeln per eigenem Schalter (Ebenen-Kasten) ein-/ausblendbar.
+    // Reihenfolge wichtig: AFC-Ring zuerst, Graswachstum-Kreis darueber
+    // (deckt sonst den Ring-Innenbereich zu, wie im urspruenglichen
+    // kombinierten Bild).
+    var zusatzBilder = [];
+    if (afcOn && afcRingBilder[schluessel]) zusatzBilder.push(afcRingBilder[schluessel]);
+    if (graswachstumOn && graswachstumBilder[schluessel]) zusatzBilder.push(graswachstumBilder[schluessel]);
+    var alleBilder = basisBilder.concat(zusatzBilder);
     Plotly.relayout(growthMapGd, { images: alleBilder });
+  }
+
+  // MeteoSchweiz-Stationen: einzige, von Jahr/Woche unabhaengige Trace
+  // (smnStationenTraceIdx) - nur Sichtbarkeit umschalten, keine Bild-/
+  // Datenneuberechnung noetig (die Werte sind bereits beim Seitenaufbau in
+  // R fest in den Hovertext gebacken, siehe smn_daten).
+  function aktualisiereSmnStationen() {
+    var growthMapGd = document.querySelector('#datenexplorer-growthmap .js-plotly-plot');
+    if (!growthMapGd) return;
+    Plotly.restyle(growthMapGd, { visible: smnStationenOn }, [smnStationenTraceIdx]);
   }
 
   // Styles --------------------------------------------------------------
   var style = document.createElement('style');
   style.textContent = [
+    // Globaler box-sizing-Reset: mehrere Elemente kombinieren feste width
+    // mit padding/border (z.B. .gw-combo input, .gw-info-btn) - ohne
+    // border-box wuerden solche Elemente breiter als angegeben, was auf
+    // schmalen (Mobile-)Viewports zu horizontalem Ueberlauf fuehren kann.
+    '*, *:before, *:after { box-sizing: border-box; }',
     '.gw-title { font-family: sans-serif; font-size: 22px; font-weight: 600; margin: 4px 0 10px 0; }',
     '.gw-controls { margin-bottom: 10px; font-family: sans-serif; font-size: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 20px; }',
-    '.gw-combo { position: relative; display: inline-block; }',
-    '.gw-combo input { padding: 5px 8px; font-size: 14px; width: 240px; border: 1px solid #bbb; border-radius: 4px; }',
-    '.gw-combo-list { position: absolute; z-index: 1000; top: 100%; left: 0; background: white; border: 1px solid #bbb; border-radius: 4px; max-height: 260px; overflow-y: auto; width: 240px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }',
+    '.gw-combo { position: relative; display: inline-block; max-width: 100%; }',
+    '.gw-combo input { padding: 5px 8px; font-size: 14px; width: 240px; max-width: 100%; border: 1px solid #bbb; border-radius: 4px; }',
+    '.gw-combo-list { position: absolute; z-index: 1000; top: 100%; left: 0; background: white; border: 1px solid #bbb; border-radius: 4px; max-height: 260px; overflow-y: auto; width: 240px; max-width: 100%; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }',
     '.gw-combo-item { padding: 6px 9px; cursor: pointer; }',
     '.gw-combo-item:hover, .gw-combo-item.active { background: #eaf2fb; }',
     '.gw-combo-sep { padding: 4px 9px; font-size: 11px; color: #888; border-top: 1px solid #eee; margin-top: 2px; user-select: none; }',
@@ -1303,7 +1870,7 @@ function(el, x) {
     '.gw-info-wrap { position: relative; display: inline-flex; }',
     '.gw-info-btn { width: 16px; height: 16px; border-radius: 50%; border: 1px solid #888; background: white; color: #555; font-size: 11px; line-height: 1; cursor: pointer; padding: 0; display: flex; align-items: center; justify-content: center; font-style: italic; font-family: Georgia, serif; flex-shrink: 0; }',
     '.gw-info-btn:hover { background: #eaf2fb; border-color: #4a90d9; color: #2a6fbf; }',
-    '.gw-info-popup { position: absolute; z-index: 20; top: 20px; left: 0; width: 210px; background: white; border: 1px solid #bbb; border-radius: 6px; padding: 10px 12px; font-size: 12px; line-height: 1.4; color: #333; box-shadow: 0 2px 10px rgba(0,0,0,0.15); cursor: auto; }',
+    '.gw-info-popup { position: absolute; z-index: 20; top: 20px; left: 0; width: 210px; max-width: 85vw; background: white; border: 1px solid #bbb; border-radius: 6px; padding: 10px 12px; font-size: 12px; line-height: 1.4; color: #333; box-shadow: 0 2px 10px rgba(0,0,0,0.15); cursor: auto; }',
     '.gw-layer-option input:disabled + span { color: #aaa; }',
     '.gw-layer-legende { margin-top: 10px; padding-top: 10px; border-top: 1px solid #ddd; }',
     '.gw-layer-legende-balken { height: 12px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.15); }',
@@ -1352,7 +1919,22 @@ function(el, x) {
     '.gw-step-btn { flex: 0 0 auto; width: 30px; height: 30px; border: 1px solid #bbb; border-radius: 4px; background: white; cursor: pointer; font-size: 12px; display: flex; align-items: center; justify-content: center; color: #333; }',
     '.gw-step-btn:hover { background: #eaf2fb; border-color: #4a90d9; }',
     '.gw-today-btn { width: auto; padding: 0 12px; font-size: 13px; font-weight: 600; margin-left: auto; }',
-    '.gw-zukunft-maske { position: absolute; background: rgba(0,0,0,0.4); border-radius: 3px; pointer-events: none; z-index: 2; }'
+    '.gw-zukunft-maske { position: absolute; background: rgba(0,0,0,0.4); border-radius: 3px; pointer-events: none; z-index: 2; }',
+    // Mobile: Kurve + Standort-Legende nebeneinander (Legende fix 210px)
+    // liesse auf einem Telefon (~375px) fuer die Kurve selbst kaum noch
+    // Platz - deshalb unterhalb 700px gestapelt statt nebeneinander.
+    // .collapsed kombiniert sich mit der Basisregel (dort width:0/flex-
+    // basis:0 - im Spaltenlayout die HORIZONTALE Ausdehnung) und kappt hier
+    // zusaetzlich die Hoehe (max-height/padding/overflow), damit die
+    // Legende beim Einklappen in beiden Layouts vollstaendig verschwindet.
+    '@media (max-width: 700px) {' +
+    '  .gw-chart-row { flex-direction: column; }' +
+    '  .gw-legend-panel { flex: 1 1 auto; width: 100%; border-left: none; border-top: 1px solid #ddd; max-height: 260px; }' +
+    '  .gw-legend-panel.collapsed { max-height: 0; overflow: hidden; padding-top: 0; padding-bottom: 0; border-top-color: transparent; }' +
+    '  .gw-legend-edge { order: -1; flex-direction: row; width: 100%; justify-content: flex-end; border-left: none; border-top: 1px solid #ddd; padding: 6px 0; }' +
+    '  .gw-info-btn { width: 22px; height: 22px; font-size: 13px; }' +
+    '  .gw-step-btn { width: 34px; height: 34px; }' +
+    '}'
   ].join(' ');
   document.head.appendChild(style);
 
@@ -1395,6 +1977,7 @@ function(el, x) {
     item.addEventListener('mousedown', function(e) {
       e.preventDefault();
       selection = { type: o.type, idx: o.idx };
+      if (o.type === 'site') aktiviereVorjahrFuerEinzelstandort();
       input.value = o.label;
       list.style.display = 'none';
       applyState();
@@ -1424,9 +2007,22 @@ function(el, x) {
     } else {
       vorherigeSelection = { type: selection.type, idx: selection.idx };
       selection = { type: 'site', idx: siteIdx };
+      aktiviereVorjahrFuerEinzelstandort();
     }
     input.value = selection.type === 'group' ? groupLabels[selection.idx] : siteNames[selection.idx];
     applyState();
+  }
+
+  // Bei Auswahl eines EINZELNEN Standorts (statt einer Gruppe) ist der
+  // Vergleich mit dem Vorjahr besonders aussagekraeftig (nur eine Kurve statt
+  // vieler ueberlagerter) - der Schalter wird deshalb automatisch aktiviert,
+  // falls er noch aus war. Manuelles Wiederausschalten durch die Nutzerin
+  // bleibt danach erhalten (wird NICHT bei jedem applyState() erneut erzwungen,
+  // nur genau bei diesem Auswahlwechsel).
+  function aktiviereVorjahrFuerEinzelstandort() {
+    if (vorjahrOn) return;
+    vorjahrOn = true;
+    if (vorjahrToggleWrap && vorjahrToggleWrap.checkbox) vorjahrToggleWrap.checkbox.checked = true;
   }
 
   var yearSelect = document.createElement('select');
@@ -1458,14 +2054,25 @@ function(el, x) {
   // Hintergrund-Ebenen - befuellen einen leeren Platzhalter-Container aus
   // dem HTML (analog zum Kalenderwochen-Schieberegler weiter unten).
   var mapControlsContainer = document.getElementById('datenexplorer-map-controls');
-  var radioNiederschlag = null, radioNiederschlagMonat = null, radioBoden = null;
+  var radioNiederschlag = null, radioNiederschlagMonat = null, radioBoden = null, radioTemperatur = null, radioBodentemperatur = null;
+  var radioSonnenschein = null, radioEt0 = null, radioGdd = null;
   function aktualisiereLayerVerfuegbarkeit() {
     if (radioNiederschlag) radioNiederschlag.disabled = !jahrHatBild(niederschlagBilder, selectedYear);
     if (radioNiederschlagMonat) radioNiederschlagMonat.disabled = !jahrHatBild(niederschlagMonatBilder, selectedYear);
     if (radioBoden) radioBoden.disabled = !jahrHatBild(bodenwasserBilder, selectedYear);
+    if (radioTemperatur) radioTemperatur.disabled = !jahrHatBild(temperaturBilder, selectedYear);
+    if (radioBodentemperatur) radioBodentemperatur.disabled = !jahrHatBild(bodentemperaturBilder, selectedYear);
+    if (radioSonnenschein) radioSonnenschein.disabled = !jahrHatBild(sonnenscheinBilder, selectedYear);
+    if (radioEt0) radioEt0.disabled = !jahrHatBild(et0Bilder, selectedYear);
+    if (radioGdd) radioGdd.disabled = !jahrHatBild(gddBilder, selectedYear);
     if ((hintergrundEbene === 'niederschlag' && radioNiederschlag && radioNiederschlag.disabled) ||
         (hintergrundEbene === 'niederschlag_monat' && radioNiederschlagMonat && radioNiederschlagMonat.disabled) ||
-        (hintergrundEbene === 'boden' && radioBoden && radioBoden.disabled)) {
+        (hintergrundEbene === 'boden' && radioBoden && radioBoden.disabled) ||
+        (hintergrundEbene === 'temperatur' && radioTemperatur && radioTemperatur.disabled) ||
+        (hintergrundEbene === 'bodentemperatur' && radioBodentemperatur && radioBodentemperatur.disabled) ||
+        (hintergrundEbene === 'sonnenschein' && radioSonnenschein && radioSonnenschein.disabled) ||
+        (hintergrundEbene === 'et0' && radioEt0 && radioEt0.disabled) ||
+        (hintergrundEbene === 'gdd' && radioGdd && radioGdd.disabled)) {
       hintergrundEbene = 'keine';
       var radioKeineEl = mapControlsContainer && mapControlsContainer.querySelector('input[value=keine]');
       if (radioKeineEl) radioKeineEl.checked = true;
@@ -1480,6 +2087,36 @@ function(el, x) {
   var wertAnzeigeEl = null;
   var koordinatenEl = null;
   var ortschaftEl = null;
+  var afcLegendeBox = null;
+  // Kompakte AFC-Legende im Ebenen-Kasten (zusaetzlich zur grossen Ring-
+  // Legende auf der Karte selbst) - nur sichtbar, wenn der AFC-Schalter an
+  // ist (Default), und mit dem jahreszeitlichen Zielbereich der GERADE
+  // gewaehlten Kalenderwoche (kann je nach Woche wechseln, siehe
+  // afc_optimum_windows/R).
+  function aktualisiereAfcLegende() {
+    if (!afcLegendeBox) return;
+    if (!afcOn) { afcLegendeBox.style.display = 'none'; return; }
+    var fensterIdx = afcFensterJeWoche[selectedYear + ' ' + selectedWeek];
+    var verlauf = fensterIdx ? afcVerlaeufe[fensterIdx - 1] : null;
+    if (!verlauf) { afcLegendeBox.style.display = 'none'; return; }
+    afcLegendeBox.style.display = 'block';
+    afcLegendeBox.innerHTML = '';
+    var balken = document.createElement('div');
+    balken.className = 'gw-layer-legende-balken';
+    balken.style.background = 'linear-gradient(to right, ' + verlauf.farben.join(',') + ')';
+    var skala = document.createElement('div');
+    skala.className = 'gw-layer-legende-skala';
+    var minEl = document.createElement('span'); minEl.textContent = '0 kg';
+    var maxEl = document.createElement('span'); maxEl.textContent = '1500 kg';
+    skala.appendChild(minEl);
+    skala.appendChild(maxEl);
+    var ziel = document.createElement('div');
+    ziel.className = 'gw-layer-legende-quelle';
+    ziel.textContent = 'Zielbereich (aktuelle Woche): ' + verlauf.low + '–' + verlauf.high + ' kg TS/ha';
+    afcLegendeBox.appendChild(balken);
+    afcLegendeBox.appendChild(skala);
+    afcLegendeBox.appendChild(ziel);
+  }
   function aktualisiereLayerLegende() {
     if (!layerLegendeBox) return;
     var info = layerLegenden[hintergrundEbene];
@@ -1525,6 +2162,11 @@ function(el, x) {
     if (hintergrundEbene === 'niederschlag') return niederschlagWerte;
     if (hintergrundEbene === 'niederschlag_monat') return niederschlagMonatWerte;
     if (hintergrundEbene === 'boden') return bodenwasserWerte;
+    if (hintergrundEbene === 'temperatur') return temperaturWerte;
+    if (hintergrundEbene === 'bodentemperatur') return bodentemperaturWerte;
+    if (hintergrundEbene === 'sonnenschein') return sonnenscheinWerte;
+    if (hintergrundEbene === 'et0') return et0Werte;
+    if (hintergrundEbene === 'gdd') return gddWerte;
     return null;
   }
   // Naeherungsformel swisstopo (WGS84 -> LV95, Genauigkeit ca. 1-2m,
@@ -1629,14 +2271,124 @@ function(el, x) {
     layerHeading.textContent = 'Ebenen';
     layerPanel.appendChild(layerHeading);
 
-    // Messnetz-Daten (Standort-Wachstumskreise + AFC-Ringe) ist die
-    // eigentliche Kartenebene, unabhaengig von der optionalen Hintergrund-
-    // Rasterebene weiter unten - deshalb als eigener Schalter, standardmaessig
-    // an, statt als weitere Radio-Option.
-    var messnetzToggleWrap = makeToggle('Messnetz-Daten', true, function(checked) { messnetzOn = checked; applyState(); });
-    messnetzToggleWrap.title = 'Standort-Wachstumskreise und AFC-Ringe ein-/ausblenden';
+    // PLZ/Ort-Suche: swisstopo-SearchServer (dieselbe oeffentliche API wie
+    // fuer die Cursor-Ortsabfrage) liefert Vorschlaege waehrend des Tippens
+    // (origins=zipcode,gg25 deckt Postleitzahlen UND Gemeindenamen ab).
+    // Bei Auswahl (Klick oder Enter) wird ein Fadenkreuz-Marker auf die
+    // Karte gesetzt und per Plotly.Fx.hover() dessen Tooltip (Ortsname,
+    // Ebenen-Wert an dieser Stelle, LV95-Koordinaten) sofort angezeigt -
+    // zusaetzlich aktualisiert sich das normale Cursor-Anzeigefeld gleich
+    // mit (zeigeWertAmPunkt()).
+    var sucheWrap = document.createElement('div');
+    sucheWrap.className = 'gw-combo';
+    sucheWrap.style.marginBottom = '10px';
+    sucheWrap.style.display = 'block';
+    var sucheInput = document.createElement('input');
+    sucheInput.type = 'text';
+    sucheInput.placeholder = 'PLZ oder Ort suchen…';
+    sucheInput.style.width = '100%';
+    var sucheListe = document.createElement('div');
+    sucheListe.className = 'gw-combo-list';
+    sucheListe.style.display = 'none';
+    sucheListe.style.width = '100%';
+    sucheWrap.appendChild(sucheInput);
+    sucheWrap.appendChild(sucheListe);
+    layerPanel.appendChild(sucheWrap);
+
+    var sucheTimer = null;
+    var sucheErgebnisse = [];
+    function ortsLabelKlartext(treffer) { return treffer.attrs.label.replace(new RegExp('</?b>', 'g'), ''); }
+    function sucheOrteVorschlaege(text) {
+      if (!text || text.length < 2) { sucheListe.style.display = 'none'; return; }
+      var url = 'https://api3.geo.admin.ch/rest/services/api/SearchServer' +
+        '?searchText=' + encodeURIComponent(text) + '&type=locations&origins=zipcode,gg25&limit=8&sr=2056';
+      fetch(url).then(function(r) { return r.json(); }).then(function(daten) {
+        sucheErgebnisse = (daten && daten.results) || [];
+        sucheListe.innerHTML = '';
+        sucheErgebnisse.forEach(function(treffer) {
+          var item = document.createElement('div');
+          item.className = 'gw-combo-item';
+          item.textContent = ortsLabelKlartext(treffer);
+          item.addEventListener('mousedown', function(evt) {
+            evt.preventDefault();
+            waehleSucheErgebnis(treffer);
+          });
+          sucheListe.appendChild(item);
+        });
+        sucheListe.style.display = sucheErgebnisse.length > 0 ? 'block' : 'none';
+      }).catch(function() { sucheListe.style.display = 'none'; });
+    }
+    function waehleSucheErgebnis(treffer) {
+      sucheInput.value = ortsLabelKlartext(treffer);
+      sucheListe.style.display = 'none';
+      platziereFadenkreuz(treffer.attrs.lon, treffer.attrs.lat, ortsLabelKlartext(treffer));
+    }
+    sucheInput.addEventListener('input', function() {
+      clearTimeout(sucheTimer);
+      var text = sucheInput.value;
+      sucheTimer = setTimeout(function() { sucheOrteVorschlaege(text); }, 300);
+    });
+    sucheInput.addEventListener('keydown', function(evt) {
+      if (evt.key === 'Enter' && sucheErgebnisse.length > 0) {
+        evt.preventDefault();
+        waehleSucheErgebnis(sucheErgebnisse[0]);
+      }
+    });
+    sucheInput.addEventListener('blur', function() {
+      setTimeout(function() { sucheListe.style.display = 'none'; }, 150);
+    });
+
+    // Setzt (bzw. verschiebt) den Fadenkreuz-Marker auf lon/lat und zeigt
+    // per Plotly.Fx.hover() sofort dessen Tooltip - der Ortsname kommt
+    // direkt aus dem Suchtreffer (keine erneute Ortsabfrage noetig, wir
+    // haben ja gerade danach gesucht), Ebenen-Wert/Koordinaten wie beim
+    // Cursor-Anzeigefeld berechnet.
+    function platziereFadenkreuz(lon, lat, ortsName) {
+      var growthMapGd = document.querySelector('#datenexplorer-growthmap .js-plotly-plot');
+      if (!growthMapGd) return;
+      var lv95 = wgs84ZuLv95(lon, lat);
+      var zeilen = ['<b>' + ortsName + '</b>'];
+      var gitterJeWoche = aktivesWerteGitter();
+      var info = layerLegenden[hintergrundEbene];
+      var gitter = gitterJeWoche ? gitterJeWoche[selectedYear + ' ' + selectedWeek] : null;
+      if (gitter && info) {
+        var col = Math.floor((lon - gitter.x0) / (gitter.x1 - gitter.x0) * gitter.ncol);
+        var row = Math.floor((gitter.y1 - lat) / (gitter.y1 - gitter.y0) * gitter.nrow);
+        if (col >= 0 && col < gitter.ncol && row >= 0 && row < gitter.nrow) {
+          var wert = gitter.m[row][col];
+          zeilen.push((wert === null || wert === undefined) ? 'Wert: keine Daten' : 'Wert: ' + wert + ' ' + info.einheit);
+        } else {
+          zeilen.push('Wert: ausserhalb der Schweiz');
+        }
+      }
+      zeilen.push('Koordinaten: ' + Math.round(lv95.e) + ' / ' + Math.round(lv95.n) + ' (LV95)');
+      var hoverText = zeilen.join('<br>');
+      if (fadenkreuzTraceIdx === null) {
+        Plotly.addTraces(growthMapGd, {
+          x: [lon], y: [lat], type: 'scatter', mode: 'markers',
+          marker: { symbol: 'cross-thin-open', size: 26, color: '#e6194b', line: { width: 2.5 } },
+          hoverinfo: 'text', hovertext: [hoverText], showlegend: false, name: 'Suche'
+        });
+        fadenkreuzTraceIdx = growthMapGd.data.length - 1;
+      } else {
+        Plotly.restyle(growthMapGd, { x: [[lon]], y: [[lat]], hovertext: [[hoverText]], visible: [true] }, [fadenkreuzTraceIdx]);
+      }
+      Plotly.Fx.hover(growthMapGd, [{ curveNumber: fadenkreuzTraceIdx, pointNumber: 0 }]);
+      zeigeWertAmPunkt(lon, lat);
+    }
+
+    // Messnetz-Standorte (die Standort-Positionen selbst, per Hover
+    // abfragbar) ist die Basisebene, unabhaengig von der optionalen
+    // Hintergrund-Rasterebene weiter unten - deshalb als eigener Schalter,
+    // standardmaessig an, statt als weitere Radio-Option. Graswachstum-
+    // Kreis und AFC-Ring sind je eigene Bild-Ebenen mit eigenem Schalter
+    // (siehe weiter unten), unabhaengig ein-/ausblendbar.
+    var messnetzToggleWrap = schalterLinksbuendig(makeToggle('Messnetz-Standorte', true, function(checked) { messnetzOn = checked; applyState(); }));
+    messnetzToggleWrap.title = 'Hoverbare Standort-Positionen auf der Karte ein-/ausblenden';
     messnetzToggleWrap.className += ' gw-layer-messnetz-toggle';
     layerPanel.appendChild(messnetzToggleWrap);
+    macheLayerToggle('MeteoSchweiz-Stationen', false, function(checked) { smnStationenOn = checked; aktualisiereSmnStationen(); },
+      'Zeigt die oeffentlichen MeteoSchweiz-Automatikstationen (SwissMetNet) mit ihren aktuellsten Tageswerten (Lufttemperatur, Bodentemperatur, Niederschlag, Globalstrahlung, Sonnenscheindauer) als Diamant-Symbole. Reine Wetter-Referenzstationen, unabhaengig von der gewaehlten Kalenderwoche und NICHT Teil der AGFF-Grasmessungen. Bodentemperatur wird nur an einem Teil der rund 150 Stationen gemessen - dort steht im Tooltip entsprechend keine Daten.');
 
     // Kleiner i-Knopf mit Klapp-Popup fuer laengere Erklaerungstexte (die
     // Quellenangabe als nativer title-Tooltip reicht fuer eine ganze
@@ -1670,6 +2422,33 @@ function(el, x) {
       document.querySelectorAll('.gw-info-popup').forEach(function(p) { p.style.display = 'none'; });
     });
 
+    // makeToggle() setzt normalerweise Text VOR den Schalter (so in der
+    // Kurven-Legende gewuenscht) - im Ebenen-Kasten sollen alle Schalter
+    // wie die Radiobuttons darunter linksbuendig ausgerichtet sein
+    // (Schalter/Radio links, Text rechts daneben), deshalb hier vertauscht.
+    function schalterLinksbuendig(toggleWrap) {
+      if (toggleWrap.children.length === 2) toggleWrap.insertBefore(toggleWrap.children[1], toggleWrap.children[0]);
+      return toggleWrap;
+    }
+
+    // Wie makeLayerRadio() unten, nur fuer einen Umschalter (Toggle) statt
+    // eines Radiobuttons - fuer Graswachstum/AFC, die (anders als die
+    // Hintergrund-Raster-Ebenen) unabhaengig VONEINANDER ein-/ausblendbar
+    // sein sollen, nicht als Radiogruppe.
+    function macheLayerToggle(labelText, checked, onChange, erklaerung) {
+      var zeile = document.createElement('div');
+      zeile.className = 'gw-layer-option-zeile';
+      var toggleWrap = schalterLinksbuendig(makeToggle(labelText, checked, onChange));
+      zeile.appendChild(toggleWrap);
+      if (erklaerung) zeile.appendChild(macheInfoKnopf(erklaerung));
+      layerPanel.appendChild(zeile);
+      return toggleWrap;
+    }
+    macheLayerToggle('Graswachstum', true, function(checked) { graswachstumOn = checked; applyState(); },
+      'Die Zahl im Kreis zeigt das zuletzt gemessene Graswachstum in kg TS/ha/Tag (Trockensubstanz-Zuwachs pro Hektare und Tag). Die Graufaerbung des Kreises zeigt, wie lange die Messung zurueckliegt: weiss = frisch gemessen (0 Tage), dunkelgrau = bis zu 14 Tage alt. Standorte ohne Messung in den letzten 14 Tagen werden nicht mehr angezeigt.');
+    macheLayerToggle('AFC', true, function(checked) { afcOn = checked; applyState(); },
+      'AFC (Average Farm Cover) schaetzt den aktuellen Grasvorrat des Betriebs in kg Trockensubstanz pro Hektare (kg TS/ha). Der Ring zeigt diesen Vorrat als Fortschrittsbalken auf einer Skala von 0 bis 1500 kg TS/ha und faerbt ihn nach dem jahreszeitlichen Zielbereich: rot = deutlich zu wenig (unter 200 kg praktisch leer), gruen = im Zielbereich, blaugruen = deutlich mehr als noetig. Der Zielbereich verschiebt sich uebers Jahr, z.B. Fruehling ca. 500-700, Sommer ca. 700-800, Herbst ca. 900-1200 kg TS/ha.');
+
     // title (nativer Browser-Tooltip) je Option mit der Quellenangabe, wie
     // einst als Untertitel bei den Export-Grafiken (siehe layerLegenden.quelle).
     // erklaerung (optional): zusaetzlicher i-Knopf mit laengerem Klartext.
@@ -1702,10 +2481,24 @@ function(el, x) {
     radioNiederschlagMonat = makeLayerRadio('niederschlag_monat', layerLegenden.niederschlag_monat.label);
     radioBoden = makeLayerRadio('boden', layerLegenden.boden.label,
       'Der Boden wird vereinfacht wie ein Eimer betrachtet: Regen fuellt ihn, Verdunstung leert ihn. Ist der Eimer voll, laeuft der Ueberschuss ungenutzt ab. Wie viel taeglich verdunstet, wird aus den Temperaturen geschaetzt - ein feuchter Boden verdunstet mehr als ein bereits trockener. Der Wert zeigt den aktuellen Fuellstand: 100 mm = Boden gut mit Wasser versorgt, 0 mm = ausgetrocknet.');
+    radioTemperatur = makeLayerRadio('temperatur', layerLegenden.temperatur.label,
+      'Mittlere Lufttemperatur (2m) der Woche vor dem gewaehlten Stichtag. Graswachstum beginnt erst ab einer Basistemperatur von ca. 5 Grad C spuerbar (darunter praktisch Wachstumsstillstand), das Optimum liegt bei ca. 15-20 Grad C. Ueber ca. 25 Grad C bremst Hitzestress das Wachstum trotz ausreichend Wasser wieder. Als Faustregel fuer den Wachstumsantrieb ueber mehrere Tage dient die Wachstumsgradtagsumme: Summe aus (Tagesmitteltemperatur minus 5 Grad C) an allen Tagen mit Werten darueber.');
+    radioBodentemperatur = makeLayerRadio('bodentemperatur', layerLegenden.bodentemperatur.label,
+      'ACHTUNG SCHAETZUNG, keine Feldmessung: MeteoSchweiz misst Bodentemperatur nur an einzelnen Stationen, nicht flaechendeckend als Karte. Gezeigt wird stattdessen der gleitende 14-Tage-Mittelwert der Lufttemperatur (2m) - eine grobe Naeherung an die traegere, gedaempfte oberste Bodenschicht (ca. 5-10cm). Bodentemperatur ist u.a. fuer den Vegetationsbeginn im Fruehling und die Stickstoff-Mineralisierung im Boden relevant: beides kommt unter ca. 5-8 Grad C weitgehend zum Erliegen.');
+    radioSonnenschein = makeLayerRadio('sonnenschein', layerLegenden.sonnenschein.label,
+      'Sonnenscheindauer der Woche vor dem gewaehlten Stichtag, relativ zur astronomisch maximal moeglichen Tagesdauer (0-100%, MeteoSchweiz SrelD). Mehr Sonne treibt die Photosynthese und damit das Wachstum an, erhoeht aber auch die Verdunstung (siehe ET0/Bodenwasserbilanz). Diese Daten werden erst mit 1-2 Monaten Verzoegerung aufbereitet - die allerneuesten Wochen sind deshalb oft noch nicht verfuegbar.');
+    radioEt0 = makeLayerRadio('et0', layerLegenden.et0.label,
+      'Potenzielle Verdunstung (Evapotranspiration) nach der Hargreaves-Formel (FAO-56), Summe der Woche vor dem gewaehlten Stichtag - dieselbe Berechnung, die auch ins Bucket-Modell der Bodenwasserbilanz einfliesst. Zeigt, wie viel Wasser dem Boden allein durch Verdunstung entzogen wird: hohe Werte bei gleichzeitig wenig Niederschlag beguenstigen Trockenstress.');
+    radioGdd = makeLayerRadio('gdd', layerLegenden.gdd.label,
+      'Kumulierte Wachstumsgradtage seit Beginn der lokal vorhandenen Temperaturdaten: Summe aus (Tagesmitteltemperatur minus 5 Grad C) an allen Tagen mit Werten darueber, laufend aufaddiert (MeteoSchweiz TabsD). Eine in der Agronomie gebraeuchliche Faustregel fuer die pflanzenverfuegbare Waermesumme seit Vegetationsbeginn - hoehere Werte bedeuten mehr angesammelte Wachstumsbedingungen.');
     layerLegendeBox = document.createElement('div');
     layerLegendeBox.className = 'gw-layer-legende';
     layerLegendeBox.style.display = 'none';
     layerPanel.appendChild(layerLegendeBox);
+    afcLegendeBox = document.createElement('div');
+    afcLegendeBox.className = 'gw-layer-legende';
+    afcLegendeBox.style.display = 'none';
+    layerPanel.appendChild(afcLegendeBox);
     mapControlsContainer.appendChild(layerPanel);
     aktualisiereLayerVerfuegbarkeit();
     aktualisiereLayerLegende();
@@ -2086,8 +2879,22 @@ js_ersetzungen <- list(
   "__NIEDERSCHLAG_MONAT_WERTE__" = jsonlite::toJSON(niederschlag_monat_werte_je_woche, auto_unbox = TRUE, na = "null"),
   "__BODENWASSER_WERTE__" = jsonlite::toJSON(bodenwasser_werte_je_woche, auto_unbox = TRUE, na = "null"),
   "__BODENWASSER_DATUM__" = jsonlite::toJSON(bodenwasser_datum_je_woche, auto_unbox = TRUE),
+  "__TEMPERATUR_BILDER__" = jsonlite::toJSON(temperatur_bild_je_woche, auto_unbox = TRUE),
+  "__TEMPERATUR_WERTE__" = jsonlite::toJSON(temperatur_werte_je_woche, auto_unbox = TRUE, na = "null"),
+  "__BODENTEMPERATUR_BILDER__" = jsonlite::toJSON(bodentemperatur_bild_je_woche, auto_unbox = TRUE),
+  "__BODENTEMPERATUR_WERTE__" = jsonlite::toJSON(bodentemperatur_werte_je_woche, auto_unbox = TRUE, na = "null"),
+  "__SONNENSCHEIN_BILDER__" = jsonlite::toJSON(sonnenschein_bild_je_woche, auto_unbox = TRUE),
+  "__SONNENSCHEIN_WERTE__" = jsonlite::toJSON(sonnenschein_werte_je_woche, auto_unbox = TRUE, na = "null"),
+  "__ET0_BILDER__" = jsonlite::toJSON(et0_bild_je_woche, auto_unbox = TRUE),
+  "__ET0_WERTE__" = jsonlite::toJSON(et0_werte_je_woche, auto_unbox = TRUE, na = "null"),
+  "__GDD_BILDER__" = jsonlite::toJSON(gdd_bild_je_woche, auto_unbox = TRUE),
+  "__GDD_WERTE__" = jsonlite::toJSON(gdd_werte_je_woche, auto_unbox = TRUE, na = "null"),
+  "__SMN_STATIONEN_TRACE_IDX__" = as.character(smn_stationen_trace_idx),
   "__LAYER_LEGENDEN__" = jsonlite::toJSON(layer_legenden, auto_unbox = TRUE),
+  "__GRASWACHSTUM_BILDER__" = jsonlite::toJSON(graswachstum_bild_je_woche, auto_unbox = TRUE),
   "__AFC_RING_BILDER__" = jsonlite::toJSON(afc_ring_bild_je_woche, auto_unbox = TRUE),
+  "__AFC_FENSTER_JE_WOCHE__" = jsonlite::toJSON(afc_fenster_je_woche, auto_unbox = TRUE),
+  "__AFC_VERLAEUFE__" = jsonlite::toJSON(afc_verlaeufe_je_fenster, auto_unbox = TRUE),
   "__KARTENBILD_HINTERGRUND__" = jsonlite::toJSON(kartenbild_hintergrund, auto_unbox = TRUE),
   "__HEUTIGE_WOCHE__" = as.character(heutige_woche),
   "__START_WOCHE__" = as.character(start_woche)
@@ -2104,11 +2911,24 @@ fig_kurve <- htmlwidgets::onRender(fig_kurve, js_code)
 ########################################################################
 
 seite <- htmltools::tagList(
-  htmltools::tags$head(htmltools::tags$title(paste0("Datenexplorer Graswachstum"))),
+  # OHNE viewport-Meta-Tag rendern mobile Browser die Seite auf einem
+  # virtuellen Desktop-Layout-Viewport (typischerweise ~980px) und skalieren
+  # sie nur optisch herunter - die @media(max-width:700px)-Regeln (siehe
+  # oben, gw-chart-row etc.) wuerden dadurch NIE greifen, selbst auf einem
+  # echten Telefon.
+  htmltools::tags$head(
+    htmltools::tags$title(paste0("Datenexplorer Graswachstum")),
+    htmltools::tags$meta(name = "viewport", content = "width=device-width, initial-scale=1")
+  ),
   htmltools::div(style = "font-family: sans-serif; max-width: 1400px; margin: 0 auto; padding: 20px;",
     htmltools::div(style = "display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start;",
       htmltools::div(id = "datenexplorer-growthmap", style = "flex: 1 1 700px; min-width: 320px; height: 560px; overflow: hidden;", fig_wachstum),
-      htmltools::div(id = "datenexplorer-map-controls", style = "flex: 0 0 220px;")
+      # flex-grow:1 (statt 0) statt einer festen 220px-Box: faellt die
+      # Ebenen-Box auf einem schmalen (Mobile-)Bildschirm per flex-wrap in
+      # eine eigene Zeile, fuellt sie so deren volle Breite aus, statt
+      # nutzlosen Leerraum daneben zu lassen; neben der Karte (genug Platz)
+      # bleibt sie effektiv bei ihrer min-width von 220px.
+      htmltools::div(id = "datenexplorer-map-controls", style = "flex: 1 1 220px; min-width: 220px;")
     ),
     htmltools::div(id = "datenexplorer-slider"),
     fig_kurve
