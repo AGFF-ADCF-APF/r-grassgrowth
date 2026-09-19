@@ -7,6 +7,7 @@ mapfile_current_ftp <- paste0("Graswachstumskarte_aktuell", ".svg")
 mapprintfile_current_ftp <- paste0("Graswachstum_print_aktuell_", ".svg")
 
 curvefile_ftp <- paste0("Graswachstumskurve_", Jahr, ".svg")
+curvefile_current_ftp <- "Graswachstumskurve_aktuell.svg"
 
 # Datenexplorer (27_plot_datenexplorer.R) ersetzt die bisherige einfache
 # Plotly-Kurve (curvefile_plotly aus 22_plot_year.R). Eigener, jahrloser
@@ -15,8 +16,16 @@ curvefile_ftp <- paste0("Graswachstumskurve_", Jahr, ".svg")
 # selfcontained gespeicherte Kurve) NICHT selfcontained, da sie mehrere
 # Plotly-Widgets kombiniert (htmltools::save_html()) - der lib/-Ordner mit
 # den JS/CSS-Abhaengigkeiten muss deshalb zusaetzlich hochgeladen werden.
-datenexplorer_datei <- "outputs/Datenexplorer.html"
-datenexplorer_ftp_ziel <- "Datenexplorer.html"
+#
+# ZWEI Dateien statt einer: "Datenexplorer.html" ist die schlanke statische
+# Vorschauseite (paar KB) - der oeffentliche, von aussen verlinkte Name.
+# "Datenexplorer_app.html" ist die eigentliche interaktive App (~7.6MB),
+# wird von der Vorschauseite erst per Klick nachgeladen (siehe deren
+# eingebettetes <script> in 27_plot_datenexplorer.R).
+datenexplorer_vorschau_datei <- "outputs/Datenexplorer.html"
+datenexplorer_vorschau_ftp_ziel <- "Datenexplorer.html"
+datenexplorer_app_datei <- "outputs/Datenexplorer_app.html"
+datenexplorer_app_ftp_ziel <- "Datenexplorer_app.html"
 datenexplorer_lib_dir <- "outputs/lib"
 # Optionale Hintergrund-Ebenen (Niederschlag/Temperatur/Sonnenschein/etc.)
 # liegen NICHT mehr in der Haupt-HTML, sondern als eigene JSON-Dateien
@@ -157,23 +166,37 @@ tryCatch(ftp_upload_file(mapprintfile, ftp_base_url, mapprintfile_current_ftp, f
 #curves
 tryCatch(ftp_upload_file(curvefile, ftp_base_url, curvefile_ftp, ftpuser, ftppasswd),
          error = function(e) warning("FTP-Upload fehlgeschlagen: ", curvefile_ftp, " - ", conditionMessage(e)))
+tryCatch(ftp_upload_file(curvefile, ftp_base_url, curvefile_current_ftp, ftpuser, ftppasswd),
+         error = function(e) warning("FTP-Upload fehlgeschlagen: ", curvefile_current_ftp, " - ", conditionMessage(e)))
 
-#datenexplorer (ersetzt die bisherige einfache Plotly-Kurve am selben Ziel)
-if (file.exists(datenexplorer_datei)) {
-  ok <- tryCatch({
-    ftp_upload_file(datenexplorer_datei, ftp_base_url, datenexplorer_ftp_ziel, ftpuser, ftppasswd)
+#datenexplorer: schlanke Vorschauseite (oeffentlicher Name) + interaktive App
+if (file.exists(datenexplorer_vorschau_datei)) {
+  ok_vorschau <- tryCatch({
+    ftp_upload_file(datenexplorer_vorschau_datei, ftp_base_url, datenexplorer_vorschau_ftp_ziel, ftpuser, ftppasswd)
     TRUE
   }, error = function(e) {
-    warning("FTP-Upload fehlgeschlagen: ", datenexplorer_ftp_ziel, " - ", conditionMessage(e))
+    warning("FTP-Upload fehlgeschlagen: ", datenexplorer_vorschau_ftp_ziel, " - ", conditionMessage(e))
+    FALSE
+  })
+  cat("Datenexplorer-Vorschau hochgeladen (", datenexplorer_vorschau_ftp_ziel, "):", ok_vorschau, "\n")
+} else {
+  warning("Datenexplorer-Vorschau nicht gefunden (", datenexplorer_vorschau_datei, ") - 27_plot_datenexplorer.R zuerst ausfuehren.")
+}
+if (file.exists(datenexplorer_app_datei)) {
+  ok <- tryCatch({
+    ftp_upload_file(datenexplorer_app_datei, ftp_base_url, datenexplorer_app_ftp_ziel, ftpuser, ftppasswd)
+    TRUE
+  }, error = function(e) {
+    warning("FTP-Upload fehlgeschlagen: ", datenexplorer_app_ftp_ziel, " - ", conditionMessage(e))
     FALSE
   })
   n_lib <- ftp_upload_recursive(datenexplorer_lib_dir, paste0(ftp_base_url, "lib/"), ftpuser, ftppasswd)
   n_lib_total <- length(list.files(datenexplorer_lib_dir, recursive = TRUE))
   n_ebenen <- ftp_upload_recursive(datenexplorer_ebenen_dir, paste0(ftp_base_url, "ebenen/"), ftpuser, ftppasswd)
   n_ebenen_total <- length(list.files(datenexplorer_ebenen_dir, recursive = TRUE))
-  cat("Datenexplorer hochgeladen (", datenexplorer_ftp_ziel, "):", ok,
+  cat("Datenexplorer-App hochgeladen (", datenexplorer_app_ftp_ziel, "):", ok,
       "- Abhaengigkeits-Dateien in lib/:", n_lib, "von", n_lib_total,
       "- Ebenen-Dateien:", n_ebenen, "von", n_ebenen_total, "\n")
 } else {
-  warning("Datenexplorer-Datei nicht gefunden (", datenexplorer_datei, ") - 27_plot_datenexplorer.R zuerst ausfuehren.")
+  warning("Datenexplorer-App nicht gefunden (", datenexplorer_app_datei, ") - 27_plot_datenexplorer.R zuerst ausfuehren.")
 }

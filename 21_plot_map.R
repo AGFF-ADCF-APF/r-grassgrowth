@@ -69,6 +69,10 @@ grassgrowth_map <- ggplot() +
 grassgrowth_map
 mapfile <- paste("outputs/Graswachstum_", Jahr, "KW",week, ".svg", sep="")
 ggsave(file=mapfile, width=10, height=7.5)
+# Stabil benannte Kopie ("aktuell") - fuer die statische Vorschau im
+# Datenexplorer-Wrapper (siehe 27_plot_datenexplorer.R), die anders als das
+# Kalenderwochen-Archiv oben nicht bei jedem Lauf umbenannt wird.
+file.copy(mapfile, "outputs/Graswachstumskarte_aktuell.svg", overwrite = TRUE)
 
 
 

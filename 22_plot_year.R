@@ -34,6 +34,10 @@ grassgrowth_curve
 curvefile <- paste("outputs/Graswachstumskurve_", Jahr, ".svg", sep="")
 
 ggsave(file=curvefile, width=10, height=7.5)
+# Stabil benannte Kopie ("aktuell") - fuer die statische Vorschau im
+# Datenexplorer-Wrapper (siehe 27_plot_datenexplorer.R), die anders als die
+# Jahres-Datei oben nicht jedes Jahr umbenannt wird.
+file.copy(curvefile, "outputs/Graswachstumskurve_aktuell.svg", overwrite = TRUE)
 
 ggplotly(grassgrowth_curve, tooltip=c("Ort", "growth"))
 

@@ -2995,5 +2995,85 @@ seite <- htmltools::tagList(
   )
 )
 
-htmltools::save_html(seite, file.path(out_dir, "Datenexplorer.html"))
-cat("Datenexplorer gespeichert in:", file.path(out_dir, "Datenexplorer.html"), "\n")
+# Unter "Datenexplorer_app.html" statt "Datenexplorer.html" gespeichert: die
+# eigentliche interaktive App wird jetzt per Klick aus einer schlanken
+# statischen Vorschauseite nachgeladen (siehe unten) - "Datenexplorer.html"
+# ist ab jetzt diese Vorschauseite, nicht mehr die App selbst. Bestehende
+# Links/Einbettungen auf "Datenexplorer.html" (der oeffentliche Name)
+# bleiben dadurch gueltig UND laden beim ersten Aufruf nur noch die paar KB
+# der Vorschau statt der vollen ~7.6MB App.
+datenexplorer_app_datei <- file.path(out_dir, "Datenexplorer_app.html")
+htmltools::save_html(seite, datenexplorer_app_datei)
+cat("Datenexplorer-App gespeichert in:", datenexplorer_app_datei, "\n")
+
+########################################################################
+## 5. Statische Vorschauseite (Klick-zum-Laden) ------------------------
+##    Zeigt standardmaessig nur die aktuellsten statischen SVGs (Karte +
+##    Kurve, aus 21_plot_map.R/22_plot_year.R, "_aktuell"-Kopien) - klein
+##    und schnell fuer Besucher, die nur den aktuellen Stand sehen wollen.
+##    Erst ein Klick laedt die volle interaktive App (Datenexplorer_app.html)
+##    per <iframe> nach, dessen Hoehe sich per ResizeObserver automatisch an
+##    den tatsaechlichen Inhalt anpasst (kein Innen-Scrollbalken).
+########################################################################
+vorschau_html <- '
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Datenexplorer Graswachstum</title>
+<style>
+  body { font-family: sans-serif; max-width: 1000px; margin: 0 auto; padding: 20px; color: #222; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .gw-vorschau-hinweis { color: #555; font-size: 14px; margin: 0 0 16px; }
+  .gw-vorschau-bilder { display: block; border: none; background: none; padding: 0; margin: 0; width: 100%; text-align: left; cursor: pointer; }
+  .gw-vorschau-bilder img { width: 100%; display: block; margin-bottom: 14px; border: 1px solid #ddd; border-radius: 6px; transition: opacity .15s; }
+  .gw-vorschau-bilder:hover img { opacity: 0.88; }
+  .gw-vorschau-knopf { display: inline-block; margin-top: 4px; padding: 10px 18px; background: #2b6cb0; color: white; border: none;
+                       border-radius: 6px; font-size: 15px; cursor: pointer; }
+  .gw-vorschau-knopf:hover { background: #235a92; }
+  #gw-app-frame { width: 100%; border: none; display: block; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+  <h1>Datenexplorer Graswachstum</h1>
+  <p class="gw-vorschau-hinweis">Aktuellster Stand als statische Ansicht. Fuer Kalenderwochen-Verlauf, Standort-Filter und Hintergrund-Ebenen die interaktive Version oeffnen.</p>
+  <div id="gw-vorschau">
+    <button type=button class="gw-vorschau-bilder" id="gw-oeffnen-karte" title="Interaktive Version oeffnen">
+      <img src="Graswachstumskarte_aktuell.svg" alt="Aktuelle Graswachstumskarte">
+      <img src="Graswachstumskurve_aktuell.svg" alt="Aktuelle Graswachstumskurve">
+    </button>
+    <button type=button class="gw-vorschau-knopf" id="gw-oeffnen-knopf">Interaktive Version oeffnen</button>
+  </div>
+  <script>
+    function ladeApp() {
+      var vorschau = document.getElementById("gw-vorschau");
+      var frame = document.createElement("iframe");
+      frame.id = "gw-app-frame";
+      frame.src = "Datenexplorer_app.html";
+      frame.height = "800";
+      frame.addEventListener("load", function() {
+        function anpassen() {
+          try {
+            var doc = frame.contentDocument;
+            if (doc && doc.documentElement) frame.style.height = doc.documentElement.scrollHeight + "px";
+          } catch (e) {}
+        }
+        anpassen();
+        try {
+          new ResizeObserver(anpassen).observe(frame.contentDocument.body);
+        } catch (e) {
+          setInterval(anpassen, 1000);
+        }
+      });
+      vorschau.replaceWith(frame);
+    }
+    document.getElementById("gw-oeffnen-karte").addEventListener("click", ladeApp);
+    document.getElementById("gw-oeffnen-knopf").addEventListener("click", ladeApp);
+  </script>
+</body>
+</html>
+'
+writeLines(vorschau_html, file.path(out_dir, "Datenexplorer.html"))
+cat("Datenexplorer-Vorschau gespeichert in:", file.path(out_dir, "Datenexplorer.html"), "\n")
