@@ -124,15 +124,29 @@ ftp_upload_recursive <- function(local_dir, ftp_root_url, ordner_name, user, pas
         warning("FTP-Upload fehlgeschlagen: ", f, " - ", conditionMessage(e))
         return(FALSE)
       }
+      # "530 statt 220" GENAU beim Verbindungsaufbau (nicht erst nach einem
+      # Login-Versuch) deutet auf ein serverseitiges Verbindungslimit hin
+      # (zu viele Verbindungen in kurzer Zeit ueber den gesamten Lauf, nicht
+      # falsche Zugangsdaten) - bei ebenen/ mit inzwischen 22 statt 8
+      # Dateien schlugen dadurch ALLE Uploads fehl, obwohl Login/lib/ im
+      # selben Lauf einwandfrei liefen. Eine kurze Pause VOR dem naechsten
+      # Versuch gibt dem Server Zeit, das Limit freizugeben, statt es durch
+      # sofort eine weitere neue Verbindung (noch ein Curl-Handle) weiter zu
+      # verschaerfen - deshalb hier auch bewusst KEIN zusaetzliches Handle,
+      # sondern derselbe (einfachere) ftp_upload_file()-Pfad wie fuer
+      # Einzeldateien, der ohnehin schon einen eigenen Fallback hat.
+      Sys.sleep(2)
       retry_err <- tryCatch({
-        curl_retry <- RCurl::getCurlHandle(userpwd = paste0(user, ":", passwd), ftp.create.missing.dirs = TRUE)
-        ftp_upload_file_with_handle(local_path, ftp_base_url, f, curl_retry)
+        ftp_upload_file(local_path, ftp_base_url, f, user, passwd)
         NULL
       }, error = function(e2) conditionMessage(e2))
       if (is.null(retry_err)) TRUE else { warning("FTP-Upload fehlgeschlagen: ", f, " - ", retry_err); FALSE }
     })
     if (isTRUE(ok)) uploaded <- uploaded + 1L
-    Sys.sleep(0.2)
+    # Etwas grosszuegiger als frueher (0.2s) - reduziert das Tempo neuer
+    # Verbindungen insgesamt, siehe Kommentar oben zum vermuteten
+    # Verbindungslimit.
+    Sys.sleep(0.5)
   }
   invisible(uploaded)
 }
