@@ -1437,6 +1437,41 @@ for (jr in names(gdd_kumuliert_je_jahr)) {
 }
 cat("Wachstumsgradtage-Hintergrundbilder erzeugt:", length(gdd_bild_je_woche), "\n")
 
+## Optionale Hintergrund-Ebenen NICHT in die Haupt-HTML einbetten, sondern
+## je Ebene in eine EIGENE JSON-Datei schreiben (outputs/ebenen/<name>.json) -
+## wird clientseitig erst beim ERSTEN Auswaehlen der jeweiligen Ebene per
+## fetch() nachgeladen (siehe ladeEbene() im js_template) und danach im
+## Browser zwischengespeichert. Reduziert die Groesse der Haupt-HTML massiv:
+## die meisten Betrachter sehen nie alle 8 optionalen Ebenen, muessen also
+## auch nicht deren ~200+ Bilder mitladen, nur um die Seite zu oeffnen.
+## Graswachstum/AFC (Standard AN) und die Kantons-/Seen-Basiskarte bleiben
+## bewusst eingebettet - die sieht ohnehin jede/r sofort beim Laden.
+ebenen_dir <- file.path(out_dir, "ebenen")
+dir.create(ebenen_dir, recursive = TRUE, showWarnings = FALSE)
+
+# Schreibt eine Ebene als JSON-Datei und gibt ihre (Jahr, Woche)-Schluessel
+# zurueck - diese Schluessel-Liste allein (winzig gegenueber den Bildern)
+# wird weiterhin eingebettet, damit z.B. "Jahr X hat keine Daten fuer Ebene Y"
+# (Radiobutton ausgrauen) OHNE die grosse JSON-Datei geladen werden muss.
+schreibe_ebene_datei <- function(name, bilder, werte, datum = NULL) {
+  inhalt <- list(bilder = bilder, werte = werte)
+  if (!is.null(datum)) inhalt$datum <- datum
+  jsonlite::write_json(inhalt, file.path(ebenen_dir, paste0(name, ".json")), auto_unbox = TRUE, na = "null")
+  names(bilder)
+}
+
+ebenen_schluessel <- list(
+  niederschlag = schreibe_ebene_datei("niederschlag", niederschlag_bild_je_woche, niederschlag_werte_je_woche),
+  niederschlag_monat = schreibe_ebene_datei("niederschlag_monat", niederschlag_monat_bild_je_woche, niederschlag_monat_werte_je_woche),
+  boden = schreibe_ebene_datei("boden", bodenwasser_bild_je_woche, bodenwasser_werte_je_woche, bodenwasser_datum_je_woche),
+  temperatur = schreibe_ebene_datei("temperatur", temperatur_bild_je_woche, temperatur_werte_je_woche),
+  bodentemperatur = schreibe_ebene_datei("bodentemperatur", bodentemperatur_bild_je_woche, bodentemperatur_werte_je_woche),
+  sonnenschein = schreibe_ebene_datei("sonnenschein", sonnenschein_bild_je_woche, sonnenschein_werte_je_woche),
+  et0 = schreibe_ebene_datei("et0", et0_bild_je_woche, et0_werte_je_woche),
+  gdd = schreibe_ebene_datei("gdd", gdd_bild_je_woche, gdd_werte_je_woche)
+)
+cat("Ebenen-Dateien geschrieben in:", ebenen_dir, "\n")
+
 # Farbnamen -> Hex, fuer die JS-Farbverlauf-Legende (CSS linear-gradient):
 # R/X11-Farbnamen wie "khaki1" sind kein gueltiges CSS (nur das GRUND-
 # Farbwort "khaki" ist standardisiert) - ein ungueltiger Farbname macht die
@@ -1497,29 +1532,36 @@ function(el, x) {
   var siteColors = __SITE_COLORS__;
   var mapWochen = __MAP_WOCHEN__;
   var mapPointOrts = __MAP_POINT_ORTS__;
-  var niederschlagBilder = __NIEDERSCHLAG_BILDER__;
-  var niederschlagMonatBilder = __NIEDERSCHLAG_MONAT_BILDER__;
-  var bodenwasserBilder = __BODENWASSER_BILDER__;
-  var temperaturBilder = __TEMPERATUR_BILDER__;
-  var bodentemperaturBilder = __BODENTEMPERATUR_BILDER__;
-  var sonnenscheinBilder = __SONNENSCHEIN_BILDER__;
-  var et0Bilder = __ET0_BILDER__;
-  var gddBilder = __GDD_BILDER__;
   var layerLegenden = __LAYER_LEGENDEN__;
-  // Grobe Werte-Gitter (dieselbe, bereits stark heruntergerechnete
-  // Aufloesung wie die jeweiligen Bilder) fuer die Cursor-Wertabfrage im
-  // Ebenen-Kasten - siehe aktualisiereWertAnzeige() weiter unten.
-  var niederschlagWerte = __NIEDERSCHLAG_WERTE__;
-  var niederschlagMonatWerte = __NIEDERSCHLAG_MONAT_WERTE__;
-  var bodenwasserWerte = __BODENWASSER_WERTE__;
-  var temperaturWerte = __TEMPERATUR_WERTE__;
-  var bodentemperaturWerte = __BODENTEMPERATUR_WERTE__;
-  var sonnenscheinWerte = __SONNENSCHEIN_WERTE__;
-  var et0Werte = __ET0_WERTE__;
-  var gddWerte = __GDD_WERTE__;
-  // Tatsaechlich verwendetes Datum je (Jahr, Woche) - kann vom Wochenbeginn
-  // (Montag) abweichen, siehe Kommentar bei bodenwasser_datum_je_woche (R).
-  var bodenwasserDatumJeWoche = __BODENWASSER_DATUM__;
+  // Ebenen-Verfuegbarkeit (welche Jahr/Woche-Schluessel existieren je Ebene)
+  // - klein genug fuer die Haupt-HTML; die eigentlichen Bilder/Werte-Gitter
+  // liegen in outputs/ebenen/<name>.json und werden per ladeEbene() erst
+  // beim ersten Auswaehlen der jeweiligen Ebene nachgeladen (siehe unten) -
+  // ebenenCache haelt sie danach im Speicher (kein wiederholtes Nachladen).
+  var ebenenSchluessel = __EBENEN_SCHLUESSEL__;
+  var ebenenCache = {};
+  function ebeneHatJahr(name, jahr) {
+    var schluessel = ebenenSchluessel[name];
+    if (!schluessel) return false;
+    for (var i = 0; i < schluessel.length; i++) {
+      if (schluessel[i].indexOf(jahr + ' ') === 0) return true;
+    }
+    return false;
+  }
+  // Laedt die JSON-Datei einer Ebene genau EINMAL (Cache-Treffer bei jedem
+  // weiteren Aufruf) und ruft dann callback(daten) auf; daten hat die Form
+  // { bilder: {...}, werte: {...}, datum: {...} (nur bei boden) }. Bricht
+  // eine noch laufende Anfrage NICHT ab, wenn zwischenzeitlich eine andere
+  // Ebene gewaehlt wurde - die Aufrufer (aktualisiereHintergrundEbene() etc.)
+  // pruefen deshalb nach Abschluss jeweils selbst, ob ihre Ebene noch aktiv
+  // ist, bevor sie das Ergebnis anwenden.
+  function ladeEbene(name, callback) {
+    if (ebenenCache[name]) { callback(ebenenCache[name]); return; }
+    fetch('ebenen/' + name + '.json')
+      .then(function(r) { return r.json(); })
+      .then(function(daten) { ebenenCache[name] = daten; callback(daten); })
+      .catch(function(err) { console.error('Ebene ' + name + ' konnte nicht geladen werden:', err); });
+  }
   var graswachstumBilder = __GRASWACHSTUM_BILDER__;
   var afcRingBilder = __AFC_RING_BILDER__;
   // Index (in afc_optimum_windows/afcVerlaeufe) des jahreszeitlichen AFC-
@@ -1794,7 +1836,11 @@ function(el, x) {
   // aktuell bleibt, wenn die Wachstumskarte selbst noch nicht gebunden ist.
   function aktualisiereLayerLabels() {
     if (!radioBoden || !radioBoden.labelTextEl) return;
-    var datum = bodenwasserDatumJeWoche[selectedYear + ' ' + selectedWeek];
+    // bodenCache.datum existiert erst, NACHDEM die Ebene einmal geladen
+    // wurde (siehe ladeEbene()) - bis dahin steht im Label schlicht kein
+    // Datum, statt die Ebene allein fuer dieses Label vorzuladen.
+    var bodenCache = ebenenCache.boden;
+    var datum = bodenCache && bodenCache.datum && bodenCache.datum[selectedYear + ' ' + selectedWeek];
     radioBoden.labelTextEl.textContent = layerLegenden.boden.label + (datum ? ' (' + datum + ')' : '');
   }
 
@@ -1805,23 +1851,14 @@ function(el, x) {
   // IMMER die unterste Bild-Ebene; eine gewaehlte Niederschlags-/
   // Bodenwasserbilanz-Ebene wird als zweites, halbtransparentes Bild
   // darueber gelegt (Plotly zeichnet layout.images in Array-Reihenfolge).
-  function jahrHatBild(bilder, jahr) {
-    for (var k in bilder) { if (k.indexOf(jahr + ' ') === 0) return true; }
-    return false;
-  }
-  function aktualisiereHintergrundEbene() {
+  // Zeichnet die Bild-Ebenen der Karte (Kantone/Seen-Basis, optionale
+  // Hintergrund-Ebene, AFC-Ring, Graswachstum-Kreis) - 'bild' ist entweder
+  // das bereits geladene Bild der optionalen Ebene oder null (keine Ebene
+  // gewaehlt, oder deren Daten werden gerade erst nachgeladen).
+  function zeichneKartenBilder(bild) {
     var growthMapGd = document.querySelector('#datenexplorer-growthmap .js-plotly-plot');
     if (!growthMapGd) return;
     var schluessel = selectedYear + ' ' + selectedWeek;
-    var bild = null;
-    if (hintergrundEbene === 'niederschlag') bild = niederschlagBilder[schluessel];
-    else if (hintergrundEbene === 'niederschlag_monat') bild = niederschlagMonatBilder[schluessel];
-    else if (hintergrundEbene === 'boden') bild = bodenwasserBilder[schluessel];
-    else if (hintergrundEbene === 'temperatur') bild = temperaturBilder[schluessel];
-    else if (hintergrundEbene === 'bodentemperatur') bild = bodentemperaturBilder[schluessel];
-    else if (hintergrundEbene === 'sonnenschein') bild = sonnenscheinBilder[schluessel];
-    else if (hintergrundEbene === 'et0') bild = et0Bilder[schluessel];
-    else if (hintergrundEbene === 'gdd') bild = gddBilder[schluessel];
     var basisBilder = bild ? [kartenbildHintergrund, bild] : [kartenbildHintergrund];
     // AFC-Ring und Graswachstum-Kreis liegen IMMER ueber der Kartenbasis/
     // optionalen Hintergrund-Ebene, unabhaengig von deren Auswahl - jede
@@ -1834,6 +1871,29 @@ function(el, x) {
     if (graswachstumOn && graswachstumBilder[schluessel]) zusatzBilder.push(graswachstumBilder[schluessel]);
     var alleBilder = basisBilder.concat(zusatzBilder);
     Plotly.relayout(growthMapGd, { images: alleBilder });
+  }
+
+  // Optionale Hintergrund-Ebenen werden erst bei Bedarf nachgeladen (siehe
+  // ladeEbene() oben) - beim allerersten Auswaehlen einer noch nicht
+  // zwischengespeicherten Ebene zeigt die Karte kurz KEINE Ebene (statt der
+  // vorherigen, jetzt nicht mehr passenden), bis die Datei eingetroffen ist.
+  // ebeneBeimStart wird nach Abschluss der Anfrage GEGENGEPRUEFT: haben
+  // Nutzer inzwischen eine andere Ebene gewaehlt, wird das (jetzt veraltete)
+  // Ergebnis verworfen statt faelschlich angezeigt.
+  function aktualisiereHintergrundEbene() {
+    if (hintergrundEbene === 'keine') { zeichneKartenBilder(null); return; }
+    var ebeneBeimStart = hintergrundEbene;
+    if (!ebenenCache[ebeneBeimStart]) zeichneKartenBilder(null);
+    ladeEbene(ebeneBeimStart, function(daten) {
+      // aktualisiereLayerLabels() unabhaengig vom Noch-aktuell-Check unten
+      // aufgerufen: das Bodenwasserbilanz-Datum im Radio-Label soll auch
+      // dann erscheinen, wenn zwischenzeitlich eine ANDERE Ebene gewaehlt
+      // wurde - das Label selbst blendet sich ja nur ein, waehrend boden
+      // ausgewaehlt ist, ist also nie faelschlich sichtbar.
+      if (ebeneBeimStart === 'boden') aktualisiereLayerLabels();
+      if (hintergrundEbene !== ebeneBeimStart) return;
+      zeichneKartenBilder(daten.bilder[selectedYear + ' ' + selectedWeek]);
+    });
   }
 
   // MeteoSchweiz-Stationen: einzige, von Jahr/Woche unabhaengige Trace
@@ -2057,14 +2117,14 @@ function(el, x) {
   var radioNiederschlag = null, radioNiederschlagMonat = null, radioBoden = null, radioTemperatur = null, radioBodentemperatur = null;
   var radioSonnenschein = null, radioEt0 = null, radioGdd = null;
   function aktualisiereLayerVerfuegbarkeit() {
-    if (radioNiederschlag) radioNiederschlag.disabled = !jahrHatBild(niederschlagBilder, selectedYear);
-    if (radioNiederschlagMonat) radioNiederschlagMonat.disabled = !jahrHatBild(niederschlagMonatBilder, selectedYear);
-    if (radioBoden) radioBoden.disabled = !jahrHatBild(bodenwasserBilder, selectedYear);
-    if (radioTemperatur) radioTemperatur.disabled = !jahrHatBild(temperaturBilder, selectedYear);
-    if (radioBodentemperatur) radioBodentemperatur.disabled = !jahrHatBild(bodentemperaturBilder, selectedYear);
-    if (radioSonnenschein) radioSonnenschein.disabled = !jahrHatBild(sonnenscheinBilder, selectedYear);
-    if (radioEt0) radioEt0.disabled = !jahrHatBild(et0Bilder, selectedYear);
-    if (radioGdd) radioGdd.disabled = !jahrHatBild(gddBilder, selectedYear);
+    if (radioNiederschlag) radioNiederschlag.disabled = !ebeneHatJahr('niederschlag', selectedYear);
+    if (radioNiederschlagMonat) radioNiederschlagMonat.disabled = !ebeneHatJahr('niederschlag_monat', selectedYear);
+    if (radioBoden) radioBoden.disabled = !ebeneHatJahr('boden', selectedYear);
+    if (radioTemperatur) radioTemperatur.disabled = !ebeneHatJahr('temperatur', selectedYear);
+    if (radioBodentemperatur) radioBodentemperatur.disabled = !ebeneHatJahr('bodentemperatur', selectedYear);
+    if (radioSonnenschein) radioSonnenschein.disabled = !ebeneHatJahr('sonnenschein', selectedYear);
+    if (radioEt0) radioEt0.disabled = !ebeneHatJahr('et0', selectedYear);
+    if (radioGdd) radioGdd.disabled = !ebeneHatJahr('gdd', selectedYear);
     if ((hintergrundEbene === 'niederschlag' && radioNiederschlag && radioNiederschlag.disabled) ||
         (hintergrundEbene === 'niederschlag_monat' && radioNiederschlagMonat && radioNiederschlagMonat.disabled) ||
         (hintergrundEbene === 'boden' && radioBoden && radioBoden.disabled) ||
@@ -2158,16 +2218,15 @@ function(el, x) {
   // naechstgelegene Zelle des mitgelieferten, groben Werte-Gitters (siehe
   // R: raster_zu_datauri(), dieselbe Aufloesung wie das jeweilige Bild)
   // nachgeschlagen - kein zusaetzlicher Server, keine Plotly-Trace noetig.
+  // Liefert das Werte-Gitter der AKTUELL gewaehlten Ebene nur, wenn sie
+  // bereits vollstaendig geladen ist (siehe ladeEbene()/ebenenCache oben) -
+  // waehrend des ersten Ladens (kurzes Zeitfenster) liefert die Funktion
+  // null, die Cursor-Wertabfrage zeigt dann keine Daten statt eines
+  // veralteten/falschen Werts.
   function aktivesWerteGitter() {
-    if (hintergrundEbene === 'niederschlag') return niederschlagWerte;
-    if (hintergrundEbene === 'niederschlag_monat') return niederschlagMonatWerte;
-    if (hintergrundEbene === 'boden') return bodenwasserWerte;
-    if (hintergrundEbene === 'temperatur') return temperaturWerte;
-    if (hintergrundEbene === 'bodentemperatur') return bodentemperaturWerte;
-    if (hintergrundEbene === 'sonnenschein') return sonnenscheinWerte;
-    if (hintergrundEbene === 'et0') return et0Werte;
-    if (hintergrundEbene === 'gdd') return gddWerte;
-    return null;
+    if (hintergrundEbene === 'keine') return null;
+    var cache = ebenenCache[hintergrundEbene];
+    return cache ? cache.werte : null;
   }
   // Naeherungsformel swisstopo (WGS84 -> LV95, Genauigkeit ca. 1-2m,
   // Approximate formulas for the transformation between Swiss projection
@@ -2872,23 +2931,11 @@ js_ersetzungen <- list(
   "__SITE_COLORS__" = jsonlite::toJSON(site_farben_je_ort),
   "__MAP_WOCHEN__" = jsonlite::toJSON(map_wochen, auto_unbox = TRUE),
   "__MAP_POINT_ORTS__" = jsonlite::toJSON(map_point_orts),
-  "__NIEDERSCHLAG_BILDER__" = jsonlite::toJSON(niederschlag_bild_je_woche, auto_unbox = TRUE),
-  "__NIEDERSCHLAG_MONAT_BILDER__" = jsonlite::toJSON(niederschlag_monat_bild_je_woche, auto_unbox = TRUE),
-  "__BODENWASSER_BILDER__" = jsonlite::toJSON(bodenwasser_bild_je_woche, auto_unbox = TRUE),
-  "__NIEDERSCHLAG_WERTE__" = jsonlite::toJSON(niederschlag_werte_je_woche, auto_unbox = TRUE, na = "null"),
-  "__NIEDERSCHLAG_MONAT_WERTE__" = jsonlite::toJSON(niederschlag_monat_werte_je_woche, auto_unbox = TRUE, na = "null"),
-  "__BODENWASSER_WERTE__" = jsonlite::toJSON(bodenwasser_werte_je_woche, auto_unbox = TRUE, na = "null"),
-  "__BODENWASSER_DATUM__" = jsonlite::toJSON(bodenwasser_datum_je_woche, auto_unbox = TRUE),
-  "__TEMPERATUR_BILDER__" = jsonlite::toJSON(temperatur_bild_je_woche, auto_unbox = TRUE),
-  "__TEMPERATUR_WERTE__" = jsonlite::toJSON(temperatur_werte_je_woche, auto_unbox = TRUE, na = "null"),
-  "__BODENTEMPERATUR_BILDER__" = jsonlite::toJSON(bodentemperatur_bild_je_woche, auto_unbox = TRUE),
-  "__BODENTEMPERATUR_WERTE__" = jsonlite::toJSON(bodentemperatur_werte_je_woche, auto_unbox = TRUE, na = "null"),
-  "__SONNENSCHEIN_BILDER__" = jsonlite::toJSON(sonnenschein_bild_je_woche, auto_unbox = TRUE),
-  "__SONNENSCHEIN_WERTE__" = jsonlite::toJSON(sonnenschein_werte_je_woche, auto_unbox = TRUE, na = "null"),
-  "__ET0_BILDER__" = jsonlite::toJSON(et0_bild_je_woche, auto_unbox = TRUE),
-  "__ET0_WERTE__" = jsonlite::toJSON(et0_werte_je_woche, auto_unbox = TRUE, na = "null"),
-  "__GDD_BILDER__" = jsonlite::toJSON(gdd_bild_je_woche, auto_unbox = TRUE),
-  "__GDD_WERTE__" = jsonlite::toJSON(gdd_werte_je_woche, auto_unbox = TRUE, na = "null"),
+  # Nur der schlanke Verfuegbarkeits-Index (Jahr/Woche-Schluessel je Ebene) -
+  # die eigentlichen Bilder/Werte-Gitter liegen in outputs/ebenen/*.json und
+  # werden erst bei Bedarf per fetch() nachgeladen (siehe schreibe_ebene_
+  # datei() oben und ladeEbene() im js_template).
+  "__EBENEN_SCHLUESSEL__" = jsonlite::toJSON(ebenen_schluessel, auto_unbox = TRUE),
   "__SMN_STATIONEN_TRACE_IDX__" = as.character(smn_stationen_trace_idx),
   "__LAYER_LEGENDEN__" = jsonlite::toJSON(layer_legenden, auto_unbox = TRUE),
   "__GRASWACHSTUM_BILDER__" = jsonlite::toJSON(graswachstum_bild_je_woche, auto_unbox = TRUE),

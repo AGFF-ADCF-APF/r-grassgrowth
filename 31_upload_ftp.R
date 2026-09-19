@@ -18,6 +18,13 @@ curvefile_ftp <- paste0("Graswachstumskurve_", Jahr, ".svg")
 datenexplorer_datei <- "outputs/Datenexplorer.html"
 datenexplorer_ftp_ziel <- "Datenexplorer.html"
 datenexplorer_lib_dir <- "outputs/lib"
+# Optionale Hintergrund-Ebenen (Niederschlag/Temperatur/Sonnenschein/etc.)
+# liegen NICHT mehr in der Haupt-HTML, sondern als eigene JSON-Dateien
+# (siehe schreibe_ebene_datei() in 27_plot_datenexplorer.R) und werden vom
+# Browser erst beim Auswaehlen der jeweiligen Ebene per fetch() nachgeladen -
+# dieser Ordner muss deshalb ZWINGEND mithochgeladen werden, sonst schlaegt
+# das Nachladen live mit einem 404 fehl.
+datenexplorer_ebenen_dir <- "outputs/ebenen"
 
 
 ## configure your own ftp settings
@@ -162,8 +169,11 @@ if (file.exists(datenexplorer_datei)) {
   })
   n_lib <- ftp_upload_recursive(datenexplorer_lib_dir, paste0(ftp_base_url, "lib/"), ftpuser, ftppasswd)
   n_lib_total <- length(list.files(datenexplorer_lib_dir, recursive = TRUE))
+  n_ebenen <- ftp_upload_recursive(datenexplorer_ebenen_dir, paste0(ftp_base_url, "ebenen/"), ftpuser, ftppasswd)
+  n_ebenen_total <- length(list.files(datenexplorer_ebenen_dir, recursive = TRUE))
   cat("Datenexplorer hochgeladen (", datenexplorer_ftp_ziel, "):", ok,
-      "- Abhaengigkeits-Dateien in lib/:", n_lib, "von", n_lib_total, "\n")
+      "- Abhaengigkeits-Dateien in lib/:", n_lib, "von", n_lib_total,
+      "- Ebenen-Dateien:", n_ebenen, "von", n_ebenen_total, "\n")
 } else {
   warning("Datenexplorer-Datei nicht gefunden (", datenexplorer_datei, ") - 27_plot_datenexplorer.R zuerst ausfuehren.")
 }
