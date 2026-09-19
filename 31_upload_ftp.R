@@ -72,17 +72,45 @@ ftp_upload_file_with_handle <- function(local_path, ftp_base_url, remote_rel_pat
   RCurl::ftpUpload(local_path, remote_url, curl = curl_handle)
 }
 
+# Legt einen Ordner direkt unter der FTP-Wurzel explizit per MKD an, STATT
+# sich allein auf ftp.create.missing.dirs beim eigentlichen Datei-Upload zu
+# verlassen. Grund: bei einem noch NIE existierenden Ordner (z.B. "ebenen/"
+# beim allerersten Lauf mit den neuen Hintergrund-Ebenen-Dateien) hat sich
+# ftp.create.missing.dirs auf diesem Server als unzuverlaessig erwiesen -
+# alle Datei-Uploads in diesen Ordner scheiterten mit "530", obwohl Login
+# und ein bereits bestehender Ordner (lib/) im selben Lauf einwandfrei
+# funktionierten. Ein expliziter MKD-Versuch VORAB behebt das; existiert der
+# Ordner schon (Normalfall bei jedem weiteren Lauf), liefert MKD einen
+# harmlosen Fehler, der hier bewusst verschluckt wird - das eigentliche
+# Scheitern zeigt sich sonst ohnehin beim folgenden Datei-Upload selbst.
+ftp_ordner_erstellen <- function(ftp_root_url, ordner_name, user, passwd) {
+  tryCatch({
+    RCurl::curlPerform(
+      url = ftp_root_url,
+      userpwd = paste0(user, ":", passwd),
+      quote = paste0("MKD ", ordner_name),
+      dirlistonly = TRUE
+    )
+    invisible(TRUE)
+  }, error = function(e) invisible(FALSE))
+}
+
 # Laedt alle Dateien eines lokalen Ordners rekursiv per FTP hoch (z.B. den
 # lib/-Abhaengigkeitsordner des Datenexplorers). Eine wiederverwendete
 # Session (curl-Handle) statt einer neuen Verbindung pro Datei reduziert
 # Re-Logins und dadurch "530"-Folgefehler bei vielen Dateien; bei einem
 # einzelnen 530 wird einmalig mit frischem Handle erneut versucht, bevor
-# die Datei als fehlgeschlagen gemeldet wird.
-ftp_upload_recursive <- function(local_dir, ftp_base_url, user, passwd) {
+# die Datei als fehlgeschlagen gemeldet wird. ordner_name (z.B. "ebenen")
+# wird zuerst per ftp_ordner_erstellen() an der FTP-Wurzel (ftp_root_url)
+# angelegt, bevor die Dateien in ftp_root_url/ordner_name/ hochgeladen
+# werden - siehe Kommentar dort.
+ftp_upload_recursive <- function(local_dir, ftp_root_url, ordner_name, user, passwd) {
   if (!dir.exists(local_dir)) return(invisible(0L))
   files <- list.files(local_dir, recursive = TRUE, full.names = FALSE)
   if (length(files) == 0L) return(invisible(0L))
 
+  ftp_ordner_erstellen(ftp_root_url, ordner_name, user, passwd)
+  ftp_base_url <- paste0(ftp_root_url, ordner_name, "/")
   curl_handle <- RCurl::getCurlHandle(userpwd = paste0(user, ":", passwd), ftp.create.missing.dirs = TRUE)
 
   uploaded <- 0L
@@ -190,9 +218,9 @@ if (file.exists(datenexplorer_app_datei)) {
     warning("FTP-Upload fehlgeschlagen: ", datenexplorer_app_ftp_ziel, " - ", conditionMessage(e))
     FALSE
   })
-  n_lib <- ftp_upload_recursive(datenexplorer_lib_dir, paste0(ftp_base_url, "lib/"), ftpuser, ftppasswd)
+  n_lib <- ftp_upload_recursive(datenexplorer_lib_dir, ftp_base_url, "lib", ftpuser, ftppasswd)
   n_lib_total <- length(list.files(datenexplorer_lib_dir, recursive = TRUE))
-  n_ebenen <- ftp_upload_recursive(datenexplorer_ebenen_dir, paste0(ftp_base_url, "ebenen/"), ftpuser, ftppasswd)
+  n_ebenen <- ftp_upload_recursive(datenexplorer_ebenen_dir, ftp_base_url, "ebenen", ftpuser, ftppasswd)
   n_ebenen_total <- length(list.files(datenexplorer_ebenen_dir, recursive = TRUE))
   cat("Datenexplorer-App hochgeladen (", datenexplorer_app_ftp_ziel, "):", ok,
       "- Abhaengigkeits-Dateien in lib/:", n_lib, "von", n_lib_total,
