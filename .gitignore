@@ -34,3 +34,6 @@ po/*~
 # RStudio Connect folder
 rsconnect/
 outputs
+# Datendateien (kein Code) - werden nicht versioniert
+*.geojson
+/inputs/
