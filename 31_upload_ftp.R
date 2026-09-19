@@ -97,28 +97,50 @@ ftp_ordner_erstellen <- function(ftp_root_url, ordner_name, curl_handle) {
 }
 
 # Laedt alle Dateien eines lokalen Ordners rekursiv per FTP hoch (z.B. den
-# lib/- oder ebenen/-Ordner des Datenexplorers), ueber den EINEN geteilten
-# curl_handle (siehe ftp_upload_file() oben).
-ftp_upload_recursive <- function(local_dir, ftp_root_url, ordner_name, curl_handle, user, passwd) {
+# lib/- oder ebenen/-Ordner des Datenexplorers), in STAFFELN (batch_groesse
+# Dateien je Staffel) mit je einem FRISCHEN Curl-Handle pro Staffel und
+# einer laengeren Pause ZWISCHEN den Staffeln.
+#
+# Drei vorherige Versuche haben das wiederholte komplette Scheitern von
+# ebenen/ (ca. 20 Dateien, 2.4-4.6MB je Datei) mit "530 statt 220" NICHT
+# behoben: MKD-Vorablegen des Ordners, laengere Pausen zwischen Uploads, und
+# zuletzt EIN einziger durchgehend wiederverwendeter Handle fuer den
+# gesamten Lauf. Da selbst die "nur eine Verbindung insgesamt"-Variante
+# scheiterte, ist die Ursache offenbar NICHT (nur) die Gesamtzahl an
+# Verbindungen - Staffeln mit frischem Handle je Staffel UND verbose=TRUE
+# (curls Klartext-Protokollausgabe: zeigt USER/PASS/PASV/STOR-Kommandos und
+# die tatsaechlichen Serverantworten in der Konsole) sollen jetzt zeigen,
+# AN WELCHER STELLE genau der 530 ausgeloest wird, statt weiter zu raten.
+ftp_upload_recursive <- function(local_dir, ftp_root_url, ordner_name, user, passwd,
+                                  batch_groesse = 5, batch_pause = 8, verbose = FALSE) {
   if (!dir.exists(local_dir)) return(invisible(0L))
   files <- list.files(local_dir, recursive = TRUE, full.names = FALSE)
   if (length(files) == 0L) return(invisible(0L))
 
-  ftp_ordner_erstellen(ftp_root_url, ordner_name, curl_handle)
   ftp_base_url <- paste0(ftp_root_url, ordner_name, "/")
+  batches <- split(files, ceiling(seq_along(files) / batch_groesse))
 
   uploaded <- 0L
-  for (f in files) {
-    local_path <- file.path(local_dir, f)
-    ok <- tryCatch({
-      ftp_upload_file(local_path, ftp_base_url, f, curl_handle, user, passwd)
-      TRUE
-    }, error = function(e) {
-      warning("FTP-Upload fehlgeschlagen: ", f, " - ", conditionMessage(e))
-      FALSE
-    })
-    if (isTRUE(ok)) uploaded <- uploaded + 1L
-    Sys.sleep(0.3)
+  for (batch_idx in seq_along(batches)) {
+    batch <- batches[[batch_idx]]
+    cat("  Staffel", batch_idx, "von", length(batches), "(", length(batch), "Dateien) ...\n")
+    curl_handle <- RCurl::getCurlHandle(
+      userpwd = paste0(user, ":", passwd), ftp.create.missing.dirs = TRUE, verbose = verbose
+    )
+    ftp_ordner_erstellen(ftp_root_url, ordner_name, curl_handle)
+    for (f in batch) {
+      local_path <- file.path(local_dir, f)
+      ok <- tryCatch({
+        ftp_upload_file(local_path, ftp_base_url, f, curl_handle, user, passwd)
+        TRUE
+      }, error = function(e) {
+        warning("FTP-Upload fehlgeschlagen: ", f, " - ", conditionMessage(e))
+        FALSE
+      })
+      if (isTRUE(ok)) uploaded <- uploaded + 1L
+      Sys.sleep(0.3)
+    }
+    if (batch_idx < length(batches)) Sys.sleep(batch_pause)
   }
   invisible(uploaded)
 }
@@ -210,9 +232,16 @@ if (file.exists(datenexplorer_app_datei)) {
     warning("FTP-Upload fehlgeschlagen: ", datenexplorer_app_ftp_ziel, " - ", conditionMessage(e))
     FALSE
   })
-  n_lib <- ftp_upload_recursive(datenexplorer_lib_dir, ftp_base_url, "lib", ftp_handle, ftpuser, ftppasswd)
+  cat("lib/ hochladen...\n")
+  n_lib <- ftp_upload_recursive(datenexplorer_lib_dir, ftp_base_url, "lib", ftpuser, ftppasswd)
   n_lib_total <- length(list.files(datenexplorer_lib_dir, recursive = TRUE))
-  n_ebenen <- ftp_upload_recursive(datenexplorer_ebenen_dir, ftp_base_url, "ebenen", ftp_handle, ftpuser, ftppasswd)
+  # verbose=TRUE NUR hier: ebenen/ ist der wiederholt scheiternde Teil (siehe
+  # Kommentar bei ftp_upload_recursive()) - die Klartext-Protokollausgabe
+  # (USER/PASS/PASV/STOR-Kommandos + tatsaechliche Serverantworten) landet
+  # direkt in der Konsole, bitte bei einem erneuten Fehlschlag komplett
+  # mitschicken.
+  cat("ebenen/ hochladen (verbose)...\n")
+  n_ebenen <- ftp_upload_recursive(datenexplorer_ebenen_dir, ftp_base_url, "ebenen", ftpuser, ftppasswd, verbose = TRUE)
   n_ebenen_total <- length(list.files(datenexplorer_ebenen_dir, recursive = TRUE))
   cat("Datenexplorer-App hochgeladen (", datenexplorer_app_ftp_ziel, "):", ok,
       "- Abhaengigkeits-Dateien in lib/:", n_lib, "von", n_lib_total,
