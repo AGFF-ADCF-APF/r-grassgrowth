@@ -693,15 +693,8 @@ ring_radius_outer <- ring_radius + 0.008 * 1.5
 ring_steps <- 360
 start_angle <- pi / 2
 
-# Einheitliche Schrift fuer beide Karten-Legenden ("Tage seit Messung" -
-# Plotly-natives colorbar - und die AFC-Ziel-Ringlegende, als ggplot-Text
-# ins Bild gerendert), damit beide nicht wie aus zwei verschiedenen
-# Programmen aussehen. legenden_ggplot_size ist in ggplot-mm-Einheiten
-# kalibriert, um bei der verwendeten Bildaufloesung (dpi=130) ungefaehr der
-# Pixelgroesse von legenden_font$size zu entsprechen.
+# Schrift fuer die "Tage seit Messung"-Legende (Plotly-natives colorbar).
 legenden_font <- list(family = "Arial, sans-serif", size = 11, color = "black")
-legenden_ggplot_size <- 2.2
-legenden_ggplot_titel_size <- 2.5
 
 tage_farbe <- function(daysold) {
   anteil <- pmax(0, pmin(1, daysold / 14))
@@ -779,59 +772,29 @@ baue_afc_ring_bild <- function(snap, referenzdatum) {
                y = snap$lat[i] + ring_radius_outer * sin(theta), color = snap$afc_ring_color[i])
   })) else NULL
 
-  # AFC-Ziel-Legende als RING (wie die einzelnen Standort-Ringe, nur
-  # deutlich groesser mit Tick-Beschriftungen) im rechts reservierten Rand
-  # (lon_range_erweitert) - auf den kleinen Standort-Ringen selbst waeren
-  # Tick-Beschriftungen unleserlich, siehe Kommentar bei lon_range_erweitert
-  # oben. Vertikal im OBEREN Bereich platziert (0.72), damit sie ueber der
-  # "Tage seit Messung"-Farblegende (Plotly-Colorbar, siehe
-  # baue_kartenwerte_trace(), dort auf den unteren Bereich gesetzt) liegt.
-  legend_radius <- ring_radius_outer * 3
-  legend_center_x <- lon_range[2] + diff(lon_range) * 0.13
-  legend_center_y <- lat_range[1] + diff(lat_range) * 0.72
-  legend_lon_scale <- 1 / pmax(cos(legend_center_y * pi / 180), 1e-6)
-
-  legend_vals <- seq(afc_min, afc_max, length.out = ring_steps + 1)
-  legend_theta <- start_angle - 2 * pi * ((legend_vals - afc_min) / (afc_max - afc_min))
-  legend_ring <- data.frame(
-    x = legend_center_x + legend_radius * legend_lon_scale * cos(head(legend_theta, -1)),
-    y = legend_center_y + legend_radius * sin(head(legend_theta, -1)),
-    xend = legend_center_x + legend_radius * legend_lon_scale * cos(legend_theta[-1]),
-    yend = legend_center_y + legend_radius * sin(legend_theta[-1]),
-    farbe = afc_to_color(head(legend_vals, -1), opt_low, opt_high)
-  )
-
-  legend_tick_offset <- 0.008
-  legend_tick_werte <- sort(unique(c(afc_min, opt_low, opt_high, afc_max)))
-  legend_tick_theta <- start_angle - 2 * pi * ((legend_tick_werte - afc_min) / (afc_max - afc_min))
-  legend_ticks2 <- data.frame(
-    x = legend_center_x + (legend_radius - legend_tick_offset) * legend_lon_scale * cos(legend_tick_theta),
-    y = legend_center_y + (legend_radius - legend_tick_offset) * sin(legend_tick_theta),
-    xend = legend_center_x + (legend_radius + legend_tick_offset) * legend_lon_scale * cos(legend_tick_theta),
-    yend = legend_center_y + (legend_radius + legend_tick_offset) * sin(legend_tick_theta)
-  )
-
-  legend_label_werte <- c(afc_min, opt_low, opt_high)
-  legend_label_theta <- start_angle - 2 * pi * ((legend_label_werte - afc_min) / (afc_max - afc_min))
-  legend_label_radius <- legend_radius + 0.028
-  legend_labels2 <- data.frame(
-    x = legend_center_x + legend_label_radius * legend_lon_scale * cos(legend_label_theta),
-    y = legend_center_y + legend_label_radius * sin(legend_label_theta),
-    label = paste0(round(legend_label_werte), " kg"),
-    hjust = ifelse(cos(legend_label_theta) > 0.2, 0, ifelse(cos(legend_label_theta) < -0.2, 1, 0.5)),
-    vjust = ifelse(sin(legend_label_theta) > 0.2, 0, ifelse(sin(legend_label_theta) < -0.2, 1, 0.5))
-  )
+  # Kleine Tick-Striche am Standort-Ring selbst, an den Positionen des
+  # jahreszeitlichen Zielbereichs (opt_low/opt_high) - ersetzt die frueher
+  # separate, grosse Referenz-Ring-Legende auf der Karte (jetzt nur noch
+  # kompakt im Ebenen-Kasten, siehe aktualisiereAfcLegende()/JS). Direkt an
+  # jedem Standort-Ring zeigt das sofort, wo der Zielbereich fuer DIESEN
+  # Standort beginnt/endet, ohne zwischen Karte und separater Legende hin-
+  # und herschauen zu muessen.
+  tick_theta <- start_angle - 2 * pi * (c(opt_low, opt_high) - afc_min) / (afc_max - afc_min)
+  tick_offset <- 0.006
+  ring_ticks <- do.call(rbind, lapply(ring_hat_afc, function(i) {
+    data.frame(
+      id = i,
+      x = snap$lon[i] + (ring_radius_outer - tick_offset) * snap$lon_scale[i] * cos(tick_theta),
+      y = snap$lat[i] + (ring_radius_outer - tick_offset) * sin(tick_theta),
+      xend = snap$lon[i] + (ring_radius_outer + tick_offset) * snap$lon_scale[i] * cos(tick_theta),
+      yend = snap$lat[i] + (ring_radius_outer + tick_offset) * sin(tick_theta)
+    )
+  }))
 
   p <- ggplot() +
     geom_path(data = ring_bg, aes(x = x, y = y, group = id, color = col), linewidth = 1.95, lineend = "round") +
     { if (!is.null(ring_fg)) geom_path(data = ring_fg, aes(x = x, y = y, group = id, color = color), linewidth = 3.15, lineend = "butt", show.legend = FALSE) } +
-    geom_segment(data = legend_ring, aes(x = x, y = y, xend = xend, yend = yend, color = farbe), linewidth = 3, lineend = "butt") +
-    geom_segment(data = legend_ticks2, aes(x = x, y = y, xend = xend, yend = yend), color = "black", linewidth = 0.5) +
-    geom_text(data = legend_labels2, aes(x = x, y = y, label = label, hjust = hjust, vjust = vjust),
-              fontface = "bold", size = legenden_ggplot_size, family = "sans") +
-    annotate("text", x = legend_center_x, y = legend_center_y + legend_radius + 0.06,
-             label = "AFC-Ziel (Grasvorrat)", hjust = 0.5, vjust = 0, fontface = "bold",
-             size = legenden_ggplot_titel_size, family = "sans") +
+    geom_segment(data = ring_ticks, aes(x = x, y = y, xend = xend, yend = yend, group = id), color = "black", linewidth = 0.8) +
     scale_color_identity() +
     coord_sf(crs = sf::st_crs(4326), xlim = lon_range_erweitert, ylim = lat_range, expand = FALSE) +
     theme_void()
@@ -1963,8 +1926,12 @@ function(el, x) {
     // Donut-Ring per Masken-Trick (radial-gradient schneidet die Mitte
     // transparent) statt eines SVG - conic-gradient uebernimmt die
     // Farbverlauf-Stuetzstellen 1:1 vom vorherigen linear-gradient-Balken.
-    '.gw-afc-ring-wrap { display: flex; justify-content: center; margin-bottom: 2px; }',
+    '.gw-afc-ring-wrap { position: relative; display: flex; justify-content: center; align-items: center; margin-bottom: 2px; }',
     '.gw-afc-ring { width: 56px; height: 56px; border-radius: 50%; -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 10px), #000 calc(100% - 10px)); mask: radial-gradient(farthest-side, transparent calc(100% - 10px), #000 calc(100% - 10px)); }',
+    // Tick-Strich als Uhrzeiger vom Ringzentrum nach aussen (Standard-CSS-
+    // Technik: transform-origin unten am Strich = Ringzentrum, rotate()
+    // schwenkt den Strich dadurch sauber um das Zentrum statt exzentrisch).
+    '.gw-afc-tick { position: absolute; top: 50%; left: 50%; width: 2px; height: 30px; background: #000; transform-origin: 50% 100%; margin-left: -1px; margin-top: -30px; }',
     '.gw-layer-legende-skala { display: flex; justify-content: space-between; font-size: 11px; color: #555; margin-top: 3px; }',
     '.gw-layer-legende-quelle { font-size: 10px; color: #888; margin-top: 4px; }',
     '.gw-layer-wert-anzeige { font-size: 12px; font-weight: 600; margin-top: 8px; padding-top: 8px; border-top: 1px solid #eee; }',
@@ -2202,6 +2169,15 @@ function(el, x) {
     ring.className = 'gw-afc-ring';
     ring.style.background = 'conic-gradient(' + verlauf.farben.join(',') + ')';
     ringWrap.appendChild(ring);
+    // Tick-Striche am Zielbereich (low/high) - conic-gradient beginnt bei
+    // 0deg (12 Uhr) und laeuft im Uhrzeigersinn, CSS rotate() ebenso, daher
+    // genuegt eine einfache Prozent-zu-Grad-Umrechnung ohne Trigonometrie.
+    [verlauf.low, verlauf.high].forEach(function(wert) {
+      var tick = document.createElement('div');
+      tick.className = 'gw-afc-tick';
+      tick.style.transform = 'rotate(' + (wert / 1500 * 360) + 'deg)';
+      ringWrap.appendChild(tick);
+    });
     var skala = document.createElement('div');
     skala.className = 'gw-layer-legende-skala';
     var minEl = document.createElement('span'); minEl.textContent = '0 kg';
@@ -2498,10 +2474,14 @@ function(el, x) {
     // (siehe weiter unten), unabhaengig ein-/ausblendbar.
     var messnetzToggleWrap = schalterLinksbuendig(makeToggle('Messnetz-Standorte', true, function(checked) { messnetzOn = checked; applyState(); }));
     messnetzToggleWrap.title = 'Hoverbare Standort-Positionen auf der Karte ein-/ausblenden';
-    messnetzToggleWrap.className += ' gw-layer-messnetz-toggle';
     layerPanel.appendChild(messnetzToggleWrap);
+    // Trennlinie (gw-layer-messnetz-toggle) liegt jetzt auf dieser Zeile
+    // (MeteoSchweiz-Stationen), nicht mehr auf Messnetz-Standorte - beide
+    // gehoeren als Standort-Ebenen zusammen ueber die Linie, Graswachstum/
+    // AFC (Bild-Ebenen) darunter.
     macheLayerToggle('MeteoSchweiz-Stationen', false, function(checked) { smnStationenOn = checked; aktualisiereSmnStationen(); },
-      'Zeigt die oeffentlichen MeteoSchweiz-Automatikstationen (SwissMetNet) mit ihren aktuellsten Tageswerten (Lufttemperatur, Bodentemperatur, Niederschlag, Globalstrahlung, Sonnenscheindauer) als Diamant-Symbole. Reine Wetter-Referenzstationen, unabhaengig von der gewaehlten Kalenderwoche und NICHT Teil der AGFF-Grasmessungen. Bodentemperatur wird nur an einem Teil der rund 150 Stationen gemessen - dort steht im Tooltip entsprechend keine Daten.');
+      'Zeigt die oeffentlichen MeteoSchweiz-Automatikstationen (SwissMetNet) mit ihren aktuellsten Tageswerten (Lufttemperatur, Bodentemperatur, Niederschlag, Globalstrahlung, Sonnenscheindauer) als Diamant-Symbole. Reine Wetter-Referenzstationen, unabhaengig von der gewaehlten Kalenderwoche und NICHT Teil der AGFF-Grasmessungen. Bodentemperatur wird nur an einem Teil der rund 150 Stationen gemessen - dort steht im Tooltip entsprechend keine Daten.',
+      'gw-layer-messnetz-toggle');
 
     // Kleiner i-Knopf mit Klapp-Popup fuer laengere Erklaerungstexte (die
     // Quellenangabe als nativer title-Tooltip reicht fuer eine ganze
@@ -2548,9 +2528,9 @@ function(el, x) {
     // eines Radiobuttons - fuer Graswachstum/AFC, die (anders als die
     // Hintergrund-Raster-Ebenen) unabhaengig VONEINANDER ein-/ausblendbar
     // sein sollen, nicht als Radiogruppe.
-    function macheLayerToggle(labelText, checked, onChange, erklaerung) {
+    function macheLayerToggle(labelText, checked, onChange, erklaerung, zusatzKlasse) {
       var zeile = document.createElement('div');
-      zeile.className = 'gw-layer-option-zeile';
+      zeile.className = 'gw-layer-option-zeile' + (zusatzKlasse ? ' ' + zusatzKlasse : '');
       var toggleWrap = schalterLinksbuendig(makeToggle(labelText, checked, onChange));
       zeile.appendChild(toggleWrap);
       if (erklaerung) zeile.appendChild(macheInfoKnopf(erklaerung));
