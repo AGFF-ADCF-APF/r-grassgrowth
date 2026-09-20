@@ -1050,7 +1050,7 @@ fig_wachstum <- fig_wachstum %>% layout(
 fig_wachstum <- htmlwidgets::onRender(fig_wachstum, sprintf("
 function(el, x) {
   // Feste Kartenausmasse aus R (lon_range_erweitert/lat_range/
-  // karten_scaleratio) - fuer die Mobile-Neuberechnung unten EXPLIZIT
+  // karten_scaleratio) - fuer die Ansichts-Berechnung unten EXPLIZIT
   // mitgegeben statt sich auf Plotlys eigene scaleanchor/scaleratio-
   // Bereichsanpassung zu verlassen: die hat sich bei mehreren
   // relayout()-Aufrufen (Breite/Hoehe aendert sich mehrfach) als instabil
@@ -1066,37 +1066,113 @@ function(el, x) {
   // MeteoSchweiz-Stationen, und dort eine bedeutungslose Leer-Colorbar
   // erzeugen).
   var snapshotTraceIdx = Array.from({ length: %s }, function(_, i) { return i; });
+
+  // 'Ganze Schweiz'-Ansicht (x-/y-Achsenbereich) fuer eine gegebene
+  // Containergroesse - x bleibt immer auf dem vollen lon_range_erweitert
+  // (nutzt die volle Breite), y wird so berechnet, dass bei diesem
+  // Seitenverhaeltnis exakt keine Rand-Leerflaeche entsteht (weder
+  // gestaucht noch gestreckt). Wird unten sowohl fuer die initiale/
+  // Resize-Ansicht als auch fuer die Zoom-Sperre und den 'Ganze Schweiz'-
+  // Knopf gebraucht - deshalb als eigene Funktion statt nur inline fuer
+  // den Mobile-Fall (wie zuvor).
+  function vollAnsichtBerechnen(breite, hoehe) {
+    var plotBreite = breite - 20, plotHoehe = hoehe - 50;
+    var ySpan = xSpan * plotHoehe / (scaleratio * plotBreite);
+    return { x: [xMin, xMax], y: [yMitte - ySpan / 2, yMitte + ySpan / 2] };
+  }
+  var vollX = null, vollY = null;
+
   function fixiereGroesse() {
     var breite = el.parentElement.clientWidth;
-    if (breite < 700) {
-      // Schmaler (Mobile-)Container: eigene Hoehe UND eigener y-Achsen-
-      // Bereich, beide explizit auf das Kartenformat berechnet, statt der
-      // festen Desktop-Hoehe (560px) mit Plotlys eigener (siehe oben
-      // instabiler) Bereichsanpassung. x bleibt immer auf dem vollen
-      // lon_range_erweitert (nutzt die volle Breite), y wird so berechnet,
-      // dass bei diesem Seitenverhaeltnis exakt keine Rand-Leerflaeche
-      // entsteht (weder gestaucht noch gestreckt).
-      var plotBreite = breite - 20, hoehe = Math.round(Math.max(200, plotBreite * 0.65 + 50));
-      var plotHoehe = hoehe - 50;
-      var ySpan = xSpan * plotHoehe / (scaleratio * plotBreite);
-      // Tage-seit-Messung-Farblegende (Colorbar) auf dem schmalen
-      // Handy-Bildschirm ausgeblendet: sie nimmt proportional viel Platz
-      // weg, die Graustufen sind an den Standort-Kreisen selbst ohnehin
-      // ablesbar. Per restyle (nicht nur CSS), damit Plotly den dafuer
-      // reservierten Rand auch wirklich freigibt.
-      Plotly.restyle(el, { 'marker.showscale': false }, snapshotTraceIdx);
-      Plotly.relayout(el, {
-        width: breite, height: hoehe,
-        'xaxis.range': [xMin, xMax],
-        'yaxis.range': [yMitte - ySpan / 2, yMitte + ySpan / 2]
-      });
-    } else {
-      Plotly.restyle(el, { 'marker.showscale': true }, snapshotTraceIdx);
-      Plotly.relayout(el, { width: breite, height: 560 });
-    }
+    var mobil = breite < 700;
+    // Schmaler (Mobile-)Container: eigene, kleinere Hoehe statt der festen
+    // Desktop-Hoehe (560px) - der y-Achsenbereich wird fuer BEIDE Faelle
+    // ueber vollAnsichtBerechnen() explizit gesetzt (nicht Plotlys eigene,
+    // s.o. instabile Bereichsanpassung).
+    var hoehe = mobil ? Math.round(Math.max(200, (breite - 20) * 0.65 + 50)) : 560;
+    var voll = vollAnsichtBerechnen(breite, hoehe);
+    vollX = voll.x; vollY = voll.y;
+    // Tage-seit-Messung-Farblegende (Colorbar) auf dem schmalen
+    // Handy-Bildschirm ausgeblendet: sie nimmt proportional viel Platz
+    // weg, die Graustufen sind an den Standort-Kreisen selbst ohnehin
+    // ablesbar. Per restyle (nicht nur CSS), damit Plotly den dafuer
+    // reservierten Rand auch wirklich freigibt.
+    Plotly.restyle(el, { 'marker.showscale': !mobil }, snapshotTraceIdx);
+    Plotly.relayout(el, { width: breite, height: hoehe, 'xaxis.range': voll.x, 'yaxis.range': voll.y });
+    // Container-Hoehe (CSS, fest 560px im HTML) der tatsaechlichen, hier
+    // berechneten Kartenhoehe nachfuehren - sonst bleibt auf Mobile (kleinere
+    // hoehe) darunter Leerraum im Container stehen, in dem die Zoom-
+    // Steuerung (position:absolute, bottom:10px relativ zu diesem Container)
+    // dann weit unterhalb der sichtbar gezeichneten Karte haengen wuerde.
+    el.parentElement.style.height = hoehe + 'px';
   }
   fixiereGroesse();
   window.addEventListener('resize', fixiereGroesse);
+
+  // Weiteres Herauszoomen ueber die 'ganze Schweiz'-Ansicht hinaus sperren
+  // und dabei automatisch zentrieren: sobald der sichtbare Bereich (per
+  // Mausrad/Pinch/Doppelklick/Plotly-eigener Modebar) die volle Ansicht
+  // erreicht oder ueberschreitet, sofort auf die EXAKTE volle Ansicht
+  // zurueckspringen - unabhaengig davon, WIE gezoomt/verschoben wurde.
+  // zoomKorrekturLaeuft verhindert eine Endlosschleife durch den
+  // relayout()-Aufruf der Korrektur selbst (loest wieder plotly_relayout
+  // aus).
+  var zoomKorrekturLaeuft = false;
+  el.on('plotly_relayout', function(ev) {
+    if (zoomKorrekturLaeuft || !vollX) return;
+    var betroffen = Object.keys(ev).some(function(k) {
+      return k.indexOf('xaxis') === 0 || k.indexOf('yaxis') === 0;
+    });
+    if (!betroffen) return;
+    var xr = el.layout.xaxis.range;
+    if (!xr || (xr[1] - xr[0]) >= (vollX[1] - vollX[0]) - 1e-6) {
+      zoomKorrekturLaeuft = true;
+      Plotly.relayout(el, { 'xaxis.range': vollX, 'yaxis.range': vollY })
+        .then(function() { zoomKorrekturLaeuft = false; });
+    }
+  });
+
+  // +/- und 'Ganze Schweiz'-Knoepfe direkt neben der Karte, staendig
+  // sichtbar (statt nur ueber Plotlys eigene, erst bei Hover eingeblendete
+  // Modebar) - el.parentElement (#datenexplorer-growthmap) traegt dafuer
+  // position:relative (siehe HTML/CSS).
+  function zoomeUm(faktor) {
+    var xr = el.layout.xaxis.range, yr = el.layout.yaxis.range;
+    var xMitteAktuell = (xr[0] + xr[1]) / 2, yMitteAktuell = (yr[0] + yr[1]) / 2;
+    var neuXSpan = (xr[1] - xr[0]) * faktor, neuYSpan = (yr[1] - yr[0]) * faktor;
+    Plotly.relayout(el, {
+      'xaxis.range': [xMitteAktuell - neuXSpan / 2, xMitteAktuell + neuXSpan / 2],
+      'yaxis.range': [yMitteAktuell - neuYSpan / 2, yMitteAktuell + neuYSpan / 2]
+    });
+  }
+  var zoomSteuerung = document.createElement('div');
+  zoomSteuerung.className = 'gw-map-zoom-steuerung';
+  var zoomInBtn = document.createElement('button');
+  zoomInBtn.type = 'button';
+  zoomInBtn.className = 'gw-map-zoom-btn';
+  zoomInBtn.textContent = '+';
+  zoomInBtn.title = 'Hineinzoomen';
+  zoomInBtn.onclick = function() { zoomeUm(0.7); };
+  var zoomOutBtn = document.createElement('button');
+  zoomOutBtn.type = 'button';
+  zoomOutBtn.className = 'gw-map-zoom-btn';
+  zoomOutBtn.textContent = '\\u2212';
+  zoomOutBtn.title = 'Herauszoomen';
+  // Am unteren Ende (ganze Schweiz sichtbar) einfach ein no-op dank der
+  // Zoom-Sperre oben - kein gesonderter Check hier noetig.
+  zoomOutBtn.onclick = function() { zoomeUm(1 / 0.7); };
+  var zoomVollBtn = document.createElement('button');
+  zoomVollBtn.type = 'button';
+  zoomVollBtn.className = 'gw-map-zoom-btn gw-map-zoom-btn-voll';
+  zoomVollBtn.textContent = 'CH';
+  zoomVollBtn.title = 'Ganze Schweiz anzeigen';
+  zoomVollBtn.onclick = function() {
+    if (vollX) Plotly.relayout(el, { 'xaxis.range': vollX, 'yaxis.range': vollY });
+  };
+  zoomSteuerung.appendChild(zoomInBtn);
+  zoomSteuerung.appendChild(zoomOutBtn);
+  zoomSteuerung.appendChild(zoomVollBtn);
+  el.parentElement.appendChild(zoomSteuerung);
 }
 ", lon_range_erweitert[1], lon_range_erweitert[2], mean(lat_range), karten_scaleratio, nrow(map_wochen)))
 
@@ -1993,6 +2069,12 @@ function(el, x) {
     '.gw-edge-btn { width: 26px; height: 26px; border: 1px solid #bbb; border-radius: 4px; background: white; cursor: pointer; font-size: 15px; display: flex; align-items: center; justify-content: center; color: #333; padding: 0; }',
     '.gw-edge-btn:hover { background: #f2f2f2; }',
     '.gw-edge-btn.active { background: #eaf2fb; border-color: #4a90d9; color: #2a6fbf; }',
+    // Zoom-Steuerung ueber der Karte selbst (el.parentElement, siehe
+    // onRender() bei fig_wachstum) - braucht dessen position:relative.
+    '.gw-map-zoom-steuerung { position: absolute; right: 10px; bottom: 10px; z-index: 5; display: flex; flex-direction: column; gap: 4px; }',
+    '.gw-map-zoom-btn { width: 30px; height: 30px; border: 1px solid #bbb; border-radius: 4px; background: white; cursor: pointer; font-size: 17px; line-height: 1; display: flex; align-items: center; justify-content: center; color: #333; padding: 0; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }',
+    '.gw-map-zoom-btn:hover { background: #f2f2f2; }',
+    '.gw-map-zoom-btn-voll { font-size: 11px; font-weight: 600; margin-top: 4px; }',
     '.gw-slider-row { font-family: sans-serif; font-size: 14px; display: flex; align-items: center; margin: 20px 0; padding: 12px 16px; background: #f7f7f7; border-radius: 6px; }',
     '.gw-slider-aligned { flex: 0 0 auto; box-sizing: border-box; min-width: 0; }',
     '.gw-slider-label-row { display: flex; align-items: center; gap: 10px; width: 100%; margin-bottom: 8px; }',
@@ -3088,7 +3170,7 @@ seite <- htmltools::tagList(
   ),
   htmltools::div(style = "font-family: sans-serif; max-width: 1400px; margin: 0 auto; padding: 20px;",
     htmltools::div(style = "display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start;",
-      htmltools::div(id = "datenexplorer-growthmap", style = "flex: 1 1 700px; min-width: 320px; height: 560px; overflow: hidden;", fig_wachstum),
+      htmltools::div(id = "datenexplorer-growthmap", style = "position: relative; flex: 1 1 700px; min-width: 320px; height: 560px; overflow: hidden;", fig_wachstum),
       # flex-grow:1 (statt 0) statt einer festen 220px-Box: faellt die
       # Ebenen-Box auf einem schmalen (Mobile-)Bildschirm per flex-wrap in
       # eine eigene Zeile, fuellt sie so deren volle Breite aus, statt
