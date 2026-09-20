@@ -1950,6 +1950,16 @@ function(el, x) {
     // Technik: transform-origin unten am Strich = Ringzentrum, rotate()
     // schwenkt den Strich dadurch sauber um das Zentrum statt exzentrisch).
     '.gw-afc-tick { position: absolute; top: 50%; left: 50%; width: 2px; height: 30px; background: #000; transform-origin: 50% 100%; margin-left: -1px; margin-top: -30px; }',
+    // Deckt den Teil des Tick-Strichs ab, der durch das Loch in der Mitte
+    // des Rings ragt (wie beim Ring auf der Karte selbst - dort sind die
+    // Ticks als kurze Segmente NUR im farbigen Band gezeichnet, siehe
+    // ring_ticks in baue_afc_ring_bild()/R). Durchmesser = Ring-Loch
+    // (Ring-Radius 28px minus Bandbreite 10px = 18px Loch-Radius, siehe
+    // .gw-afc-ring-Maske oben) - Panel-Hintergrundfarbe (#f7f7f7, siehe
+    // .gw-layer-panel) statt der Ring-Elemente selbst, da Letztere die
+    // Ticks nicht ueberdecken koennten (Maske wirkt nur auf den Ring, nicht
+    // auf seine Geschwister-Elemente).
+    '.gw-afc-ring-mitte { position: absolute; top: 50%; left: 50%; width: 36px; height: 36px; margin-left: -18px; margin-top: -18px; border-radius: 50%; background: #f7f7f7; }',
     '.gw-layer-legende-skala { display: flex; justify-content: space-between; font-size: 11px; color: #555; margin-top: 3px; }',
     '.gw-layer-legende-quelle { font-size: 10px; color: #888; margin-top: 4px; }',
     '.gw-layer-wert-anzeige { font-size: 12px; font-weight: 600; margin-top: 8px; padding-top: 8px; border-top: 1px solid #eee; }',
@@ -2196,6 +2206,12 @@ function(el, x) {
       tick.style.transform = 'rotate(' + (wert / 1500 * 360) + 'deg)';
       ringWrap.appendChild(tick);
     });
+    // Nach den Ticks angehaengt, damit sie darueber liegt: deckt den Teil
+    // der Tick-Striche im Ring-Loch ab, sichtbar bleibt nur das kurze Stueck
+    // im farbigen Band (wie bei den Ticks auf der Karte selbst).
+    var ringMitte = document.createElement('div');
+    ringMitte.className = 'gw-afc-ring-mitte';
+    ringWrap.appendChild(ringMitte);
     var skala = document.createElement('div');
     skala.className = 'gw-layer-legende-skala';
     var minEl = document.createElement('span'); minEl.textContent = '0 kg';
