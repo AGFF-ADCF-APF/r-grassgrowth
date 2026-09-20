@@ -1107,47 +1107,11 @@ function(el, x) {
     }
   });
 
-  // +/- und 'Ganze Schweiz'-Knoepfe direkt neben der Karte, staendig
-  // sichtbar (statt nur ueber Plotlys eigene, erst bei Hover eingeblendete
-  // Modebar) - el.parentElement (#datenexplorer-growthmap) traegt dafuer
-  // position:relative (siehe HTML/CSS).
-  function zoomeUm(faktor) {
-    var xr = el.layout.xaxis.range, yr = el.layout.yaxis.range;
-    var xMitteAktuell = (xr[0] + xr[1]) / 2, yMitteAktuell = (yr[0] + yr[1]) / 2;
-    var neuXSpan = (xr[1] - xr[0]) * faktor, neuYSpan = (yr[1] - yr[0]) * faktor;
-    Plotly.relayout(el, {
-      'xaxis.range': [xMitteAktuell - neuXSpan / 2, xMitteAktuell + neuXSpan / 2],
-      'yaxis.range': [yMitteAktuell - neuYSpan / 2, yMitteAktuell + neuYSpan / 2]
-    });
-  }
-  var zoomSteuerung = document.createElement('div');
-  zoomSteuerung.className = 'gw-map-zoom-steuerung';
-  var zoomInBtn = document.createElement('button');
-  zoomInBtn.type = 'button';
-  zoomInBtn.className = 'gw-map-zoom-btn';
-  zoomInBtn.textContent = '+';
-  zoomInBtn.title = 'Hineinzoomen';
-  zoomInBtn.onclick = function() { zoomeUm(0.7); };
-  var zoomOutBtn = document.createElement('button');
-  zoomOutBtn.type = 'button';
-  zoomOutBtn.className = 'gw-map-zoom-btn';
-  zoomOutBtn.textContent = '\\u2212';
-  zoomOutBtn.title = 'Herauszoomen';
-  // Am unteren Ende (ganze Schweiz sichtbar) einfach ein no-op dank der
-  // Zoom-Sperre oben - kein gesonderter Check hier noetig.
-  zoomOutBtn.onclick = function() { zoomeUm(1 / 0.7); };
-  var zoomVollBtn = document.createElement('button');
-  zoomVollBtn.type = 'button';
-  zoomVollBtn.className = 'gw-map-zoom-btn gw-map-zoom-btn-voll';
-  zoomVollBtn.textContent = 'CH';
-  zoomVollBtn.title = 'Ganze Schweiz anzeigen';
-  zoomVollBtn.onclick = function() {
-    if (vollX) Plotly.relayout(el, { 'xaxis.range': vollX, 'yaxis.range': vollY });
-  };
-  zoomSteuerung.appendChild(zoomInBtn);
-  zoomSteuerung.appendChild(zoomOutBtn);
-  zoomSteuerung.appendChild(zoomVollBtn);
-  el.parentElement.appendChild(zoomSteuerung);
+  // Keine eigenen +/-/CH-Knoepfe (mehr) - Plotlys eigene Modebar (oben,
+  // bei Hover ueber der Karte eingeblendet) hat bereits Zoom-In/-Out/
+  // Autoscale/Reset-Achsen-Knoepfe, die dasselbe leisten; die Zoom-Sperre
+  // oben (plotly_relayout-Listener) greift unabhaengig davon, WIE gezoomt
+  // wird (Mausrad, Pinch, Doppelklick, Modebar).
 }
 ", lon_range_erweitert[1], lon_range_erweitert[2], mean(lat_range), karten_scaleratio, nrow(map_wochen)))
 
@@ -1577,6 +1541,17 @@ function(el, x) {
     }
     return false;
   }
+  // Wie ebeneHatJahr(), nur fuer die GENAUE (Jahr, Woche)-Kombination -
+  // manche Ebenen (v.a. Sonnenschein, mit 1-2 Monaten Aufbereitungs-
+  // verzoegerung) haben zwar Daten fuer das Jahr, aber nicht (mehr) fuer
+  // die allerneuesten Wochen darin. ebeneHatJahr() allein wuerde das nicht
+  // erkennen (Radio bliebe aktiv), die Karte zeigte dann fuer diese Woche
+  // einfach nichts, ohne erkennbaren Unterschied zu laedt noch - siehe
+  // aktualisiereLayerLegende().
+  function ebeneHatWoche(name, jahr, woche) {
+    var schluessel = ebenenSchluessel[name];
+    return !!schluessel && schluessel.indexOf(jahr + ' ' + woche) !== -1;
+  }
   // Laedt die JSON-Datei einer Ebene genau EINMAL je Datei-Schluessel
   // (Cache-Treffer bei jedem weiteren Aufruf mit demselben Schluessel) und
   // ruft dann callback(daten) auf; daten hat die Form { bilder: {...},
@@ -1626,6 +1601,7 @@ function(el, x) {
   // brauchen als die Wachstumskurven.
   var vorjahrPrecipStyledTraceIdx = [];
   var growthMapKlickGebunden = false;
+  var growthMapHoverGebunden = false;
   var growthMapZeigerGebunden = false;
   // Schalter Messnetz-Standorte (Ebenen-Kasten): blendet die (unsichtbaren,
   // nur fuer Hover benoetigten) Marker der Wachstumskarte komplett aus -
@@ -1839,6 +1815,22 @@ function(el, x) {
       });
       growthMapKlickGebunden = true;
     }
+    // Eigenes Tooltip-Modal statt Plotlys nativer (moeglicherweise
+    // abgeschnittener) Hover-Box - siehe tooltipModalEl weiter oben.
+    // Reagiert auf dieselben Punkte wie Plotlys eigenes Hover (Graswachstum-
+    // Kreise, MeteoSchweiz-Stationen, Such-Fadenkreuz), zeigt aber deren
+    // hovertext in einem fixen, garantiert vollstaendig sichtbaren Modal.
+    if (growthMapGd && !growthMapHoverGebunden) {
+      growthMapGd.on('plotly_hover', function(data) {
+        if (!data.points || data.points.length === 0) return;
+        var text = data.points[0].text || data.points[0].hovertext;
+        if (!text) return;
+        tooltipModalEl.innerHTML = text;
+        tooltipModalEl.style.display = 'block';
+      });
+      growthMapGd.on('plotly_unhover', function() { tooltipModalEl.style.display = 'none'; });
+      growthMapHoverGebunden = true;
+    }
     // Cursor-Wertabfrage fuer die Hintergrund-Ebenen (siehe
     // verarbeiteKartenZeiger() weiter oben) - mousemove fuer Desktop,
     // touchmove/touchstart fuers Tippen auf Touch-Geraeten, mouseleave
@@ -1863,6 +1855,7 @@ function(el, x) {
     Plotly.relayout(el, { 'shapes[0].x0': selectedWeek, 'shapes[0].x1': selectedWeek });
     aktualisiereHintergrundEbene();
     aktualisiereLayerLabels();
+    aktualisiereLayerLegende();
     aktualisiereAfcLegende();
     aktualisiereSmnStationen();
   }
@@ -1897,7 +1890,7 @@ function(el, x) {
     // Datum, statt die Ebene allein fuer dieses Label vorzuladen.
     var bodenCache = ebenenCache.boden;
     var datum = bodenCache && bodenCache.datum && bodenCache.datum[selectedYear + ' ' + selectedWeek];
-    radioBoden.labelTextEl.textContent = layerLegenden.boden.label + (datum ? ' ' + datum : '');
+    radioBoden.labelTextEl.textContent = layerLegenden.boden.label + ' (berechnet)' + (datum ? ' ' + datum : '');
   }
 
   // Optionale Hintergrund-Ebenen (Niederschlag Vorwoche / Bodenwasserbilanz
@@ -1952,7 +1945,11 @@ function(el, x) {
       // bei Fenster-Ebenen zaehlt auch ein zwischenzeitlicher Wechsel der
       // Fenstergroesse (Schieberegler) als nicht mehr aktuell.
       if (ebeneDateiSchluessel(hintergrundEbene) !== dateiSchluesselBeimStart) return;
-      if (ladeHinweisEl) ladeHinweisEl.style.display = 'none';
+      // Voller Neuaufbau statt nur ladeHinweisEl auszublenden: erst jetzt
+      // (Ebene fertig geladen) laesst sich beurteilen, ob die AKTUELLE
+      // Woche tatsaechlich Daten hat oder nicht (siehe keinDatenHinweisEl
+      // in aktualisiereLayerLegende()).
+      aktualisiereLayerLegende();
       zeichneKartenBilder(daten.bilder[selectedYear + ' ' + selectedWeek]);
     });
   }
@@ -2053,6 +2050,12 @@ function(el, x) {
     '.gw-combo-sep { padding: 4px 9px; font-size: 11px; color: #888; border-top: 1px solid #eee; margin-top: 2px; user-select: none; }',
     '.gw-year-select { padding: 5px 8px; font-size: 14px; border: 1px solid #bbb; border-radius: 4px; }',
     '.gw-layer-panel { font-family: sans-serif; font-size: 13px; background: #f7f7f7; border-radius: 6px; padding: 12px 14px; }',
+    // Plotlys eigene Hover-Box fuer die Karte ausgeblendet (siehe
+    // tooltipModalEl/plotly_hover weiter oben) - sie wird vom
+    // overflow:hidden des Kartencontainers bzw. der Iframe-Groesse
+    // abgeschnitten, sobald ein Punkt nahe am Rand liegt.
+    '#datenexplorer-growthmap .hoverlayer { display: none !important; }',
+    '.gw-tooltip-modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); z-index: 2000; background: white; border: 1px solid #999; border-radius: 8px; padding: 10px 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); max-width: 85vw; max-height: 80vh; overflow-y: auto; font-family: sans-serif; font-size: 13px; line-height: 1.5; color: #222; pointer-events: none; }',
     '.gw-layer-heading { font-weight: 600; margin-bottom: 8px; }',
     '.gw-layer-option { display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer; }',
     '.gw-layer-option-zeile { display: flex; align-items: center; gap: 4px; }',
@@ -2061,10 +2064,14 @@ function(el, x) {
     '.gw-info-btn:hover { background: #eaf2fb; border-color: #4a90d9; color: #2a6fbf; }',
     '.gw-info-popup { position: absolute; z-index: 20; top: 20px; left: 0; width: 210px; max-width: 85vw; background: white; border: 1px solid #bbb; border-radius: 6px; padding: 10px 12px; font-size: 12px; line-height: 1.4; color: #333; box-shadow: 0 2px 10px rgba(0,0,0,0.15); cursor: auto; }',
     '.gw-layer-option input:disabled + span { color: #aaa; }',
-    '.gw-meteo-fenster { margin-top: 10px; padding-top: 10px; border-top: 1px solid #ddd; }',
+    '.gw-meteo-fenster { margin-top: 10px; }',
     '.gw-meteo-fenster-label { font-size: 11px; color: #555; margin-bottom: 3px; }',
     '.gw-meteo-fenster input[type=range] { width: 100%; margin: 0; }',
-    '.gw-layer-legende { margin-top: 10px; padding-top: 10px; border-top: 1px solid #ddd; }',
+    // Kein Trennstrich (border-top) mehr davor - weder vor der AFC-Ring-
+    // Legende (direkt unter dem AFC-Schalter) noch vor der Meteodaten-
+    // Legende (direkt unter dem Schieberegler): beide gehoeren optisch zum
+    // jeweils direkt darueberliegenden Schalter/Schieberegler.
+    '.gw-layer-legende { margin-top: 10px; }',
     '.gw-layer-legende-balken { height: 12px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.15); }',
     // Donut-Ring per Masken-Trick (radial-gradient schneidet die Mitte
     // transparent) statt eines SVG - conic-gradient uebernimmt die
@@ -2096,6 +2103,15 @@ function(el, x) {
     '@keyframes gwBlink { 0%, 80%, 100% { opacity: 0.2; } 40% { opacity: 1; } }',
     '.gw-toggle-wrap { display: flex; align-items: center; gap: 8px; }',
     '.gw-layer-messnetz-toggle { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #ddd; }',
+    // Trennlinie vor dem Meteodaten-Abschnitt (AFC-Schalter/-Legende darueber,
+    // keine Meteodaten & Co. darunter) - dieselbe Technik wie bei
+    // .gw-layer-messnetz-toggle (border-bottom auf der letzten Zeile davor).
+    '.gw-layer-vor-meteodaten { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #ddd; }',
+    // Trennlinie vor Bodenwasserbilanz (SELBST BERECHNETE Groesse, siehe
+    // Kommentar bei deren makeLayerRadio()-Aufruf) - hier als border-TOP auf
+    // der Zeile selbst, da sie (anders als bei den anderen Trennlinien) die
+    // LETZTE Ebenen-Option ist, kein nachfolgendes Element fuer border-bottom.
+    '.gw-layer-vor-boden { margin-top: 10px; padding-top: 10px; border-top: 1px solid #ddd; }',
     '.gw-toggle { position: relative; display: inline-block; width: 42px; height: 22px; flex-shrink: 0; }',
     '.gw-toggle input { opacity: 0; width: 0; height: 0; }',
     '.gw-toggle-slider { position: absolute; inset: 0; background-color: #ccc; transition: .15s; border-radius: 22px; cursor: pointer; }',
@@ -2118,12 +2134,6 @@ function(el, x) {
     '.gw-edge-btn { width: 26px; height: 26px; border: 1px solid #bbb; border-radius: 4px; background: white; cursor: pointer; font-size: 15px; display: flex; align-items: center; justify-content: center; color: #333; padding: 0; }',
     '.gw-edge-btn:hover { background: #f2f2f2; }',
     '.gw-edge-btn.active { background: #eaf2fb; border-color: #4a90d9; color: #2a6fbf; }',
-    // Zoom-Steuerung ueber der Karte selbst (el.parentElement, siehe
-    // onRender() bei fig_wachstum) - braucht dessen position:relative.
-    '.gw-map-zoom-steuerung { position: absolute; right: 10px; bottom: 10px; z-index: 5; display: flex; flex-direction: column; gap: 4px; }',
-    '.gw-map-zoom-btn { width: 30px; height: 30px; border: 1px solid #bbb; border-radius: 4px; background: white; cursor: pointer; font-size: 17px; line-height: 1; display: flex; align-items: center; justify-content: center; color: #333; padding: 0; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }',
-    '.gw-map-zoom-btn:hover { background: #f2f2f2; }',
-    '.gw-map-zoom-btn-voll { font-size: 11px; font-weight: 600; margin-top: 4px; }',
     '.gw-slider-row { font-family: sans-serif; font-size: 14px; display: flex; align-items: center; margin: 20px 0; padding: 12px 16px; background: #f7f7f7; border-radius: 6px; }',
     '.gw-slider-aligned { flex: 0 0 auto; box-sizing: border-box; min-width: 0; }',
     '.gw-slider-label-row { display: flex; align-items: center; gap: 10px; width: 100%; margin-bottom: 8px; }',
@@ -2154,6 +2164,19 @@ function(el, x) {
     '}'
   ].join(' ');
   document.head.appendChild(style);
+
+  // Eigenes Tooltip-Modal STATT Plotlys nativer Hover-Box (siehe unten,
+  // .hoverlayer wird per CSS ausgeblendet): die native Box wird von
+  // umgebendem overflow:hidden bzw. der begrenzten Iframe-Groesse
+  // abgeschnitten, sobald ein Punkt nahe am Kartenrand liegt - betroffener
+  // Text war dadurch oft gar nicht lesbar. position:fixed + Zentrierung
+  // macht das Modal unabhaengig von der Punktposition immer vollstaendig
+  // sichtbar. An document.body gehaengt (nicht in die Karte selbst), damit
+  // es auch das overflow:hidden des Kartencontainers sicher umgeht.
+  var tooltipModalEl = document.createElement('div');
+  tooltipModalEl.className = 'gw-tooltip-modal';
+  tooltipModalEl.style.display = 'none';
+  document.body.appendChild(tooltipModalEl);
 
   var options = groupLabels.map(function(label, i) { return { type: 'group', idx: i, label: label }; });
   var siteOptions = siteNames.map(function(name, i) { return { type: 'site', idx: i, label: name }; });
@@ -2398,10 +2421,19 @@ function(el, x) {
     ladeHinweisEl.className = 'gw-layer-wert-anzeige';
     ladeHinweisEl.innerHTML = 'Ebene wird geladen ' + LADE_PUNKTE_HTML;
     ladeHinweisEl.style.display = ebenenCache[ebeneDateiSchluessel(hintergrundEbene)] ? 'none' : 'block';
+    // Von laedt noch (ladeHinweisEl) UNTERSCHEIDEN: die Ebene ist bereits
+    // geladen, hat aber fuer die AKTUELL gewaehlte Woche keine Daten (z.B.
+    // Sonnenschein nahe am aktuellen Datum, siehe ebeneHatWoche()) - sonst
+    // zeigt die Karte einfach kommentarlos nichts.
+    var keinDatenHinweisEl = document.createElement('div');
+    keinDatenHinweisEl.className = 'gw-layer-wert-anzeige';
+    keinDatenHinweisEl.textContent = 'Keine Daten für diese Woche';
+    keinDatenHinweisEl.style.display = (ladeHinweisEl.style.display === 'none' && !ebeneHatWoche(hintergrundEbene, selectedYear, selectedWeek)) ? 'block' : 'none';
     layerLegendeBox.appendChild(balken);
     layerLegendeBox.appendChild(skala);
     layerLegendeBox.appendChild(quelle);
     layerLegendeBox.appendChild(ladeHinweisEl);
+    layerLegendeBox.appendChild(keinDatenHinweisEl);
     layerLegendeBox.appendChild(wertAnzeigeEl);
     layerLegendeBox.appendChild(koordinatenEl);
     layerLegendeBox.appendChild(ortschaftEl);
@@ -2705,7 +2737,17 @@ function(el, x) {
     macheLayerToggle('Graswachstum', true, function(checked) { graswachstumOn = checked; applyState(); },
       'Die Zahl im Kreis zeigt das zuletzt gemessene Graswachstum in kg TS/ha/Tag (Trockensubstanz-Zuwachs pro Hektare und Tag). Die Graufaerbung des Kreises zeigt, wie lange die Messung zurueckliegt: weiss = frisch gemessen (0 Tage), dunkelgrau = bis zu 14 Tage alt. Standorte ohne Messung in den letzten 14 Tagen werden nicht mehr angezeigt.');
     macheLayerToggle('AFC', true, function(checked) { afcOn = checked; applyState(); },
-      'AFC (Average Farm Cover) schaetzt den aktuellen Grasvorrat des Betriebs in kg Trockensubstanz pro Hektare (kg TS/ha). Der Ring zeigt diesen Vorrat als Fortschrittsbalken auf einer Skala von 0 bis 1500 kg TS/ha und faerbt ihn nach dem jahreszeitlichen Zielbereich: rot = deutlich zu wenig (unter 200 kg praktisch leer), gruen = im Zielbereich, blaugruen = deutlich mehr als noetig. Der Zielbereich verschiebt sich uebers Jahr, z.B. Fruehling ca. 500-700, Sommer ca. 700-800, Herbst ca. 900-1200 kg TS/ha.');
+      'AFC (Average Farm Cover) schaetzt den aktuellen Grasvorrat des Betriebs in kg Trockensubstanz pro Hektare (kg TS/ha). Der Ring zeigt diesen Vorrat als Fortschrittsbalken auf einer Skala von 0 bis 1500 kg TS/ha und faerbt ihn nach dem jahreszeitlichen Zielbereich: rot = deutlich zu wenig (unter 200 kg praktisch leer), gruen = im Zielbereich, blaugruen = deutlich mehr als noetig. Der Zielbereich verschiebt sich uebers Jahr, z.B. Fruehling ca. 500-700, Sommer ca. 700-800, Herbst ca. 900-1200 kg TS/ha.',
+      'gw-layer-vor-meteodaten');
+
+    // Kompakte AFC-Legende (Ring) DIREKT nach dem AFC-Schalter, statt erst
+    // ganz unten nach den Meteodaten-Ebenen/der Legende dazu - gehoert
+    // inhaltlich zum AFC-Schalter direkt darueber. aktualisiereAfcLegende()
+    // (siehe unten) blendet die Box aus, sobald AFC ausgeschaltet ist.
+    afcLegendeBox = document.createElement('div');
+    afcLegendeBox.className = 'gw-layer-legende';
+    afcLegendeBox.style.display = 'none';
+    layerPanel.appendChild(afcLegendeBox);
 
     // Schieberegler fuer die Fenstergroesse (Tage) der gleitendes-Fenster-
     // Ebenen (meteoFensterEbenen, siehe oben) - wird OBERHALB der Legende
@@ -2748,9 +2790,9 @@ function(el, x) {
     // title (nativer Browser-Tooltip) je Option mit der Quellenangabe, wie
     // einst als Untertitel bei den Export-Grafiken (siehe layerLegenden.quelle).
     // erklaerung (optional): zusaetzlicher i-Knopf mit laengerem Klartext.
-    function makeLayerRadio(value, labelText, erklaerung) {
+    function makeLayerRadio(value, labelText, erklaerung, zusatzKlasse) {
       var zeile = document.createElement('div');
-      zeile.className = 'gw-layer-option-zeile';
+      zeile.className = 'gw-layer-option-zeile' + (zusatzKlasse ? ' ' + zusatzKlasse : '');
       var wrap = document.createElement('label');
       wrap.className = 'gw-layer-option';
       if (layerLegenden[value]) wrap.title = 'Quelle: ' + layerLegenden[value].quelle;
@@ -2783,8 +2825,6 @@ function(el, x) {
     }
     makeLayerRadio('keine', 'keine Meteodaten');
     radioNiederschlag = makeLayerRadio('niederschlag', layerLegenden.niederschlag.label);
-    radioBoden = makeLayerRadio('boden', layerLegenden.boden.label,
-      'Der Boden wird vereinfacht wie ein Eimer betrachtet: Regen fuellt ihn, Verdunstung leert ihn. Ist der Eimer voll, laeuft der Ueberschuss ungenutzt ab. Wie viel taeglich verdunstet, wird aus den Temperaturen geschaetzt - ein feuchter Boden verdunstet mehr als ein bereits trockener. Der Wert zeigt den aktuellen Fuellstand: 100 mm = Boden gut mit Wasser versorgt, 0 mm = ausgetrocknet.');
     radioTemperatur = makeLayerRadio('temperatur', layerLegenden.temperatur.label,
       'Mittlere Lufttemperatur (2m) im oben gewaehlten Zeitraum vor dem Stichtag. Graswachstum beginnt erst ab einer Basistemperatur von ca. 5 Grad C spuerbar (darunter praktisch Wachstumsstillstand), das Optimum liegt bei ca. 15-20 Grad C. Ueber ca. 25 Grad C bremst Hitzestress das Wachstum trotz ausreichend Wasser wieder. Als Faustregel fuer den Wachstumsantrieb ueber mehrere Tage dient die Wachstumsgradtagsumme: Summe aus (Tagesmitteltemperatur minus 5 Grad C) an allen Tagen mit Werten darueber.');
     radioBodentemperatur = makeLayerRadio('bodentemperatur', layerLegenden.bodentemperatur.label,
@@ -2795,6 +2835,13 @@ function(el, x) {
       'Potenzielle Verdunstung (Evapotranspiration) nach der Hargreaves-Formel (FAO-56), Summe im oben gewaehlten Zeitraum vor dem Stichtag - dieselbe Berechnung, die auch ins Bucket-Modell der Bodenwasserbilanz einfliesst. Zeigt, wie viel Wasser dem Boden allein durch Verdunstung entzogen wird: hohe Werte bei gleichzeitig wenig Niederschlag beguenstigen Trockenstress.');
     radioGdd = makeLayerRadio('gdd', layerLegenden.gdd.label,
       'Kumulierte Wachstumsgradtage seit Beginn der lokal vorhandenen Temperaturdaten: Summe aus (Tagesmitteltemperatur minus 5 Grad C) an allen Tagen mit Werten darueber, laufend aufaddiert (MeteoSchweiz TabsD). Eine in der Agronomie gebraeuchliche Faustregel fuer die pflanzenverfuegbare Waermesumme seit Vegetationsbeginn - hoehere Werte bedeuten mehr angesammelte Wachstumsbedingungen.');
+    // Bodenwasserbilanz ganz am Schluss, mit Trennlinie abgesetzt: anders
+    // als die anderen Ebenen (direkte MeteoSchweiz-Messwerte/-Aggregate) ist
+    // dies eine SELBST BERECHNETE Groesse (Eimer-Modell aus Niederschlag +
+    // ET0, siehe Erklaerung) - das Label macht das zusaetzlich explizit.
+    radioBoden = makeLayerRadio('boden', layerLegenden.boden.label,
+      'Der Boden wird vereinfacht wie ein Eimer betrachtet: Regen fuellt ihn, Verdunstung leert ihn. Ist der Eimer voll, laeuft der Ueberschuss ungenutzt ab. Wie viel taeglich verdunstet, wird aus den Temperaturen geschaetzt - ein feuchter Boden verdunstet mehr als ein bereits trockener. Der Wert zeigt den aktuellen Fuellstand: 100 mm = Boden gut mit Wasser versorgt, 0 mm = ausgetrocknet.',
+      'gw-layer-vor-boden');
     // Nachschlagetabelle Ebenenname -> Radio, fuer aktualisiereLayerLabels()
     // (haengt dort das Symbol/die Fenstergroesse an alle 5 Fenster-Ebenen).
     radioJeEbene = { niederschlag: radioNiederschlag, temperatur: radioTemperatur, bodentemperatur: radioBodentemperatur, sonnenschein: radioSonnenschein, et0: radioEt0 };
@@ -2804,10 +2851,6 @@ function(el, x) {
     layerLegendeBox.className = 'gw-layer-legende';
     layerLegendeBox.style.display = 'none';
     layerPanel.appendChild(layerLegendeBox);
-    afcLegendeBox = document.createElement('div');
-    afcLegendeBox.className = 'gw-layer-legende';
-    afcLegendeBox.style.display = 'none';
-    layerPanel.appendChild(afcLegendeBox);
     mapControlsContainer.appendChild(layerPanel);
     aktualisiereLayerVerfuegbarkeit();
     aktualisiereLayerLegende();
@@ -3221,7 +3264,7 @@ seite <- htmltools::tagList(
   ),
   htmltools::div(style = "font-family: sans-serif; max-width: 1400px; margin: 0 auto; padding: 20px;",
     htmltools::div(style = "display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start;",
-      htmltools::div(id = "datenexplorer-growthmap", style = "position: relative; flex: 1 1 700px; min-width: 320px; height: 560px; overflow: hidden;", fig_wachstum),
+      htmltools::div(id = "datenexplorer-growthmap", style = "flex: 1 1 700px; min-width: 320px; height: 560px; overflow: hidden;", fig_wachstum),
       # flex-grow:1 (statt 0) statt einer festen 220px-Box: faellt die
       # Ebenen-Box auf einem schmalen (Mobile-)Bildschirm per flex-wrap in
       # eine eigene Zeile, fuellt sie so deren volle Breite aus, statt
