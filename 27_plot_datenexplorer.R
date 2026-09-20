@@ -932,13 +932,21 @@ cat("AFC-Ring-Hintergrundbilder erzeugt:", sum(!vapply(afc_ring_bild_je_woche, i
 smn_basis_url <- "https://data.geo.admin.ch/ch.meteoschweiz.ogd-smn/"
 smn_dir <- file.path(geodata_dir, "smn")
 dir.create(smn_dir, recursive = TRUE, showWarnings = FALSE)
-smn_spalten <- c("tre200d0", "tso005d0", "tso010d0", "tso020d0", "rre150d0", "gre000d0", "sre000d0")
 
-smn_daten <- tryCatch({
+# Nur noch die STATIONS-METADATEN (Name/Lage/Kanton/Hoehe) werden hier beim
+# R-Lauf geladen - die taeglich aktuellen Messwerte (Temperatur, Nieder-
+# schlag etc.) holt die Webapp SELBST per fetch() direkt vom MeteoSchweiz-
+# Open-Data-Server (data.geo.admin.ch liefert Access-Control-Allow-Origin:
+# * - CORS erlaubt das, siehe ladeSmnAktuellwerte()/JS), NICHT mehr hier
+# beim Bauen der Seite. Grund: eine einmal hochgeladene Seite zeigt so
+# IMMER die aktuellsten MeteoSchweiz-Werte, auch wenn der Rechner, der die
+# Seite erzeugt/hochlaedt, laengst nicht mehr laeuft/online ist - vorher
+# waren die Werte nur so aktuell wie der letzte R-Lauf. Nebenbei entfaellt
+# der bisher langsamste Teil des R-Laufs (bis zu ~150 einzelne CSV-
+# Downloads nacheinander).
+smn_stationen_meta_liste <- tryCatch({
   # Metadaten (Stationsliste, Parameterverfuegbarkeit je Station) - guenstig
-  # dauerhaft zwischengespeichert (aendert sich praktisch nie), anders als
-  # die taeglichen Werte-CSVs unten, die bei JEDEM Lauf frisch geladen
-  # werden (sollen den jeweils aktuellsten Stand zeigen).
+  # dauerhaft zwischengespeichert (aendert sich praktisch nie).
   smn_stationen_datei <- file.path(smn_dir, "meta_stations.csv")
   if (!file.exists(smn_stationen_datei)) {
     download.file(paste0(smn_basis_url, "ogd-smn_meta_stations.csv"), smn_stationen_datei, quiet = TRUE, mode = "wb")
@@ -958,55 +966,18 @@ smn_daten <- tryCatch({
   smn_stationen_meta <- smn_stationen_meta[smn_stationen_meta$station_abbr %in% smn_aktive_abbr, ]
   cat("MeteoSchweiz-Stationen (aktiv):", nrow(smn_stationen_meta), "\n")
 
-  # Aktuellste Tageswerte je Station: "d_recent.csv" ist ein rollierendes
-  # Jahres-CSV (laufendes Jahr bis gestern) - hier wird nur die LETZTE Zeile
-  # gebraucht, das ganze File aber trotzdem geladen (kein Teil-Download-
-  # Mechanismus fuer CSVs auf dieser Plattform verfuegbar). Fehlende Spalten
-  # (z.B. Bodentemperatur an Stationen ohne diesen Sensor) werden auf NA
-  # gesetzt statt read.csv abstuerzen zu lassen.
-  lade_smn_aktuellwert <- function(abbr) {
-    url <- paste0(smn_basis_url, tolower(abbr), "/ogd-smn_", tolower(abbr), "_d_recent.csv")
-    df <- read.csv(url, sep = ";", stringsAsFactors = FALSE)
-    if (nrow(df) == 0) return(NULL)
-    for (sp in smn_spalten) if (!sp %in% names(df)) df[[sp]] <- NA_real_
-    df[nrow(df), c("station_abbr", "reference_timestamp", smn_spalten)]
-  }
-  smn_werte_liste <- lapply(smn_stationen_meta$station_abbr, function(abbr) {
-    tryCatch(lade_smn_aktuellwert(abbr), error = function(e) NULL)
-  })
-  smn_werte_liste <- smn_werte_liste[!vapply(smn_werte_liste, is.null, logical(1))]
-  smn_werte_df <- dplyr::bind_rows(smn_werte_liste)
-  cat("MeteoSchweiz-Aktuellwerte geladen:", nrow(smn_werte_df), "von", nrow(smn_stationen_meta), "\n")
-
-  ergebnis <- smn_stationen_meta %>%
-    inner_join(smn_werte_df, by = "station_abbr") %>%
-    rename(lat = station_coordinates_wgs84_lat, lon = station_coordinates_wgs84_lon,
-           name = station_name, kanton = station_canton, hoehe = station_height_masl)
-
-  # Bodentemperatur-Zeile nur zeigen, wenn MINDESTENS eine der drei Tiefen
-  # einen Wert hat (Stationen ohne diesen Sensor haben grundsaetzlich NA in
-  # allen dreien) - einzelne fehlende Tiefen (z.B. Tagesluecke) werden als
-  # "-" statt "NA" dargestellt.
-  fmt1 <- function(x) ifelse(is.na(x), "-", formatC(x, format = "f", digits = 1))
-  fmt0 <- function(x) ifelse(is.na(x), "keine Daten", formatC(x, format = "f", digits = 0))
-  tso_zeile <- ifelse(
-    is.na(ergebnis$tso005d0) & is.na(ergebnis$tso010d0) & is.na(ergebnis$tso020d0),
-    "keine Daten",
-    paste0(fmt1(ergebnis$tso005d0), " / ", fmt1(ergebnis$tso010d0), " / ", fmt1(ergebnis$tso020d0), " °C")
-  )
-  ergebnis$hover <- paste0(
-    "<b>", ergebnis$name, "</b> (", ergebnis$kanton, ", ", round(ergebnis$hoehe), " m ü. M.)",
-    "<br>Lufttemperatur (Tagesmittel): ", ifelse(is.na(ergebnis$tre200d0), "keine Daten", paste0(fmt1(ergebnis$tre200d0), " °C")),
-    "<br>Bodentemperatur 5/10/20cm: ", tso_zeile,
-    "<br>Niederschlag (Vortag): ", ifelse(is.na(ergebnis$rre150d0), "keine Daten", paste0(fmt1(ergebnis$rre150d0), " mm")),
-    "<br>Globalstrahlung (Tagesmittel): ", ifelse(is.na(ergebnis$gre000d0), "keine Daten", paste0(fmt0(ergebnis$gre000d0), " W/m²")),
-    "<br>Sonnenscheindauer: ", ifelse(is.na(ergebnis$sre000d0), "keine Daten", paste0(fmt0(ergebnis$sre000d0), " Min")),
-    "<br>Stand: ", ergebnis$reference_timestamp
-  )
-  ergebnis
+  smn_stationen_meta %>%
+    transmute(
+      abbr = station_abbr,
+      lon = station_coordinates_wgs84_lon,
+      lat = station_coordinates_wgs84_lat,
+      name = station_name,
+      kanton = station_canton,
+      hoehe = round(station_height_masl)
+    )
 }, error = function(e) {
-  cat("MeteoSchweiz-Stationen: Laden fehlgeschlagen -", conditionMessage(e), "\n")
-  data.frame(lon = numeric(0), lat = numeric(0), hover = character(0))
+  cat("MeteoSchweiz-Stationen: Metadaten laden fehlgeschlagen -", conditionMessage(e), "\n")
+  data.frame(abbr = character(0), lon = numeric(0), lat = numeric(0), name = character(0), kanton = character(0), hoehe = numeric(0))
 })
 
 # Naechster (0-basierter) Trace-Index in fig_wachstum: die per-Woche-
@@ -1016,9 +987,13 @@ smn_daten <- tryCatch({
 # applyMapState() (JS), daher ein eigener, separat gemerkter Index.
 smn_stationen_trace_idx <- nrow(map_wochen)
 fig_wachstum <- fig_wachstum %>% add_trace(
-  data = smn_daten, x = ~lon, y = ~lat, type = "scatter", mode = "markers",
+  data = smn_stationen_meta_liste, x = ~lon, y = ~lat, type = "scatter", mode = "markers",
   marker = list(symbol = "diamond", size = 9, color = "#2b2b2b", line = list(color = "white", width = 1)),
-  hovertext = ~hover, hoverinfo = "text",
+  # Platzhalter bis ladeSmnAktuellwerte()/JS die echten Tageswerte per
+  # fetch() nachgeladen und den Hovertext per restyle() ersetzt hat (siehe
+  # js_template).
+  hovertext = ~paste0("<b>", name, "</b> (", kanton, ", ", hoehe, " m ü. M.)<br>Lädt aktuelle Werte..."),
+  hoverinfo = "text",
   showlegend = FALSE, visible = FALSE, name = "MeteoSchweiz-Stationen"
 )
 
@@ -1667,6 +1642,12 @@ function(el, x) {
   // von Jahr/Woche unabhaengige Trace (siehe R: smn_stationen_trace_idx).
   var smnStationenOn = false;
   var smnStationenTraceIdx = __SMN_STATIONEN_TRACE_IDX__;
+  // Stations-Metadaten (Name/Lage/Kanton/Hoehe, aus R gebacken - aendert
+  // sich praktisch nie) fuer den client-seitigen Live-Fetch der taeglich
+  // aktuellen Messwerte, siehe ladeSmnAktuellwerte() unten.
+  var smnStationenMeta = __SMN_STATIONEN_META__;
+  var smnBasisUrl = __SMN_BASIS_URL__;
+  var smnWerteGeladen = false, smnLaedt = false;
   // Trace-Index des per PLZ/Ort-Suche gesetzten Fadenkreuz-Markers auf der
   // Wachstumskarte (siehe platziereFadenkreuz()) - null, solange noch nie
   // gesucht wurde; die Trace wird beim ersten Treffer einmalig per
@@ -1977,13 +1958,81 @@ function(el, x) {
   }
 
   // MeteoSchweiz-Stationen: einzige, von Jahr/Woche unabhaengige Trace
-  // (smnStationenTraceIdx) - nur Sichtbarkeit umschalten, keine Bild-/
-  // Datenneuberechnung noetig (die Werte sind bereits beim Seitenaufbau in
-  // R fest in den Hovertext gebacken, siehe smn_daten).
+  // (smnStationenTraceIdx) - Position/Name/Kanton/Hoehe sind bereits beim
+  // Seitenaufbau in R gebacken (smnStationenMeta), die taeglich aktuellen
+  // Messwerte holt ladeSmnAktuellwerte() unten aber SELBST per fetch() -
+  // beim ERSTEN Einschalten je Seitenaufruf (danach zwischengespeichert,
+  // ein erneutes Ein-/Ausschalten loest keinen neuen Download aus).
   function aktualisiereSmnStationen() {
     var growthMapGd = document.querySelector('#datenexplorer-growthmap .js-plotly-plot');
     if (!growthMapGd) return;
     Plotly.restyle(growthMapGd, { visible: smnStationenOn }, [smnStationenTraceIdx]);
+    if (smnStationenOn && !smnWerteGeladen && !smnLaedt) ladeSmnAktuellwerte(growthMapGd);
+  }
+
+  // Parst die letzte Datenzeile einer MeteoSchweiz-Tages-CSV (Semikolon-
+  // getrennt, keine Quotes/Escapes in diesen Dateien - einfaches split()
+  // genuegt) - Entsprechung zu lade_smn_aktuellwert()/R, nur eben im
+  // Browser statt beim R-Lauf ausgefuehrt.
+  function smnZeileParsen(csvText) {
+    var zeilen = csvText.replace(/\\r/g, '').split('\\n').filter(function(z) { return z.length > 0; });
+    if (zeilen.length < 2) return null;
+    var header = zeilen[0].split(';');
+    var letzte = zeilen[zeilen.length - 1].split(';');
+    var idx = {};
+    header.forEach(function(h, i) { idx[h] = i; });
+    function feld(name) {
+      var i = idx[name];
+      if (i === undefined) return NaN;
+      return parseFloat(letzte[i]);
+    }
+    return {
+      reference_timestamp: letzte[idx.reference_timestamp] || '',
+      tre200d0: feld('tre200d0'), tso005d0: feld('tso005d0'), tso010d0: feld('tso010d0'),
+      tso020d0: feld('tso020d0'), rre150d0: feld('rre150d0'), gre000d0: feld('gre000d0'), sre000d0: feld('sre000d0')
+    };
+  }
+
+  // Baut den Hovertext fuer eine Station - identischer Aufbau/Wortlaut wie
+  // zuvor in R (siehe Git-Historie von smn_daten), nur die Formatierung
+  // (fmt1/fmt0) hier eben in JS statt formatC()/ifelse().
+  function smnHoverBauen(meta, werte) {
+    function fmt1(x) { return isNaN(x) ? '-' : x.toFixed(1); }
+    function fmt0(x) { return isNaN(x) ? 'keine Daten' : Math.round(x).toString(); }
+    var tsoZeile = (isNaN(werte.tso005d0) && isNaN(werte.tso010d0) && isNaN(werte.tso020d0))
+      ? 'keine Daten'
+      : (fmt1(werte.tso005d0) + ' / ' + fmt1(werte.tso010d0) + ' / ' + fmt1(werte.tso020d0) + ' °C');
+    return '<b>' + meta.name + '</b> (' + meta.kanton + ', ' + meta.hoehe + ' m ü. M.)' +
+      '<br>Lufttemperatur (Tagesmittel): ' + (isNaN(werte.tre200d0) ? 'keine Daten' : fmt1(werte.tre200d0) + ' °C') +
+      '<br>Bodentemperatur 5/10/20cm: ' + tsoZeile +
+      '<br>Niederschlag (Vortag): ' + (isNaN(werte.rre150d0) ? 'keine Daten' : fmt1(werte.rre150d0) + ' mm') +
+      '<br>Globalstrahlung (Tagesmittel): ' + (isNaN(werte.gre000d0) ? 'keine Daten' : fmt0(werte.gre000d0) + ' W/m²') +
+      '<br>Sonnenscheindauer: ' + (isNaN(werte.sre000d0) ? 'keine Daten' : fmt0(werte.sre000d0) + ' Min') +
+      '<br>Stand: ' + werte.reference_timestamp;
+  }
+
+  // Holt die aktuellen Tageswerte fuer ALLE Stationen parallel direkt vom
+  // MeteoSchweiz-Open-Data-Server (CORS-freigegeben) und ersetzt den
+  // Platzhalter-Hovertext per EINEM restyle() sobald alle Anfragen fertig
+  // sind (einzelne fehlgeschlagene Stationen behalten ihren Platzhalter -
+  // kein Abbruch der uebrigen).
+  function ladeSmnAktuellwerte(growthMapGd) {
+    smnLaedt = true;
+    var hovertext = smnStationenMeta.map(function(s) {
+      return '<b>' + s.name + '</b> (' + s.kanton + ', ' + s.hoehe + ' m ü. M.)<br>Lädt aktuelle Werte...';
+    });
+    var anfragen = smnStationenMeta.map(function(s, i) {
+      var url = smnBasisUrl + s.abbr.toLowerCase() + '/ogd-smn_' + s.abbr.toLowerCase() + '_d_recent.csv';
+      return fetch(url).then(function(r) { return r.ok ? r.text() : null; }).then(function(text) {
+        var werte = text ? smnZeileParsen(text) : null;
+        if (werte) hovertext[i] = smnHoverBauen(s, werte);
+      }).catch(function() { /* einzelne Station fehlgeschlagen - Platzhaltertext bleibt stehen */ });
+    });
+    Promise.all(anfragen).then(function() {
+      Plotly.restyle(growthMapGd, { hovertext: [hovertext] }, [smnStationenTraceIdx]);
+      smnWerteGeladen = true;
+      smnLaedt = false;
+    });
   }
 
   // Styles --------------------------------------------------------------
@@ -3138,6 +3187,8 @@ js_ersetzungen <- list(
   # datei() oben und ladeEbene() im js_template).
   "__EBENEN_SCHLUESSEL__" = jsonlite::toJSON(ebenen_schluessel, auto_unbox = TRUE),
   "__SMN_STATIONEN_TRACE_IDX__" = as.character(smn_stationen_trace_idx),
+  "__SMN_STATIONEN_META__" = jsonlite::toJSON(smn_stationen_meta_liste, auto_unbox = TRUE),
+  "__SMN_BASIS_URL__" = jsonlite::toJSON(smn_basis_url, auto_unbox = TRUE),
   "__LAYER_LEGENDEN__" = jsonlite::toJSON(layer_legenden, auto_unbox = TRUE),
   "__GRASWACHSTUM_BILDER__" = jsonlite::toJSON(graswachstum_bild_je_woche, auto_unbox = TRUE),
   "__AFC_RING_BILDER__" = jsonlite::toJSON(afc_ring_bild_je_woche, auto_unbox = TRUE),
