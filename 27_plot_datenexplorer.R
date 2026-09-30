@@ -71,6 +71,41 @@ out_dir <- "outputs"
 geodata_dir <- "../geodata/meteoschweiz"
 wasserhaushalt_dir <- "../r-futterbaugutachten/outputs/wasserhaushalt"
 
+########################################################################
+## Persistenter Cache fuer Karten-/Ebenen-Bilder ABGESCHLOSSENER
+## (vergangener) Jahre --------------------------------------------------
+## Ohne diesen Cache rendert JEDER Lauf saemtliche Kartenschnappschuesse,
+## AFC-Ringe und Meteo-Hintergrundebenen fuer ALLE Jahre komplett neu -
+## auch fuer laengst abgeschlossene Jahre, deren Rohdaten sich nie mehr
+## aendern (AGFF-Sheet-Historie, RhiresD/TabsD-Endprodukte). Das war mit
+## Abstand der groesste Zeitkostenfaktor des Skripts. "Abgeschlossen" =
+## Jahr < aktuelles Kalenderjahr: NUR das laufende Jahr wird bei jedem Lauf
+## neu berechnet (dort aendert sich taeglich etwas: neue Messungen, die
+## aktuelle Woche, "prelim"-Werte die spaeter durch finale ersetzt werden).
+## Liegt NEBEN outputs/ (nicht darin) und wird NICHT committet - der Name
+## endet bewusst auf "_cache" (.gitignore hat dafuer schon eine Regel) - rein
+## lokaler Performance-Cache, kein Teil des veroeffentlichten Standes.
+ebenen_cache_dir <- "ebenen_cache"
+dir.create(ebenen_cache_dir, recursive = TRUE, showWarnings = FALSE)
+aktuelles_kalenderjahr <- format(Sys.Date(), "%Y")
+
+lade_ebenen_cache <- function(name) {
+  datei <- file.path(ebenen_cache_dir, paste0(name, ".rds"))
+  if (file.exists(datei)) tryCatch(readRDS(datei), error = function(e) list()) else list()
+}
+speichere_ebenen_cache <- function(name, cache) {
+  saveRDS(cache, file.path(ebenen_cache_dir, paste0(name, ".rds")))
+}
+# Fuer die drei Bild-Ebenen ausserhalb von baue_fenster_ebenen() (siehe
+# dort fuer die aufwendigere Variante, die bei einem komplett gecachten
+# abgeschlossenen Jahr zusaetzlich auch dessen Rohraster gar nicht erst
+# laedt): liefert den gecachten Eintrag nur fuer ein abgeschlossenes Jahr,
+# sonst NULL (immer frisch berechnen).
+cache_eintrag_holen <- function(cache, jahr, woche) {
+  if (jahr >= aktuelles_kalenderjahr) return(NULL)
+  cache[[paste(jahr, woche)]]
+}
+
 ## Daten laden, falls noch nicht vorhanden ------------------------------------
 if (!exists("daten")) source("01_import_googlesheet.R")
 
@@ -905,18 +940,43 @@ graswachstum_bild_je_woche <- list()
 afc_ring_bild_je_woche <- list()
 afc_fenster_je_woche <- list()
 
+graswachstum_afc_cache_alt <- lade_ebenen_cache("graswachstum_afc")
+graswachstum_afc_cache_neu <- list()
+ga_aus_cache <- 0L; ga_neu <- 0L
 for (i in seq_len(nrow(map_wochen))) {
   jr <- map_wochen$jahr[i]; w <- map_wochen$week[i]
+  schluessel <- paste(jr, w)
   snap <- map_snapshots %>% filter(jahr == jr, week == w) %>% arrange(Ort)
+  # Die Plotly-Trace (Standort-Positionen/-Werte dieser Woche) wird IMMER neu
+  # angelegt - billig (keine ggplot-Rendering), und rein strukturell Teil der
+  # interaktiven Figur. Nur die beiden teuren ggplot-Bilder darunter
+  # (baue_graswachstum_bild()/baue_afc_ring_bild()) werden fuer ein
+  # abgeschlossenes Jahr aus dem Cache uebernommen statt neu gerendert.
   fig_wachstum <- baue_kartenwerte_trace(fig_wachstum, snap, "growth", "kg TS/ha/Tag",
                                           paste("Wachstum", jr, "KW", w))
   map_point_orts[[i]] <- as.character(snap$Ort)
-  graswachstum_bild_je_woche[[paste(jr, w)]] <- baue_graswachstum_bild(snap)
-  afc_ergebnis <- baue_afc_ring_bild(snap, montag_von_woche(jr, w))
-  afc_ring_bild_je_woche[[paste(jr, w)]] <- afc_ergebnis$bild
-  afc_fenster_je_woche[[paste(jr, w)]] <- afc_ergebnis$fensterIdx
+  cached <- cache_eintrag_holen(graswachstum_afc_cache_alt, jr, w)
+  if (!is.null(cached)) {
+    graswachstum_bild_je_woche[[schluessel]] <- cached$graswachstum
+    afc_ring_bild_je_woche[[schluessel]] <- cached$afc_bild
+    afc_fenster_je_woche[[schluessel]] <- cached$afc_fenster
+    ga_aus_cache <- ga_aus_cache + 1L
+  } else {
+    graswachstum_bild_je_woche[[schluessel]] <- baue_graswachstum_bild(snap)
+    afc_ergebnis <- baue_afc_ring_bild(snap, montag_von_woche(jr, w))
+    afc_ring_bild_je_woche[[schluessel]] <- afc_ergebnis$bild
+    afc_fenster_je_woche[[schluessel]] <- afc_ergebnis$fensterIdx
+    ga_neu <- ga_neu + 1L
+  }
+  graswachstum_afc_cache_neu[[schluessel]] <- list(
+    graswachstum = graswachstum_bild_je_woche[[schluessel]],
+    afc_bild = afc_ring_bild_je_woche[[schluessel]],
+    afc_fenster = afc_fenster_je_woche[[schluessel]]
+  )
 }
-cat("Graswachstums-Hintergrundbilder erzeugt:", sum(!vapply(graswachstum_bild_je_woche, is.null, logical(1))), "\n")
+speichere_ebenen_cache("graswachstum_afc", graswachstum_afc_cache_neu)
+cat("Graswachstums-Hintergrundbilder erzeugt:", sum(!vapply(graswachstum_bild_je_woche, is.null, logical(1))),
+    "(aus Cache:", ga_aus_cache, "/ neu:", ga_neu, ")\n")
 cat("AFC-Ring-Hintergrundbilder erzeugt:", sum(!vapply(afc_ring_bild_je_woche, is.null, logical(1))), "\n")
 
 ########################################################################
@@ -1222,13 +1282,31 @@ niederschlag_stuetzstellen <- c(0, 7.5, 15, 22.5, 30, 65, 100) / 100
 # ANTEIL des (mitskalierenden) Bereichs bezieht, nicht auf absolute Werte.
 # Rueckgabe: benannte Liste je Fenstergroesse mit $bilder/$werte (siehe
 # schreibe_fenster_ebenen_dateien() weiter unten).
-baue_fenster_ebenen <- function(jahre, raster_holen, aggregat, farben, bereich_je_7tage, stuetzstellen = NULL) {
+baue_fenster_ebenen <- function(name, jahre, raster_holen, aggregat, farben, bereich_je_7tage, stuetzstellen = NULL) {
   ergebnis <- list()
+  gesamt_cache <- 0L; gesamt_neu <- 0L
   for (fenster in fenstergroessen_tage) {
+    fenster_key <- as.character(fenster)
+    cache_name <- paste0(name, "_", fenster_key)
+    cache_alt <- lade_ebenen_cache(cache_name)
     bild_je_woche <- list()
     werte_je_woche <- list()
     bereich <- if (aggregat == "summe") bereich_je_7tage * fenster / 7 else bereich_je_7tage
     for (jr in jahre) {
+      # Abgeschlossenes Jahr, das schon einmal (mit dieser Fenstergroesse)
+      # verarbeitet wurde: komplett aus dem Cache uebernehmen - das Rohraster
+      # (raster_holen(jr), oft das teuerste an dieser Stelle: Laden +
+      # Reprojizieren mehrerer Monats-Dateien) wird dafuer gar nicht erst
+      # angefasst.
+      alte_schluessel_jahr <- Filter(function(k) startsWith(k, paste0(jr, " ")), names(cache_alt))
+      if (jr < aktuelles_kalenderjahr && length(alte_schluessel_jahr) > 0) {
+        for (schluessel in alte_schluessel_jahr) {
+          bild_je_woche[[schluessel]] <- cache_alt[[schluessel]]$bild
+          werte_je_woche[[schluessel]] <- cache_alt[[schluessel]]$werte
+        }
+        gesamt_cache <- gesamt_cache + length(alte_schluessel_jahr)
+        next
+      }
       r_info <- raster_holen(jr)
       if (is.null(r_info)) next
       tage_r <- r_info$tage
@@ -1244,18 +1322,25 @@ baue_fenster_ebenen <- function(jahre, raster_holen, aggregat, farben, bereich_j
           mean(r_info$raster[[idx]], na.rm = TRUE)
         }
         bild_ergebnis <- raster_zu_datauri(r_wert, farben, bereich, stuetzstellen = stuetzstellen)
-        bild_je_woche[[paste(jr, w)]] <- bild_ergebnis$bild
-        werte_je_woche[[paste(jr, w)]] <- bild_ergebnis$werte
+        schluessel <- paste(jr, w)
+        bild_je_woche[[schluessel]] <- bild_ergebnis$bild
+        werte_je_woche[[schluessel]] <- bild_ergebnis$werte
+        gesamt_neu <- gesamt_neu + 1L
       }
     }
-    ergebnis[[as.character(fenster)]] <- list(bilder = bild_je_woche, werte = werte_je_woche)
+    # Cache fuer den naechsten Lauf aktualisieren - enthaelt jetzt sowohl
+    # unveraendert uebernommene (abgeschlossene Jahre) als auch frisch
+    # berechnete Eintraege (laufendes bzw. erstmals verarbeitetes Jahr).
+    speichere_ebenen_cache(cache_name, Map(function(b, w) list(bild = b, werte = w), bild_je_woche, werte_je_woche))
+    ergebnis[[fenster_key]] <- list(bilder = bild_je_woche, werte = werte_je_woche)
   }
+  cat("  ", name, "- aus Cache:", gesamt_cache, "/ neu berechnet:", gesamt_neu, "\n")
   ergebnis
 }
 
 ## Niederschlag: gleitendes Fenster (Summe) --------------------------------
 niederschlag_fenster_ergebnisse <- baue_fenster_ebenen(
-  jahre_mit_niederschlag,
+  "niederschlag", jahre_mit_niederschlag,
   function(jr) {
     if (!jr %in% names(niederschlag_raster_je_jahr)) return(NULL)
     r <- niederschlag_raster_je_jahr[[jr]]
@@ -1275,7 +1360,7 @@ temperatur_farben <- c("darkblue", "steelblue", "lightskyblue", "palegreen3", "g
 temperatur_quelle <- "MeteoSchweiz TabsD, 1km-Raster (Tagesmitteltemperatur 2m)."
 
 temperatur_fenster_ergebnisse <- baue_fenster_ebenen(
-  jahre_mit_temperatur,
+  "temperatur", jahre_mit_temperatur,
   function(jr) {
     if (!jr %in% names(temperatur_raster_je_jahr)) return(NULL)
     r <- temperatur_raster_je_jahr[[jr]]
@@ -1298,7 +1383,7 @@ cat("Temperatur-Hintergrundbilder erzeugt:",
 bodentemperatur_quelle <- "Schaetzung: gleitender Mittelwert aus MeteoSchweiz TabsD (2m-Lufttemperatur) - keine direkte Bodenmessung."
 
 bodentemperatur_fenster_ergebnisse <- baue_fenster_ebenen(
-  jahre_mit_temperatur,
+  "bodentemperatur", jahre_mit_temperatur,
   function(jr) {
     if (!jr %in% names(temperatur_raster_je_jahr)) return(NULL)
     r <- temperatur_raster_je_jahr[[jr]]
@@ -1321,8 +1406,18 @@ speicher_tif <- file.path(wasserhaushalt_dir, "_checkpoint_speicher.tif")
 if (file.exists(speicher_tif)) {
   speicher_r <- terra::rast(speicher_tif)
   speicher_daten_tage <- as.Date(sub("^Speicher_", "", names(speicher_r)))
+  boden_cache_alt <- lade_ebenen_cache("boden")
+  boden_aus_cache <- 0L; boden_neu <- 0L
   for (jr in alle_jahre) {
     for (w in alle_wochen) {
+      cached <- cache_eintrag_holen(boden_cache_alt, jr, w)
+      if (!is.null(cached)) {
+        bodenwasser_bild_je_woche[[paste(jr, w)]] <- cached$bild
+        bodenwasser_werte_je_woche[[paste(jr, w)]] <- cached$werte
+        bodenwasser_datum_je_woche[[paste(jr, w)]] <- cached$datum
+        boden_aus_cache <- boden_aus_cache + 1L
+        next
+      }
       stichtag <- montag_von_woche(jr, w)
       # Der Speicher-Checkpoint hinkt der Verarbeitung oft 1-2 Tage hinterher
       # (siehe Kommentar in 25_plot_niederschlag_wasserhaushalt_karte.R) - ein
@@ -1337,9 +1432,15 @@ if (file.exists(speicher_tif)) {
       bodenwasser_bild_je_woche[[paste(jr, w)]] <- ergebnis$bild
       bodenwasser_werte_je_woche[[paste(jr, w)]] <- ergebnis$werte
       bodenwasser_datum_je_woche[[paste(jr, w)]] <- format(speicher_daten_tage[idx], "%d.%m.%Y")
+      boden_neu <- boden_neu + 1L
     }
   }
-  cat("Bodenwasserbilanz-Hintergrundbilder erzeugt:", length(bodenwasser_bild_je_woche), "\n")
+  speichere_ebenen_cache("boden", Map(
+    function(b, w, d) list(bild = b, werte = w, datum = d),
+    bodenwasser_bild_je_woche, bodenwasser_werte_je_woche, bodenwasser_datum_je_woche
+  ))
+  cat("Bodenwasserbilanz-Hintergrundbilder erzeugt:", length(bodenwasser_bild_je_woche),
+      "(aus Cache:", boden_aus_cache, "/ neu:", boden_neu, ")\n")
 } else {
   cat("Bodenwasserbilanz nicht verfuegbar (", speicher_tif, " nicht gefunden)\n")
 }
@@ -1349,7 +1450,7 @@ sonnenschein_farben <- c("dimgray", "gray70", "khaki1", "gold", "orange")
 sonnenschein_quelle <- "MeteoSchweiz SrelD, 1km-Raster (Sonnenscheindauer relativ zum astronomisch Moeglichen)."
 
 sonnenschein_fenster_ergebnisse <- baue_fenster_ebenen(
-  jahre_mit_sonnenschein,
+  "sonnenschein", jahre_mit_sonnenschein,
   function(jr) {
     if (!jr %in% names(sonnenschein_raster_je_jahr)) return(NULL)
     r <- sonnenschein_raster_je_jahr[[jr]]
@@ -1370,7 +1471,7 @@ if (file.exists(et0_tif)) {
   et0_r <- terra::rast(et0_tif)
   et0_tage <- as.Date(sub("^ET0_", "", names(et0_r)))
   et0_fenster_ergebnisse <- baue_fenster_ebenen(
-    alle_jahre,
+    "et0", alle_jahre,
     function(jr) list(raster = et0_r, tage = et0_tage),
     aggregat = "summe", farben = et0_farben, bereich_je_7tage = c(0, 25)
   )
@@ -1394,7 +1495,22 @@ gdd_farben <- c("white", "yellow", "orange", "darkred")
 gdd_quelle <- "Kumuliert aus MeteoSchweiz TabsD (Basis 5 Grad C) seit Beginn der lokal vorhandenen Temperaturdaten."
 gdd_bild_je_woche <- list()
 gdd_werte_je_woche <- list()
+gdd_cache_alt <- lade_ebenen_cache("gdd")
+gdd_aus_cache <- 0L; gdd_neu <- 0L
 for (jr in names(gdd_kumuliert_je_jahr)) {
+  # Abgeschlossenes Jahr, schon einmal verarbeitet: komplett aus dem Cache
+  # uebernehmen (kumulierte Wachstumsgradtage bis zu einem vergangenen
+  # Stichtag aendern sich nie mehr) - das Rohraster wird dafuer gar nicht
+  # erst angefasst.
+  alte_schluessel_jahr <- Filter(function(k) startsWith(k, paste0(jr, " ")), names(gdd_cache_alt))
+  if (jr < aktuelles_kalenderjahr && length(alte_schluessel_jahr) > 0) {
+    for (schluessel in alte_schluessel_jahr) {
+      gdd_bild_je_woche[[schluessel]] <- gdd_cache_alt[[schluessel]]$bild
+      gdd_werte_je_woche[[schluessel]] <- gdd_cache_alt[[schluessel]]$werte
+    }
+    gdd_aus_cache <- gdd_aus_cache + length(alte_schluessel_jahr)
+    next
+  }
   r_jahr <- gdd_kumuliert_je_jahr[[jr]]
   tage_r <- as.Date(time(r_jahr))
   for (w in alle_wochen) {
@@ -1402,11 +1518,15 @@ for (jr in names(gdd_kumuliert_je_jahr)) {
     idx <- which(tage_r == stichtag)
     if (length(idx) == 0) next
     ergebnis <- raster_zu_datauri(r_jahr[[idx]], gdd_farben, c(0, 2500))
-    gdd_bild_je_woche[[paste(jr, w)]] <- ergebnis$bild
-    gdd_werte_je_woche[[paste(jr, w)]] <- ergebnis$werte
+    schluessel <- paste(jr, w)
+    gdd_bild_je_woche[[schluessel]] <- ergebnis$bild
+    gdd_werte_je_woche[[schluessel]] <- ergebnis$werte
+    gdd_neu <- gdd_neu + 1L
   }
 }
-cat("Wachstumsgradtage-Hintergrundbilder erzeugt:", length(gdd_bild_je_woche), "\n")
+speichere_ebenen_cache("gdd", Map(function(b, w) list(bild = b, werte = w), gdd_bild_je_woche, gdd_werte_je_woche))
+cat("Wachstumsgradtage-Hintergrundbilder erzeugt:", length(gdd_bild_je_woche),
+    "(aus Cache:", gdd_aus_cache, "/ neu:", gdd_neu, ")\n")
 
 ## Optionale Hintergrund-Ebenen NICHT in die Haupt-HTML einbetten, sondern
 ## je Ebene in eine EIGENE JSON-Datei schreiben (outputs/ebenen/<name>.json) -
