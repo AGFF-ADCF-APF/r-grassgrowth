@@ -524,6 +524,9 @@ fig_kurve <- fig_kurve %>% add_trace(
 )
 
 fig_kurve <- fig_kurve %>% layout(
+  # Wie beim Kartentitel oben: Datum der Aufbereitung (R-Lauf) IMMER
+  # sichtbar direkt auf der Grafik, unabhaengig von Standort-/Jahresauswahl.
+  title = list(text = paste0("Graswachstumskurve — Stand: ", strftime(today, format = "%d.%m.%Y")), font = list(size = 16)),
   xaxis = list(title = "Kalenderwoche", range = c(0, 52), automargin = TRUE,
                tickmode = "array", tickvals = wochen_tickvals, ticktext = wochen_ticktext),
   yaxis = list(title = "Graswachstum (kg TS/ha/Tag)", range = c(0, graswachstum_y_max)),
@@ -998,7 +1001,11 @@ fig_wachstum <- fig_wachstum %>% add_trace(
 )
 
 fig_wachstum <- fig_wachstum %>% layout(
-  title = list(text = "Graswachstum (kg TS/ha/Tag)", font = list(size = 16)),
+  # Datum der Aufbereitung (R-Lauf) IMMER sichtbar auf der Karte selbst -
+  # nicht zu verwechseln mit der unten waehlbaren Kalenderwoche: zeigt an,
+  # wie aktuell/frisch der gesamte Datenexplorer (Standorte, Ebenen, etc.)
+  # ist, unabhaengig davon, welche Woche gerade betrachtet wird.
+  title = list(text = paste0("Graswachstum (kg TS/ha/Tag) — Stand: ", strftime(today, format = "%d.%m.%Y")), font = list(size = 16)),
   xaxis = list(visible = FALSE, range = lon_range_erweitert, fixedrange = FALSE),
   yaxis = list(visible = FALSE, range = lat_range, scaleanchor = "x", scaleratio = karten_scaleratio),
   margin = list(t = 40, b = 10, l = 10, r = 10),

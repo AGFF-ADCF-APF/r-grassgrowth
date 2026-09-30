@@ -19,7 +19,7 @@ grassgrowth_curve <- ggplot(jahresdaten, aes(x = weeknum, y = growth, color = Or
             y = Durchschnitt...700.m.ü.M...tiefgründig..frisch
             ), color="red", linetype="dotted", linewidth=1, show.legend = F) +
   labs(x = "Kalenderwoche", y = "Graswachstum (kg TS/ha/Tag)",
-            title = paste0("Graswachstumskurven ",Jahr)) +
+            title = paste0("Graswachstumskurven ", Jahr, " (Stand: ", strftime(today, format = "%d.%m.%Y"), ")")) +
   #scale_colour_manual(name = "",
   #                    values = "Dodger Blue 3",
   #                   labels = "c") +
@@ -58,7 +58,7 @@ grassgrowth_curve <- ggplot(jahresdaten, aes(x = weeknum, y = growth, color = Or
     y = Durchschnitt...700.m.ü.M...tiefgründig..frisch
   ), color="red", linetype="dotted", linewidth=1, show.legend = F) +
   labs(x = "Kalenderwoche", y = "Graswachstum (kg TS/ha/Tag)",
-       title = paste0("Graswachstumskurven ",Jahr)) +
+       title = paste0("Graswachstumskurven ", Jahr, " (Stand: ", strftime(today, format = "%d.%m.%Y"), ")")) +
   #scale_colour_manual(name = "",
   #                    values = "Dodger Blue 3",
   #                   labels = "c") +
