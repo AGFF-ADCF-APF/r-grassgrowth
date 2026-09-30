@@ -37,3 +37,5 @@ outputs
 # Datendateien (kein Code) - werden nicht versioniert
 *.geojson
 /inputs/
+# Geheimnisse (FTP-Zugangsdaten etc.) - nur als .env.example versioniert
+deploy/.env

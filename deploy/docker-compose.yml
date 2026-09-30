@@ -1,0 +1,67 @@
+name: grassgrowth_main
+services:
+  grassgrowth:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: ${GRASSGROWTH_CONTAINER_NAME:-agff-grassgrowth}
+    restart: unless-stopped
+    # Hartes Speicherlimit: der R-Lauf (terra/ggplot ueber mehrere Jahre und
+    # Meteo-Variablen) kann sonst unbegrenzt wachsen - auf dem Laptop des
+    # Autors fuehrte das wiederholt zu System-Absturznaehe (Swap fast voll).
+    # 6 GB reichten NICHT fuer den einmaligen mehrjaehrigen Backfill (Prozess
+    # wurde vom Kernel-OOM-Killer beendet, noch vor der Wasserhaushalt-
+    # Berechnung) - 10 GB als grosszuegiger, aber weiterhin klar begrenzter
+    # Wert (Server hat 32 GB, das lässt genug Luft fuer alle anderen
+    # Dienste). Bei OOM wird NUR der R-Lauf abgebrochen (siehe
+    # entrypoint.sh), nginx liefert weiter den letzten erfolgreichen Stand
+    # aus - kein Totalausfall des Containers.
+    mem_limit: 10g
+    memswap_limit: 10g
+    # FTP_* kommen aus deploy/.env (siehe .env.example) - docker compose
+    # liest eine Datei namens ".env" im selben Ordner automatisch fuer die
+    # ${...}-Ersetzungen unten, OHNE eigenes --env-file noetig. Leer/fehlend
+    # ist ok - upload_svgs.R ueberspringt den Upload dann nur.
+    environment:
+      - FTP_HOST=${FTP_HOST:-}
+      - FTP_USER=${FTP_USER:-}
+      - FTP_PASSWORD=${FTP_PASSWORD:-}
+    volumes:
+      - outputs:/app/outputs
+      - ebenen_cache:/app/ebenen_cache
+      - geodata:/geodata
+    networks:
+      - web-netzwerk
+    labels:
+      - "traefik.enable=true"
+      # Die generierte Seite verwendet RELATIVE Pfade fuer Bilder/App (siehe
+      # 27_plot_datenexplorer.R) - funktioniert absichtlich unveraendert
+      # sowohl hier (apps.graswachstum.ch/growth/) als auch beim alten FTP-
+      # Ziel (graswachstum.ch/uploads/), setzt dafuer aber einen
+      # abschliessenden Schraegstrich voraus (sonst loest der Browser
+      # "bild.svg" relativ zum ELTERN-Pfad auf, nicht zu /growth/). Eigener
+      # Redirect-Router faengt genau den Fall OHNE Schraegstrich ab, bevor
+      # der eigentliche PathPrefix-Router greift.
+      - "traefik.http.middlewares.${GRASSGROWTH_STACK:-grassgrowth}-addslash.redirectregex.regex=^https://${GRASSGROWTH_HOST:-apps.graswachstum.ch}${GRASSGROWTH_BASE_PATH:-/growth}$$"
+      - "traefik.http.middlewares.${GRASSGROWTH_STACK:-grassgrowth}-addslash.redirectregex.replacement=https://${GRASSGROWTH_HOST:-apps.graswachstum.ch}${GRASSGROWTH_BASE_PATH:-/growth}/"
+      - "traefik.http.middlewares.${GRASSGROWTH_STACK:-grassgrowth}-addslash.redirectregex.permanent=true"
+      - "traefik.http.routers.${GRASSGROWTH_STACK:-grassgrowth}-redirect.rule=Host(`${GRASSGROWTH_HOST:-apps.graswachstum.ch}`) && Path(`${GRASSGROWTH_BASE_PATH:-/growth}`)"
+      - "traefik.http.routers.${GRASSGROWTH_STACK:-grassgrowth}-redirect.tls.certresolver=le-http"
+      - "traefik.http.routers.${GRASSGROWTH_STACK:-grassgrowth}-redirect.entrypoints=websecure"
+      - "traefik.http.routers.${GRASSGROWTH_STACK:-grassgrowth}-redirect.middlewares=${GRASSGROWTH_STACK:-grassgrowth}-addslash"
+      - "traefik.http.routers.${GRASSGROWTH_STACK:-grassgrowth}-redirect.service=${GRASSGROWTH_STACK:-grassgrowth}"
+      - "traefik.http.routers.${GRASSGROWTH_STACK:-grassgrowth}.rule=Host(`${GRASSGROWTH_HOST:-apps.graswachstum.ch}`) && PathPrefix(`${GRASSGROWTH_BASE_PATH:-/growth}/`)"
+      - "traefik.http.routers.${GRASSGROWTH_STACK:-grassgrowth}.tls.certresolver=le-http"
+      - "traefik.http.routers.${GRASSGROWTH_STACK:-grassgrowth}.entrypoints=websecure"
+      - "traefik.http.middlewares.${GRASSGROWTH_STACK:-grassgrowth}-strip.stripprefix.prefixes=${GRASSGROWTH_BASE_PATH:-/growth}"
+      - "traefik.http.routers.${GRASSGROWTH_STACK:-grassgrowth}.middlewares=${GRASSGROWTH_STACK:-grassgrowth}-strip"
+      - "traefik.http.services.${GRASSGROWTH_STACK:-grassgrowth}.loadbalancer.server.port=80"
+
+volumes:
+  outputs:
+  ebenen_cache:
+  geodata:
+
+networks:
+  web-netzwerk:
+    external: true

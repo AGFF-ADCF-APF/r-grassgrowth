@@ -44,13 +44,11 @@
 # in 01_import_googlesheet.R, hier aber explizit 14 Tage und relativ zur
 # gewaehlten Woche statt zu "heute".
 #
-# Niederschlag in der Kurve UND als Hintergrund-Ebene: wie in 26_...R nur
-# fuer Jahre mit lokal vorhandenen MeteoSchweiz-Rasterdaten (siehe
-# geodata_dir) verfuegbar - fuer andere Jahre sind die entsprechenden
-# Umschalter deaktiviert (ausgegraut). Bodenwasserbilanz stammt aus dem
-# Eimermodell-Ergebnis von r-futterbaugutachten (_checkpoint_speicher.tif) -
-# nur verfuegbar, wenn dieses Nachbarrepo lokal vorhanden UND fuer das
-# jeweilige Jahr berechnet ist (aktuell nur 2026, April-September).
+# Niederschlag/Temperatur/Sonnenschein/ET0/Bodenwasserbilanz: alle direkt aus
+# MeteoSchweiz-Open-Data selbst heruntergeladen und (Wasserhaushalt) selbst
+# berechnet - keine Abhaengigkeit mehr auf ein separates Nachbarprojekt.
+# Nur fuer Jahre mit tatsaechlich vorhandenen Rasterdaten verfuegbar - fuer
+# andere Jahre sind die entsprechenden Umschalter deaktiviert (ausgegraut).
 #
 # Voraussetzung: 01_import_googlesheet.R wurde bereits ausgefuehrt (liefert
 # daten, standardkurven).
@@ -67,9 +65,12 @@ library(RColorBrewer)
 library(png)
 library(base64enc)
 
-out_dir <- "outputs"
-geodata_dir <- "../geodata/meteoschweiz"
-wasserhaushalt_dir <- "../r-futterbaugutachten/outputs/wasserhaushalt"
+# Alle Pfade per Umgebungsvariable ueberschreibbar (Default = bisheriges
+# Verhalten fuer den lokalen/Laptop-Gebrauch unveraendert) - im Docker-
+# Container zeigen sie stattdessen auf ein persistentes Volume, siehe
+# docker-compose.yml.
+out_dir <- Sys.getenv("GRASSGROWTH_OUT_DIR", "outputs")
+geodata_dir <- Sys.getenv("GRASSGROWTH_GEODATA_DIR", "../geodata/meteoschweiz")
 
 ########################################################################
 ## Persistenter Cache fuer Karten-/Ebenen-Bilder ABGESCHLOSSENER
@@ -85,7 +86,7 @@ wasserhaushalt_dir <- "../r-futterbaugutachten/outputs/wasserhaushalt"
 ## Liegt NEBEN outputs/ (nicht darin) und wird NICHT committet - der Name
 ## endet bewusst auf "_cache" (.gitignore hat dafuer schon eine Regel) - rein
 ## lokaler Performance-Cache, kein Teil des veroeffentlichten Standes.
-ebenen_cache_dir <- "ebenen_cache"
+ebenen_cache_dir <- Sys.getenv("GRASSGROWTH_EBENEN_CACHE_DIR", "ebenen_cache")
 dir.create(ebenen_cache_dir, recursive = TRUE, showWarnings = FALSE)
 aktuelles_kalenderjahr <- format(Sys.Date(), "%Y")
 
@@ -143,7 +144,7 @@ standorte_alle <- daten_korr %>% distinct(place, Ort, lon, lat, masl) %>% rename
 # swisstopo-Hoehen-API abgefragt zu werden - deutlich schneller. Die API
 # (mit lokalem Cache) dient nur noch als Fallback fuer Standorte OHNE
 # Sheet-Wert (z.B. Eintragsluecke).
-elevation_cache_file <- "standorte_elevation.csv"
+elevation_cache_file <- Sys.getenv("GRASSGROWTH_ELEVATION_CACHE_FILE", "standorte_elevation.csv")
 elevation_cache <- if (file.exists(elevation_cache_file)) read.csv(elevation_cache_file) else data.frame(place = character(), elevation = numeric())
 fehlende <- standorte_alle %>% filter(is.na(elevation), !place %in% elevation_cache$place)
 if (nrow(fehlende) > 0) {
@@ -222,9 +223,94 @@ cat("Jahre im Datenexplorer:", paste(alle_jahre, collapse = ", "), "- Standorte:
 ## 1. Graswachstumskurve (mehrjaehrig) ---------------------------------
 ########################################################################
 
-## Niederschlag: nur fuer Jahre mit lokal vorhandenen MeteoSchweiz-Rasterdaten
-## (siehe 26_...R) - Downloads fuer vergangene Jahre sind nicht Teil dieses
-## Skripts.
+## Gemeinsame MeteoSchweiz-Rasterdaten (Niederschlag, Temperatur 2m/Max/Min,
+## Sonnenscheindauer) -------------------------------------------------------
+## FRUEHER lasen Niederschlag/Temperatur NUR aus einem von einem FREMDEN,
+## separaten Projekt (r-futterbaugutachten) befuellten Cache-Ordner, ohne
+## selbst jemals etwas herunterzuladen - lief jenes Projekt eine Weile nicht,
+## blieben hier klaglos Wochen ohne Daten (auf der Karte nicht von echten
+## MeteoSchweiz-Verzoegerungen zu unterscheiden). Jetzt eigenstaendig: alle
+## fuenf Groessen kommen aus DERSELBEN STAC-Collection/denselben Monats-Items
+## (ch.meteoschweiz.ogd-surface-derived-grid) - ein Set von Downloadfunktionen
+## bedient sie gemeinsam (ein API-Aufruf pro Monat/Tag liefert alle Varianten
+## auf einmal, statt fuenf getrennte).
+meteo_stac_base <- "https://data.geo.admin.ch/api/stac/v1/collections/ch.meteoschweiz.ogd-surface-derived-grid/items/"
+# Produktcode je Variable UND Zeitraster - Niederschlag heisst im
+# konsolidierten Monats-Item anders (rhiresd, endgueltig geprueft) als im
+# taeglichen Item des noch laufenden Monats (rprelimd, vorlaeufig) -
+# Temperatur/Sonnenschein behalten in beiden Faellen denselben Produktcode.
+meteo_produktcode_monat <- c(precip = "rhiresd", tabs = "tabsd", tmax = "tmaxd", tmin = "tmind", sreld = "sreld")
+meteo_produktcode_tag <- c(precip = "rprelimd", tabs = "tabsd", tmax = "tmaxd", tmin = "tmind", sreld = "sreld")
+
+meteo_datei <- function(prodcode, zeitschluessel) file.path(geodata_dir, paste0(prodcode, "_", zeitschluessel, ".nc"))
+
+# Laedt (nur was lokal fehlt) die angegebenen Variablen fuer EIN STAC-Item
+# (Monat "YYYYMM" ODER Tag "YYYYMMDD") - ein gemeinsamer API-Aufruf liefert
+# alle Variablen-Assets dieses Items auf einmal.
+lade_meteo_item <- function(item_id, zeitschluessel, variablen, produktcodes) {
+  ziel_dateien <- meteo_datei(produktcodes[variablen], zeitschluessel)
+  fehlend <- variablen[!file.exists(ziel_dateien)]
+  if (length(fehlend) == 0) return(invisible(TRUE))
+  item <- tryCatch(jsonlite::fromJSON(paste0(meteo_stac_base, item_id), simplifyVector = FALSE), error = function(e) NULL)
+  if (is.null(item) || length(item$assets) == 0) return(invisible(FALSE))
+  for (v in fehlend) {
+    prodcode <- produktcodes[[v]]
+    key <- names(item$assets)[grepl(paste0("\\.", prodcode, "_"), names(item$assets))]
+    if (length(key) == 0) next
+    dest <- meteo_datei(prodcode, zeitschluessel)
+    tryCatch(download.file(item$assets[[key[1]]]$href, destfile = dest, quiet = TRUE, mode = "wb"),
+             error = function(e) unlink(dest))
+  }
+  invisible(TRUE)
+}
+lade_meteo_monat <- function(jahr_monat, variablen) lade_meteo_item(paste0(jahr_monat, "-ch"), jahr_monat, variablen, meteo_produktcode_monat)
+lade_meteo_tag <- function(tag, variablen) {
+  tag_id <- gsub("-", "", as.character(tag))
+  lade_meteo_item(paste0(tag_id, "-ch"), tag_id, variablen, meteo_produktcode_tag)
+}
+meteo_monat_konsolidiert_vorhanden <- function(jahr_monat) file.exists(meteo_datei(meteo_produktcode_monat[["precip"]], jahr_monat))
+
+# Konsolidierte Monats-Dateien fuer ALLE Jahre/Monate bis heute (einmal
+# lokal vorhanden, nie erneut heruntergeladen - reiner file.exists()-Check).
+meteo_variablen_gesamt <- c("precip", "tabs", "tmax", "tmin", "sreld")
+for (jr in alle_jahre) {
+  monate_konsolidiert <- sprintf("%s%02d", jr, 1:12)
+  for (jahr_monat in monate_konsolidiert) {
+    if (as.Date(paste0(jahr_monat, "01"), format = "%Y%m%d") > Sys.Date()) next
+    lade_meteo_monat(jahr_monat, meteo_variablen_gesamt)
+  }
+}
+# Fuer die letzten zwei Monate (laufender + Vormonat) zusaetzlich TAEGLICH
+# nachladen, WENN das konsolidierte Monats-Item (noch) fehlt - dessen
+# Veroeffentlichung hinkt dem Monatsende typischerweise ein paar Tage
+# hinterher. Sonnenscheindauer hat KEINE taegliche/vorlaeufige Variante
+# (siehe meteo_produktcode_tag) - fuer sie bleiben diese Tage bis zur
+# konsolidierten Monatsdatei unverfuegbar, das ist normal (kein Fehler).
+kandidaten_monate <- unique(format(seq(as.Date(format(Sys.Date(), "%Y-%m-01")), by = "-1 month", length.out = 2), "%Y%m"))
+for (jahr_monat in kandidaten_monate) {
+  if (meteo_monat_konsolidiert_vorhanden(jahr_monat)) next
+  monatsanfang <- as.Date(paste0(jahr_monat, "01"), format = "%Y%m%d")
+  monatsende <- seq(monatsanfang, by = "month", length.out = 2)[2] - 1
+  tage <- seq(monatsanfang, min(monatsende, Sys.Date() - 1), by = "day")
+  for (tag in as.character(tage)) lade_meteo_tag(tag, setdiff(meteo_variablen_gesamt, "sreld"))
+}
+
+# Liest (rein lokal, kein Download mehr) alle vorhandenen Dateien einer
+# Variable fuer ein Jahr zu EINEM Rasterstapel zusammen - konsolidierte
+# Monats-Dateien plus (fuer die letzten zwei Monate) etwaige Tages-Dateien.
+lade_jahresstapel <- function(variable, jr, produktcode_monat, produktcode_tag = NULL) {
+  monate_konsolidiert <- sprintf("%s%02d", jr, 1:12)
+  dateien <- meteo_datei(produktcode_monat, monate_konsolidiert)
+  teile <- lapply(dateien[file.exists(dateien)], rast)
+  if (!is.null(produktcode_tag)) {
+    tage_dateien <- Sys.glob(meteo_datei(produktcode_tag, paste0(jr, "[0-9][0-9][0-9][0-9]"))) # jr(YYYY) + MMDD
+    teile <- c(teile, lapply(tage_dateien, rast))
+  }
+  if (length(teile) == 0) return(NULL)
+  rast(teile)
+}
+
+## Niederschlag: nur fuer Jahre mit lokal vorhandenen MeteoSchweiz-Rasterdaten.
 jahr_hat_niederschlag <- function(jr) {
   any(grepl(paste0("^(rhiresd|rprelimd)_", jr), list.files(geodata_dir)))
 }
@@ -236,117 +322,65 @@ niederschlag_woche_je_jahr <- list()
 # Niederschlags-Hintergrundebene (Vorwochen-Summe) weiterverwendet, damit
 # die Daten nicht ein zweites Mal von der Platte geladen werden muessen.
 niederschlag_raster_je_jahr <- list()
-if (length(jahre_mit_niederschlag) > 0) {
-  lade_var_monatlich <- function(prodcode, jahr_monat) {
-    f <- file.path(geodata_dir, paste0(prodcode, "_", jahr_monat, ".nc"))
-    if (!file.exists(f)) return(NULL)
-    rast(f)
-  }
-  lade_var_taeglich <- function(prodcode, tag) {
-    tag_id <- gsub("-", "", as.character(tag))
-    f <- file.path(geodata_dir, paste0(prodcode, "_", tag_id, ".nc"))
-    if (!file.exists(f)) return(NULL)
-    rast(f)
-  }
-  for (jr in jahre_mit_niederschlag) {
-    monate_konsolidiert <- sprintf("%s%02d", jr, 1:12)
-    teile <- lapply(monate_konsolidiert, lade_var_monatlich, prodcode = "rhiresd")
-    if (jr == neuestes_jahr) {
-      tage_ohne_monatsdatei <- seq(as.Date(paste0(jr, "-08-01")), Sys.Date() - 1, by = "day")
-      teile <- c(teile, lapply(tage_ohne_monatsdatei, lade_var_taeglich, prodcode = "rprelimd"))
-    }
-    teile <- teile[!vapply(teile, is.null, logical(1))]
-    if (length(teile) == 0) next
-    precip_alle <- rast(teile)
-    tage_precip <- as.Date(time(precip_alle))
-    niederschlag_raster_je_jahr[[jr]] <- precip_alle
+for (jr in jahre_mit_niederschlag) {
+  precip_alle <- lade_jahresstapel("precip", jr, meteo_produktcode_monat[["precip"]], meteo_produktcode_tag[["precip"]])
+  if (is.null(precip_alle)) next
+  tage_precip <- as.Date(time(precip_alle))
+  niederschlag_raster_je_jahr[[jr]] <- precip_alle
 
-    standorte_jahr <- daten_korr %>% filter(year == jr) %>% distinct(place, Ort, lon, lat)
-    pts_lv95 <- st_as_sf(standorte_jahr, coords = c("lon", "lat"), crs = 4326) %>% st_transform(2056)
-    werte <- terra::extract(precip_alle, vect(pts_lv95))[, -1]
-    niederschlag_taeglich <- data.frame(
-      Ort = rep(standorte_jahr$Ort, each = length(tage_precip)),
-      date = rep(tage_precip, times = nrow(standorte_jahr)),
-      precip = as.numeric(t(werte))
-    )
-    niederschlag_taeglich$weeknum <- as.integer(strftime(niederschlag_taeglich$date, format = "%V"))
-    niederschlag_woche_je_jahr[[jr]] <- niederschlag_taeglich %>%
-      group_by(Ort, weeknum) %>%
-      summarise(precip_week = sum(precip, na.rm = TRUE), .groups = "drop")
-    cat("Niederschlag", jr, "geladen:", format(min(tage_precip), "%d.%m.%Y"), "-", format(max(tage_precip), "%d.%m.%Y"), "\n")
-  }
+  standorte_jahr <- daten_korr %>% filter(year == jr) %>% distinct(place, Ort, lon, lat)
+  pts_lv95 <- st_as_sf(standorte_jahr, coords = c("lon", "lat"), crs = 4326) %>% st_transform(2056)
+  werte <- terra::extract(precip_alle, vect(pts_lv95))[, -1]
+  niederschlag_taeglich <- data.frame(
+    Ort = rep(standorte_jahr$Ort, each = length(tage_precip)),
+    date = rep(tage_precip, times = nrow(standorte_jahr)),
+    precip = as.numeric(t(werte))
+  )
+  niederschlag_taeglich$weeknum <- as.integer(strftime(niederschlag_taeglich$date, format = "%V"))
+  niederschlag_woche_je_jahr[[jr]] <- niederschlag_taeglich %>%
+    group_by(Ort, weeknum) %>%
+    summarise(precip_week = sum(precip, na.rm = TRUE), .groups = "drop")
+  cat("Niederschlag", jr, "geladen:", format(min(tage_precip), "%d.%m.%Y"), "-", format(max(tage_precip), "%d.%m.%Y"), "\n")
 }
 
-## Temperatur 2m: nur fuer Jahre mit lokal vorhandenen TabsD-Rasterdaten.
-## TabsD wird (anders als RhiresD) durchgehend unter demselben Produktcode
-## taeglich publiziert - keine separate "prelim"-Variante fuer die
-## juengsten Tage noetig.
+## Temperatur 2m (Mittel/Max/Min): nur fuer Jahre mit lokal vorhandenen
+## TabsD-Rasterdaten. Max/Min werden nur fuers Hargreaves-ET0 (siehe
+## Wasserhaushalt-Abschnitt weiter unten) gebraucht, nicht fuer die
+## Temperatur-Ebene selbst.
 jahr_hat_temperatur <- function(jr) any(grepl(paste0("^tabsd_", jr), list.files(geodata_dir)))
 jahre_mit_temperatur <- alle_jahre[vapply(alle_jahre, jahr_hat_temperatur, logical(1))]
 cat("Temperaturdaten lokal vorhanden fuer:", paste(jahre_mit_temperatur, collapse = ", "), "\n")
 
 temperatur_raster_je_jahr <- list()
-if (length(jahre_mit_temperatur) > 0) {
-  lade_temp_monatlich <- function(jahr_monat) {
-    f <- file.path(geodata_dir, paste0("tabsd_", jahr_monat, ".nc"))
-    if (!file.exists(f)) return(NULL)
-    rast(f)
-  }
-  lade_temp_taeglich <- function(tag) {
-    tag_id <- gsub("-", "", as.character(tag))
-    f <- file.path(geodata_dir, paste0("tabsd_", tag_id, ".nc"))
-    if (!file.exists(f)) return(NULL)
-    rast(f)
-  }
-  for (jr in jahre_mit_temperatur) {
-    monate_konsolidiert <- sprintf("%s%02d", jr, 1:12)
-    teile <- lapply(monate_konsolidiert, lade_temp_monatlich)
-    if (jr == neuestes_jahr) {
-      tage_ohne_monatsdatei <- seq(as.Date(paste0(jr, "-08-01")), Sys.Date() - 1, by = "day")
-      teile <- c(teile, lapply(tage_ohne_monatsdatei, lade_temp_taeglich))
-    }
-    teile <- teile[!vapply(teile, is.null, logical(1))]
-    if (length(teile) == 0) next
-    temperatur_raster_je_jahr[[jr]] <- rast(teile)
-    tage_temp <- as.Date(time(temperatur_raster_je_jahr[[jr]]))
-    cat("Temperatur", jr, "geladen:", format(min(tage_temp), "%d.%m.%Y"), "-", format(max(tage_temp), "%d.%m.%Y"), "\n")
-  }
+tmax_raster_je_jahr <- list()
+tmin_raster_je_jahr <- list()
+for (jr in jahre_mit_temperatur) {
+  temperatur_raster_je_jahr[[jr]] <- lade_jahresstapel("tabs", jr, "tabsd", "tabsd")
+  tmax_raster_je_jahr[[jr]] <- lade_jahresstapel("tmax", jr, "tmaxd", "tmaxd")
+  tmin_raster_je_jahr[[jr]] <- lade_jahresstapel("tmin", jr, "tmind", "tmind")
+  tage_temp <- as.Date(time(temperatur_raster_je_jahr[[jr]]))
+  cat("Temperatur", jr, "geladen:", format(min(tage_temp), "%d.%m.%Y"), "-", format(max(tage_temp), "%d.%m.%Y"), "\n")
 }
 
-## Sonnenscheindauer (relativ, SrelD): anders als Niederschlag/Temperatur
-## NICHT vom Nachbarrepo (r-futterbaugutachten) vorbereitet - hier selbst per
-## STAC-API heruntergeladen, aus derselben Sammlung (ch.meteoschweiz.ogd-
-## surface-derived-grid) wie RhiresD/TabsD. KEINE "prelim"-Variante fuer den
-## laufenden Monat vorhanden - fuer die letzten 1-2 Monate fehlen die Daten
-## deshalb oft noch (die betroffenen Wochen werden wie bei fehlenden
-## Niederschlagsdaten automatisch als nicht verfuegbar behandelt).
-sonnenschein_stac_base <- "https://data.geo.admin.ch/api/stac/v1/collections/ch.meteoschweiz.ogd-surface-derived-grid/items/"
-lade_sonnenschein_monat <- function(jahr_monat) {
-  dest <- file.path(geodata_dir, paste0("sreld_", jahr_monat, ".nc"))
-  if (file.exists(dest)) return(invisible(TRUE))
-  item <- tryCatch(jsonlite::fromJSON(paste0(sonnenschein_stac_base, jahr_monat, "-ch"), simplifyVector = FALSE), error = function(e) NULL)
-  if (is.null(item) || length(item$assets) == 0) return(invisible(FALSE))
-  key <- names(item$assets)[grepl("\\.sreld_", names(item$assets))]
-  if (length(key) == 0) return(invisible(FALSE))
-  href <- item$assets[[key[1]]]$href
-  tryCatch({
-    download.file(href, destfile = dest, quiet = TRUE, mode = "wb")
-    invisible(TRUE)
-  }, error = function(e) { unlink(dest); invisible(FALSE) })
-}
-# Nur fuer Jahre versucht, fuer die ohnehin schon TabsD/RhiresD lokal
-# vorhanden sind (jahre_mit_temperatur) - fuer andere Jahre hat dieses Projekt
-# ohnehin keine sonstigen Rasterdaten, ein Versuch waere reine Netzwerklast.
-for (jr in jahre_mit_temperatur) {
-  for (m in 1:12) {
-    monatsanfang <- as.Date(sprintf("%s-%02d-01", jr, m))
-    if (monatsanfang > Sys.Date()) next
-    lade_sonnenschein_monat(sprintf("%s%02d", jr, m))
-  }
-}
+## Sonnenscheindauer (relativ, SrelD): KEINE taegliche/vorlaeufige Variante
+## vorhanden (siehe meteo_produktcode_tag) - fuer die letzten 1-2 Monate
+## fehlen die Daten deshalb oft noch (die betroffenen Wochen werden wie bei
+## fehlenden Niederschlagsdaten automatisch als nicht verfuegbar behandelt).
 jahr_hat_sonnenschein <- function(jr) any(grepl(paste0("^sreld_", jr), list.files(geodata_dir)))
 jahre_mit_sonnenschein <- alle_jahre[vapply(alle_jahre, jahr_hat_sonnenschein, logical(1))]
 cat("Sonnenscheindaten lokal vorhanden fuer:", paste(jahre_mit_sonnenschein, collapse = ", "), "\n")
+
+sonnenschein_raster_je_jahr <- list()
+if (length(jahre_mit_sonnenschein) > 0) {
+  for (jr in jahre_mit_sonnenschein) {
+    monat_dateien <- file.path(geodata_dir, paste0("sreld_", sprintf("%s%02d", jr, 1:12), ".nc"))
+    monat_dateien <- monat_dateien[file.exists(monat_dateien)]
+    if (length(monat_dateien) == 0) next
+    sonnenschein_raster_je_jahr[[jr]] <- rast(lapply(monat_dateien, rast))
+    tage_sonne <- as.Date(time(sonnenschein_raster_je_jahr[[jr]]))
+    cat("Sonnenschein", jr, "geladen:", format(min(tage_sonne), "%d.%m.%Y"), "-", format(max(tage_sonne), "%d.%m.%Y"), "\n")
+  }
+}
 
 sonnenschein_raster_je_jahr <- list()
 if (length(jahre_mit_sonnenschein) > 0) {
@@ -368,16 +402,16 @@ if (length(jahre_mit_sonnenschein) > 0) {
 gdd_kumuliert_je_jahr <- list()
 for (jr in names(temperatur_raster_je_jahr)) {
   r_jahr <- temperatur_raster_je_jahr[[jr]]
-  gdd_taeglich <- clamp(r_jahr - 5, lower = 0)
-  gdd_kum <- rast(gdd_taeglich)
-  lauf <- gdd_taeglich[[1]] * 0
-  for (i in seq_len(nlyr(gdd_taeglich))) {
-    lauf <- lauf + gdd_taeglich[[i]]
-    gdd_kum[[i]] <- lauf
-  }
-  # Erst NACH der Schlaufe benennen (wie beim Bucket-Modell in
-  # 44_wasserhaushalt_meteoschweiz.R) - jede Zuweisung gdd_kum[[i]] <- lauf
-  # uebernimmt sonst zwischenzeitlich den generischen Namen von lauf.
+  # Als reine Zahlenmatrix (Zelle x Tag) kumulieren, NICHT schichtweise per
+  # [[i]]<- in ein SpatRaster - Letzteres kopiert (v.a. in aelteren terra-
+  # Versionen) bei JEDER Einzelzuweisung moeglicherweise das gesamte,
+  # wachsende Mehrschicht-Objekt neu, was bei einem vollen Jahr (~365
+  # Iterationen) zu einem Speicher-Absturz fuehrte (siehe Docker-Testlauf).
+  gdd_taeglich_mat <- terra::values(clamp(r_jahr - 5, lower = 0))
+  gdd_kum_mat <- gdd_taeglich_mat
+  for (i in seq_len(ncol(gdd_kum_mat))[-1]) gdd_kum_mat[, i] <- gdd_kum_mat[, i - 1] + gdd_taeglich_mat[, i]
+  gdd_kum <- rast(r_jahr)
+  values(gdd_kum) <- gdd_kum_mat
   time(gdd_kum) <- time(r_jahr)
   gdd_kumuliert_je_jahr[[jr]] <- gdd_kum
 }
@@ -1061,11 +1095,12 @@ fig_wachstum <- fig_wachstum %>% add_trace(
 )
 
 fig_wachstum <- fig_wachstum %>% layout(
-  # Datum der Aufbereitung (R-Lauf) IMMER sichtbar auf der Karte selbst -
-  # nicht zu verwechseln mit der unten waehlbaren Kalenderwoche: zeigt an,
-  # wie aktuell/frisch der gesamte Datenexplorer (Standorte, Ebenen, etc.)
-  # ist, unabhaengig davon, welche Woche gerade betrachtet wird.
-  title = list(text = paste0("Graswachstum (kg TS/ha/Tag) — Stand: ", strftime(today, format = "%d.%m.%Y")), font = list(size = 16)),
+  # Nur ein Platzhalter-Anfangstitel - JS (aktualisiereKartentitel()) macht
+  # ihn sofort dynamisch: zeigt IMMER, was gerade zu sehen ist (Kalenderwoche
+  # UND, falls eine Meteo-Ebene aktiv ist, deren Name + tatsaechliches
+  # Datenstand-Datum) statt eines statischen Build-Datums, das mit der
+  # Aktualitaet der einzelnen Ebenen nichts zu tun haben muss.
+  title = list(text = paste0("Graswachstum (kg TS/ha/Tag), KW ", start_woche, " ", neuestes_jahr), font = list(size = 16)),
   xaxis = list(visible = FALSE, range = lon_range_erweitert, fixedrange = FALSE),
   yaxis = list(visible = FALSE, range = lat_range, scaleanchor = "x", scaleratio = karten_scaleratio),
   margin = list(t = 40, b = 10, l = 10, r = 10),
@@ -1311,9 +1346,24 @@ baue_fenster_ebenen <- function(name, jahre, raster_holen, aggregat, farben, ber
       if (is.null(r_info)) next
       tage_r <- r_info$tage
       for (w in alle_wochen) {
-        fenster_ende <- montag_von_woche(jr, w) - 1
-        fenster_start <- fenster_ende - (fenster - 1)
-        if (fenster_start < min(tage_r) || fenster_ende > max(tage_r)) next
+        # Noch nicht begonnene (zukuenftige) Wochen NIE anzeigen - sonst
+        # wuerde die Kappung unten (fuer die AKTUELLE Woche gedacht) bei
+        # laengeren Fenstern (z.B. 28 Tage) faelschlich auch fuer Wochen
+        # weit in der Zukunft noch eine (dann voellig veraltete) Ueberlappung
+        # finden und deren Daten faelschlich dieser Zukunftswoche zuordnen.
+        if (montag_von_woche(jr, w) > Sys.Date() + 1) next
+        fenster_ende_ideal <- montag_von_woche(jr, w) - 1
+        fenster_start <- fenster_ende_ideal - (fenster - 1)
+        if (fenster_start < min(tage_r)) next
+        # Fuer die AKTUELLSTE Woche reicht das ideale Fensterende oft noch
+        # nicht (Publikationsverzoegerung der Rohdaten) - statt die Woche
+        # komplett auszulassen, wird das Fenster auf das tatsaechlich
+        # verfuegbare Enddatum gekappt (kuerzeres Fenster, aber so aktuell
+        # wie moeglich - "ab Dienstag Stand Montag" statt "erst wieder
+        # naechste Woche"). Nur wenn ueberhaupt noch eine sinnvolle
+        # Ueberlappung besteht (fenster_ende >= fenster_start).
+        fenster_ende <- min(fenster_ende_ideal, max(tage_r))
+        if (fenster_ende < fenster_start) next
         idx <- which(tage_r >= fenster_start & tage_r <= fenster_ende)
         if (length(idx) == 0) next
         r_wert <- if (aggregat == "summe") {
@@ -1322,6 +1372,11 @@ baue_fenster_ebenen <- function(name, jahre, raster_holen, aggregat, farben, ber
           mean(r_info$raster[[idx]], na.rm = TRUE)
         }
         bild_ergebnis <- raster_zu_datauri(r_wert, farben, bereich, stuetzstellen = stuetzstellen)
+        # bis/tage: tatsaechlich verwendetes Fensterende und Tagesanzahl -
+        # bei Kappung (siehe oben) kuerzer als die nominelle Fenstergroesse.
+        # Fuer die ehrliche Datenstand-Anzeige im Kartentitel (JS).
+        bild_ergebnis$werte$bis <- format(fenster_ende, "%d.%m.%Y")
+        bild_ergebnis$werte$tage <- length(idx)
         schluessel <- paste(jr, w)
         bild_je_woche[[schluessel]] <- bild_ergebnis$bild
         werte_je_woche[[schluessel]] <- bild_ergebnis$werte
@@ -1394,6 +1449,103 @@ bodentemperatur_fenster_ergebnisse <- baue_fenster_ebenen(
 cat("Bodentemperatur-Hintergrundbilder erzeugt (Schaetzung):",
     sum(vapply(bodentemperatur_fenster_ergebnisse, function(x) length(x$bilder), integer(1))), "\n")
 
+## Wasserhaushalt (Bucket-Modell: Niederschlag - potenzielle Verdunstung) --
+## Frueher aus dem separaten Projekt r-futterbaugutachten uebernommen (dort
+## 44_wasserhaushalt_meteoschweiz.R) - jetzt direkt hier berechnet, da es NUR
+## die ohnehin schon geladenen MeteoSchweiz-Rasterdaten braucht (kein
+## Hoehenmodell, keine Kantonsdaten) - entfernt die letzte Abhaengigkeit auf
+## ein fremdes, separat laufendes Projekt.
+##
+## ET0 nach Hargreaves (FAO-56): ET0 = 0.0023*(Tmean+17.8)*sqrt(Tmax-Tmin)*Ra,
+## mit Ra = rein astronomisch (Breitengrad, Tag im Jahr) berechneter
+## extraterrestrischer Strahlung (FAO Irrigation and Drainage Paper 56,
+## Allen et al. 1998, Gleichungen 21-25) - keine Messgroesse ausser
+## Temperatur noetig.
+##
+## Bucket-Modell Bodenwasserspeicher: S(t) = clamp(S(t-1) + Niederschlag(t)
+## - ET0(t), 0, Smax). Smax = 100mm: grobe, gaengige Annahme fuer die
+## pflanzenverfuegbare Feldkapazitaet von Gruenlandboeden im Mittelland
+## (nicht kalibriert, einfach anpassbar). Start S = Smax am 1. April (nach
+## Winter i.d.R. aufgefuellter Bodenspeicher).
+Smax_boden <- 100
+# phi als reiner Zahlenvektor (nicht als SpatRaster) - siehe Aufrufstelle
+# unten: eine SpatRaster-Schicht PRO TAG waere bei einem vollen Jahr bis zu
+# ~365 gleichzeitig im Speicher gehaltene Rasterobjekte, nur um sie danach
+# sofort wieder zu einem einzigen Stapel zusammenzufuehren - unnoetig
+# speicherintensiv (Ursache eines Speicher-Absturzes beim ersten Docker-
+# Testlauf). pmin/pmax statt terra::clamp, da phi hier ein normaler
+# Zahlenvektor ist.
+berechne_ra <- function(J, phi) {
+  dr <- 1 + 0.033 * cos(2 * pi * J / 365)
+  delta <- 0.409 * sin(2 * pi * J / 365 - 1.39)
+  ws <- acos(pmin(pmax(-tan(phi) * tan(delta), -1), 1))
+  (24 * 60 / pi) * 0.0820 * dr * (ws * sin(phi) * sin(delta) + cos(phi) * cos(delta) * sin(ws))
+}
+
+et0_raster_je_jahr <- list()
+speicher_raster_je_jahr <- list()
+for (jr in jahre_mit_temperatur) {
+  if (is.null(tmax_raster_je_jahr[[jr]]) || is.null(tmin_raster_je_jahr[[jr]]) || is.null(niederschlag_raster_je_jahr[[jr]])) next
+  # Niederschlags- und Temperaturraster haben NICHT dieselbe raeumliche
+  # Ausdehnung - auf die gemeinsame (kleinste) Flaeche zuschneiden, sonst
+  # schlaegt die Rasterarithmetik unten fehl.
+  gemeinsame_ext <- terra::ext(tmax_raster_je_jahr[[jr]])
+  precip_jr <- terra::crop(niederschlag_raster_je_jahr[[jr]], gemeinsame_ext)
+  tmax_jr <- terra::crop(tmax_raster_je_jahr[[jr]], gemeinsame_ext)
+  tmin_jr <- terra::crop(tmin_raster_je_jahr[[jr]], gemeinsame_ext)
+
+  # Nur Tage, an denen ALLE drei Groessen vorliegen (Publikationsluecken
+  # koennen je Variable leicht variieren).
+  gemeinsame_tage <- sort(Reduce(intersect, list(
+    as.Date(time(precip_jr)), as.Date(time(tmax_jr)), as.Date(time(tmin_jr))
+  )))
+  gemeinsame_tage <- as.Date(gemeinsame_tage, origin = "1970-01-01")
+  if (length(gemeinsame_tage) == 0) next
+  precip_jr <- precip_jr[[match(gemeinsame_tage, as.Date(time(precip_jr)))]]
+  tmax_jr <- tmax_jr[[match(gemeinsame_tage, as.Date(time(tmax_jr)))]]
+  tmin_jr <- tmin_jr[[match(gemeinsame_tage, as.Date(time(tmin_jr)))]]
+
+  r0 <- precip_jr[[1]]
+  xy <- xyFromCell(r0, 1:ncell(r0))
+  ll <- project(xy, from = crs(r0), to = "EPSG:4326")
+  lat_vec <- ll[, 2] * pi / 180
+  tag_des_jahres <- as.integer(format(gemeinsame_tage, "%j"))
+  # Ra als reine Zahlenmatrix (Zelle x Tag) berechnen, ERST am Schluss zu
+  # EINEM SpatRaster zusammenfassen (siehe Kommentar bei berechne_ra()).
+  ra_mat <- vapply(tag_des_jahres, function(J) berechne_ra(J, lat_vec), numeric(length(lat_vec)))
+  ra_mm <- rast(r0, nlyrs = length(tag_des_jahres))
+  values(ra_mm) <- ra_mat * 0.408 # MJ/m2/Tag -> mm/Tag
+
+  tmean_calc <- (tmax_jr + tmin_jr) / 2 # konsistent mit Hargreaves-Definition, statt tabs
+  et0_jr <- 0.0023 * (tmean_calc + 17.8) * sqrt(clamp(tmax_jr - tmin_jr, lower = 0)) * ra_mm
+  names(et0_jr) <- paste0("ET0_", format(gemeinsame_tage, "%Y-%m-%d"))
+  time(et0_jr) <- gemeinsame_tage
+  et0_raster_je_jahr[[jr]] <- et0_jr
+
+  fruehlingsanfang <- as.Date(paste0(jr, "-04-01"))
+  ab_idx <- which(gemeinsame_tage >= fruehlingsanfang)
+  if (length(ab_idx) == 0) next
+  n <- length(ab_idx)
+  # Als reine Zahlenmatrix (Zelle x Tag) rekursiv aufbauen, NICHT schichtweise
+  # per [[i]]<- in ein SpatRaster (siehe Kommentar bei der GDD-Kumulierung
+  # oben - gleiches Muster, gleiches Speicherproblem bei ~180+ Tagen).
+  precip_mat <- terra::values(precip_jr[[ab_idx]])
+  et0_mat <- terra::values(et0_jr[[ab_idx]])
+  speicher_mat <- matrix(NA_real_, nrow(precip_mat), n)
+  s_prev <- rep(Smax_boden, nrow(precip_mat))
+  for (i in seq_len(n)) {
+    s_prev <- pmin(pmax(s_prev + precip_mat[, i] - et0_mat[, i], 0), Smax_boden)
+    speicher_mat[, i] <- s_prev
+  }
+  speicher_jr <- rast(precip_jr[[ab_idx]])
+  values(speicher_jr) <- speicher_mat
+  names(speicher_jr) <- paste0("Speicher_", format(gemeinsame_tage[ab_idx], "%Y-%m-%d"))
+  time(speicher_jr) <- gemeinsame_tage[ab_idx]
+  speicher_raster_je_jahr[[jr]] <- speicher_jr
+  cat("Wasserhaushalt", jr, "berechnet:", format(gemeinsame_tage[ab_idx][1], "%d.%m.%Y"),
+      "-", format(gemeinsame_tage[ab_idx][n], "%d.%m.%Y"), "\n")
+}
+
 ## Bodenwasserbilanz zum Stichtag (Montag) der gewaehlten Kalenderwoche -----
 bodenwasser_bild_je_woche <- list()
 bodenwasser_werte_je_woche <- list()
@@ -1402,48 +1554,44 @@ bodenwasser_werte_je_woche <- list()
 # (aktualisiereLayerLabels() in onRender()), damit dort das ECHTE Datum
 # des Snapshots steht statt ein pauschales "Wochenbeginn".
 bodenwasser_datum_je_woche <- list()
-speicher_tif <- file.path(wasserhaushalt_dir, "_checkpoint_speicher.tif")
-if (file.exists(speicher_tif)) {
-  speicher_r <- terra::rast(speicher_tif)
-  speicher_daten_tage <- as.Date(sub("^Speicher_", "", names(speicher_r)))
-  boden_cache_alt <- lade_ebenen_cache("boden")
-  boden_aus_cache <- 0L; boden_neu <- 0L
-  for (jr in alle_jahre) {
-    for (w in alle_wochen) {
-      cached <- cache_eintrag_holen(boden_cache_alt, jr, w)
-      if (!is.null(cached)) {
-        bodenwasser_bild_je_woche[[paste(jr, w)]] <- cached$bild
-        bodenwasser_werte_je_woche[[paste(jr, w)]] <- cached$werte
-        bodenwasser_datum_je_woche[[paste(jr, w)]] <- cached$datum
-        boden_aus_cache <- boden_aus_cache + 1L
-        next
-      }
-      stichtag <- montag_von_woche(jr, w)
-      # Der Speicher-Checkpoint hinkt der Verarbeitung oft 1-2 Tage hinterher
-      # (siehe Kommentar in 25_plot_niederschlag_wasserhaushalt_karte.R) - ein
-      # exakter Treffer auf den Montag fehlt dadurch regelmaessig ausgerechnet
-      # fuer die jeweils AKTUELLE (laufende) Woche. Stattdessen der
-      # naechstgelegene VERFUEGBARE Tag bis zu 6 Tage VOR dem Montag (nie
-      # danach - sonst waere es keine "Wochenbeginn"-Momentaufnahme mehr).
-      passende_tage <- which(speicher_daten_tage <= stichtag & speicher_daten_tage >= stichtag - 6)
-      if (length(passende_tage) == 0) next
-      idx <- passende_tage[which.max(speicher_daten_tage[passende_tage])]
-      ergebnis <- raster_zu_datauri(speicher_r[[idx]], bodenwasser_farben, c(0, 100))
-      bodenwasser_bild_je_woche[[paste(jr, w)]] <- ergebnis$bild
-      bodenwasser_werte_je_woche[[paste(jr, w)]] <- ergebnis$werte
-      bodenwasser_datum_je_woche[[paste(jr, w)]] <- format(speicher_daten_tage[idx], "%d.%m.%Y")
-      boden_neu <- boden_neu + 1L
+boden_cache_alt <- lade_ebenen_cache("boden")
+boden_aus_cache <- 0L; boden_neu <- 0L
+for (jr in names(speicher_raster_je_jahr)) {
+  speicher_r <- speicher_raster_je_jahr[[jr]]
+  speicher_daten_tage <- as.Date(time(speicher_r))
+  for (w in alle_wochen) {
+    cached <- cache_eintrag_holen(boden_cache_alt, jr, w)
+    if (!is.null(cached)) {
+      bodenwasser_bild_je_woche[[paste(jr, w)]] <- cached$bild
+      bodenwasser_werte_je_woche[[paste(jr, w)]] <- cached$werte
+      bodenwasser_datum_je_woche[[paste(jr, w)]] <- cached$datum
+      boden_aus_cache <- boden_aus_cache + 1L
+      next
     }
+    stichtag <- montag_von_woche(jr, w)
+    if (stichtag > Sys.Date() + 1) next # noch nicht begonnene Woche nie anzeigen
+    # Ein exakter Treffer auf den Montag fehlt regelmaessig ausgerechnet fuer
+    # die jeweils AKTUELLE (laufende) Woche (Publikationsverzoegerung der
+    # Rohdaten) - stattdessen der naechstgelegene VERFUEGBARE Tag bis zu 6
+    # Tage VOR dem Montag (nie danach - sonst waere es keine
+    # "Wochenbeginn"-Momentaufnahme mehr).
+    passende_tage <- which(speicher_daten_tage <= stichtag & speicher_daten_tage >= stichtag - 6)
+    if (length(passende_tage) == 0) next
+    idx <- passende_tage[which.max(speicher_daten_tage[passende_tage])]
+    ergebnis <- raster_zu_datauri(speicher_r[[idx]], bodenwasser_farben, c(0, 100))
+    ergebnis$werte$bis <- format(speicher_daten_tage[idx], "%d.%m.%Y")
+    bodenwasser_bild_je_woche[[paste(jr, w)]] <- ergebnis$bild
+    bodenwasser_werte_je_woche[[paste(jr, w)]] <- ergebnis$werte
+    bodenwasser_datum_je_woche[[paste(jr, w)]] <- format(speicher_daten_tage[idx], "%d.%m.%Y")
+    boden_neu <- boden_neu + 1L
   }
-  speichere_ebenen_cache("boden", Map(
-    function(b, w, d) list(bild = b, werte = w, datum = d),
-    bodenwasser_bild_je_woche, bodenwasser_werte_je_woche, bodenwasser_datum_je_woche
-  ))
-  cat("Bodenwasserbilanz-Hintergrundbilder erzeugt:", length(bodenwasser_bild_je_woche),
-      "(aus Cache:", boden_aus_cache, "/ neu:", boden_neu, ")\n")
-} else {
-  cat("Bodenwasserbilanz nicht verfuegbar (", speicher_tif, " nicht gefunden)\n")
 }
+speichere_ebenen_cache("boden", Map(
+  function(b, w, d) list(bild = b, werte = w, datum = d),
+  bodenwasser_bild_je_woche, bodenwasser_werte_je_woche, bodenwasser_datum_je_woche
+))
+cat("Bodenwasserbilanz-Hintergrundbilder erzeugt:", length(bodenwasser_bild_je_woche),
+    "(aus Cache:", boden_aus_cache, "/ neu:", boden_neu, ")\n")
 
 ## Sonnenscheindauer (relativ): gleitendes Fenster (Mittelwert) -----------
 sonnenschein_farben <- c("dimgray", "gray70", "khaki1", "gold", "orange")
@@ -1462,35 +1610,30 @@ cat("Sonnenschein-Hintergrundbilder erzeugt:",
     sum(vapply(sonnenschein_fenster_ergebnisse, function(x) length(x$bilder), integer(1))), "\n")
 
 ## Verdunstung ET0 (Hargreaves): gleitendes Fenster (Summe) ---------------
-## Aus dem bereits in r-futterbaugutachten berechneten ET0-Raster (siehe
-## wasserhaushalt_dir, gleiche Quelle wie die Bodenwasserbilanz oben).
+## Aus et0_raster_je_jahr oben (selbst berechnet, siehe Wasserhaushalt-
+## Abschnitt) - je Jahr ein eigener Rasterstapel, wie bei den uebrigen
+## "gleitendes Fenster"-Ebenen.
 et0_farben <- c("lightyellow", "gold", "orange", "red")
-et0_quelle <- "Bucket-Modell-Verdunstung (Hargreaves/FAO-56) aus r-futterbaugutachten - kein Ersatz fuer Feldmessung."
-et0_tif <- file.path(wasserhaushalt_dir, "et0_hargreaves.tif")
-if (file.exists(et0_tif)) {
-  et0_r <- terra::rast(et0_tif)
-  et0_tage <- as.Date(sub("^ET0_", "", names(et0_r)))
-  et0_fenster_ergebnisse <- baue_fenster_ebenen(
-    "et0", alle_jahre,
-    function(jr) list(raster = et0_r, tage = et0_tage),
-    aggregat = "summe", farben = et0_farben, bereich_je_7tage = c(0, 25)
-  )
-  cat("ET0-Hintergrundbilder erzeugt:",
-      sum(vapply(et0_fenster_ergebnisse, function(x) length(x$bilder), integer(1))), "\n")
-} else {
-  et0_fenster_ergebnisse <- setNames(
-    lapply(fenstergroessen_tage, function(f) list(bilder = list(), werte = list())),
-    as.character(fenstergroessen_tage)
-  )
-  cat("ET0 nicht verfuegbar (", et0_tif, " nicht gefunden)\n")
-}
+et0_quelle <- "Bucket-Modell-Verdunstung (Hargreaves/FAO-56), berechnet aus MeteoSchweiz TabsD/TmaxD/TminD - kein Ersatz fuer Feldmessung."
+et0_fenster_ergebnisse <- baue_fenster_ebenen(
+  "et0", names(et0_raster_je_jahr),
+  function(jr) {
+    if (!jr %in% names(et0_raster_je_jahr)) return(NULL)
+    r <- et0_raster_je_jahr[[jr]]
+    list(raster = r, tage = as.Date(time(r)))
+  },
+  aggregat = "summe", farben = et0_farben, bereich_je_7tage = c(0, 25)
+)
+cat("ET0-Hintergrundbilder erzeugt:",
+    sum(vapply(et0_fenster_ergebnisse, function(x) length(x$bilder), integer(1))), "\n")
 
 ## Kumulierte Wachstumsgradtage zum Stichtag (Montag) der gewaehlten
 ## Kalenderwoche - aus gdd_kumuliert_je_jahr oben (bereits laufend
-## aufsummiert), exakter Tagestreffer statt Fallback wie bei der
-## Bodenwasserbilanz (temperatur_raster_je_jahr ist eine LUECKENLOSE
-## Tagesreihe, siehe Ladelogik oben - ein Fallback auf den naechstgelegenen
-## Tag ist daher nicht noetig).
+## aufsummiert). temperatur_raster_je_jahr ist fuer VERGANGENE Tage eine
+## lueckenlose Tagesreihe - fuer die AKTUELLSTE Woche kann der exakte Montag
+## aber noch fehlen (Publikationsverzoegerung), deshalb wie bei der
+## Bodenwasserbilanz ein Fallback auf den naechstgelegenen VERFUEGBAREN Tag
+## bis zu 6 Tage davor ("so aktuell wie moeglich" statt keine Daten).
 gdd_farben <- c("white", "yellow", "orange", "darkred")
 gdd_quelle <- "Kumuliert aus MeteoSchweiz TabsD (Basis 5 Grad C) seit Beginn der lokal vorhandenen Temperaturdaten."
 gdd_bild_je_woche <- list()
@@ -1515,9 +1658,12 @@ for (jr in names(gdd_kumuliert_je_jahr)) {
   tage_r <- as.Date(time(r_jahr))
   for (w in alle_wochen) {
     stichtag <- montag_von_woche(jr, w)
-    idx <- which(tage_r == stichtag)
-    if (length(idx) == 0) next
+    if (stichtag > Sys.Date() + 1) next # noch nicht begonnene Woche nie anzeigen
+    passende_tage <- which(tage_r <= stichtag & tage_r >= stichtag - 6)
+    if (length(passende_tage) == 0) next
+    idx <- passende_tage[which.max(tage_r[passende_tage])]
     ergebnis <- raster_zu_datauri(r_jahr[[idx]], gdd_farben, c(0, 2500))
+    ergebnis$werte$bis <- format(tage_r[idx], "%d.%m.%Y")
     schluessel <- paste(jr, w)
     gdd_bild_je_woche[[schluessel]] <- ergebnis$bild
     gdd_werte_je_woche[[schluessel]] <- ergebnis$werte
@@ -2506,8 +2652,30 @@ function(el, x) {
     afcLegendeBox.appendChild(skala);
     afcLegendeBox.appendChild(ziel);
   }
+  // Kartentitel IMMER ehrlich zu dem, was gerade zu sehen ist: Kalenderwoche
+  // (nicht mit dem Datenstand einer Meteo-Ebene zu verwechseln - die kann,
+  // v.a. bei der allerneuesten Woche, wegen Publikationsverzoegerung
+  // hinterherhinken) plus, falls eine Meteo-Ebene aktiv ist, deren Name und
+  // tatsaechliches Datenstand-Datum (werte.bis, siehe R: baue_fenster_
+  // ebenen()/GDD/Bodenwasserbilanz) statt eines pauschalen Build-Datums.
+  function aktualisiereKartentitel() {
+    var growthMapGd = document.querySelector('#datenexplorer-growthmap .js-plotly-plot');
+    if (!growthMapGd) return;
+    var titel = 'Graswachstum (kg TS/ha/Tag), KW ' + selectedWeek + ' ' + selectedYear;
+    if (hintergrundEbene !== 'keine') {
+      var radio = radioJeEbene[hintergrundEbene] || radioBoden;
+      var label = (radio && radio.labelTextEl) ? radio.labelTextEl.textContent : hintergrundEbene;
+      var cacheEintrag = ebenenCache[ebeneDateiSchluessel(hintergrundEbene)];
+      var werteEintrag = cacheEintrag && cacheEintrag.werte && cacheEintrag.werte[selectedYear + ' ' + selectedWeek];
+      var stand = (werteEintrag && werteEintrag.bis) ? ('Stand ' + werteEintrag.bis) : 'lädt…';
+      titel += ' · ' + label + ', ' + stand;
+    }
+    Plotly.relayout(growthMapGd, { 'title.text': titel });
+  }
+
   function aktualisiereLayerLegende() {
     aktualisiereMeteoFensterSichtbarkeit();
+    aktualisiereKartentitel();
     if (!layerLegendeBox) return;
     var info = layerLegenden[hintergrundEbene];
     if (!info) { layerLegendeBox.style.display = 'none'; wertAnzeigeEl = null; koordinatenEl = null; ortschaftEl = null; return; }
