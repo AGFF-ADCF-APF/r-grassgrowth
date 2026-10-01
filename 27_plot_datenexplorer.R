@@ -1584,6 +1584,362 @@ speichere_ebenen_cache("boden", Map(
 cat("Bodenwasserbilanz-Hintergrundbilder erzeugt:", length(bodenwasser_bild_je_woche),
     "(aus Cache:", boden_aus_cache, "/ neu:", boden_neu, ")\n")
 
+########################################################################
+## Potenzielles Graswachstum (ModVege/growR, vektorisiert) --------------
+########################################################################
+## Vollstaendiger Port von growR's ModVege-Modell (Jouven et al. 2006) als
+## Matrix-Schleife (Zeile=Zelle, Spalte=Tag) - EXAKT (Gleitkomma-Praezision)
+## validiert gegen growR selbst an 7 echten AGFF-Standorten, siehe
+## 44_wachstumspotenzial_prototyp.R und den Plan in
+## .claude/plans/temporal-sauteeing-clover.md. "Potenziell" heisst hier:
+## NI=1 (keine Duenge-/Naehrstofflimitierung) und KEIN Schnitt-Management
+## (Wachstum unter dem Jahr ungenutzt/ungemaeht, wie es das Klima erlauben
+## wuerde) - nur Temperatur/Strahlung/Wasserhaushalt begrenzen das Wachstum.
+##
+## Strahlung: KEINE flaechendeckende Messung verfuegbar (anders als an den
+## 7 Validierungs-Standorten, wo echte SMN-Stationsmessung genutzt wurde) -
+## deshalb per Angstroem-Prescott aus der Sonnenscheindauer geschaetzt, mit
+## den in Phase A SELBST AN ECHTEN SCHWEIZER STATIONEN kalibrierten
+## Koeffizienten (a_s=0.259, b_s=1.017 statt FAO-56-Standard 0.25/0.50 -
+## reduzierte den Schaetzfehler dort von -35 auf +4 W/m2, siehe
+## outputs/vergleich_wachstumsmodelle/befund.md).
+angstrom_a_s <- 0.259
+angstrom_b_s <- 1.017
+
+## fT/fW/fPAR/SEA - 1:1 aus growR's eigenem Quellcode vektorisiert (siehe
+## Validierungsskript fuer die Herleitung/Fundstellen, insb. die beiden
+## dort gefundenen Stolperfallen: fW()'s switch()-Eintraege 'tief'-Zweig
+## 4-6 und 'mittel'-Zweig 5-6 sind LITERALE Konstanten 1, keine linearen
+## Formeln "1*W").
+modvege_fT <- function(t, T0, T1, T2) {
+  ifelse(t < T0, 0,
+    ifelse(t < T1, (t - T0) / (T1 - T0),
+      ifelse(t < T2, 1,
+        ifelse(t < 40, (40 - t) / (40 - T2), 0))))
+}
+modvege_fW <- function(W, PET) {
+  bucket <- pmin(floor(W / 0.2) + 1, 6)
+  hoch <- W
+  mittel_formel <- c(2, 1.5, 1, 0.5, NA, NA)[bucket] * W + c(0, 0.1, 0.3, 0.6, NA, NA)[bucket]
+  mittel <- ifelse(bucket >= 5, 1, mittel_formel)
+  tief_formel <- c(4, 0.75, 0.25, NA, NA, NA)[bucket] * W + c(0, 0.65, 0.85, NA, NA, NA)[bucket]
+  tief <- ifelse(bucket >= 4, 1, tief_formel)
+  ifelse(PET > 6.5, hoch, ifelse(PET > 3.8, mittel, tief))
+}
+modvege_fPAR <- function(PAR) pmax(0, pmin(1, 1 - 0.0445 * (PAR - 5)))
+modvege_SEA <- function(ST, minSEA, maxSEA, ST1, ST2) {
+  ifelse(ST < 200, minSEA,
+    ifelse(ST < (ST1 - 200), minSEA + (maxSEA - minSEA) * (ST - 200) / (ST1 - 400),
+      ifelse(ST < (ST1 - 100), maxSEA,
+        ifelse(ST < ST2, maxSEA + (minSEA - maxSEA) * (ST - ST1 + 100) / (ST2 - ST1 + 100),
+          minSEA))))
+}
+modvege_atmospheric_CO2 <- function(jahr) 0.0156961 * jahr^2 - 60.962 * jahr + 59508.7
+modvege_fCO2_growth <- function(c_CO2, b) 1 + b * log(c_CO2 / 360)
+modvege_fCO2_transpiration <- function(c_CO2) 1 - 1e-04 * (c_CO2 - 360)
+
+## Parameter: Posieux-Kalibrierung (growR-Beispiel, Funktionsgruppen-
+## Mischung 70% FG_A/30% FG_B) als EINHEITLICHE Konstanten fuer ganz
+## Schweiz - keine raeumliche Kalibrierung vorgesehen (wie bei den anderen
+## Ebenen auch). Werte 1:1 aus einem aufgeloesten growR-ModvegeParameters-
+## Objekt ausgelesen (siehe Validierungsskript), NICHT aus der Vignette
+## nacherfunden.
+modvege_P <- list(
+  SLA = 0.0306, pcLAM = 0.68, ST1 = 630, ST2 = 1245, minSEA = 0.77, maxSEA = 1.23,
+  LLS = 590, stubble_height = 0.02, crop_coefficient = 1.15, senescence_cap = 0.7,
+  BDGV = 850, BDGR = 300, T0 = 5, T1 = 10, T2 = 20,
+  KGV = 0.002, KGR = 0.001, KlDV = 0.001, KlDR = 5e-04,
+  sigmaGV = 0.4, sigmaGR = 0.2, RUEmax = 3, WHC = 130, NI = 1, CO2_growth_factor = 0.5
+)
+modvege_P$minBMGV <- modvege_P$stubble_height * 10 * modvege_P$BDGV
+modvege_P$minBMGR <- modvege_P$stubble_height * 10 * modvege_P$BDGR
+modvege_P$REP_ON <- 0.25 + (0.75 * (modvege_P$NI - 0.35)) / 0.65 # = 1.0 bei NI=1
+modvege_init <- list(AgeGV = 100, AgeGR = 2000, AgeDV = 500, AgeDR = 500,
+                      BMGV = 420, BMGR = 0, BMDV = 300, BMDR = 30, WR = 130)
+
+# Simuliert ganz Schweiz fuer EIN Jahr: Ta/Tmax/Tmin/precip/PAR/ET0 je eine
+# Matrix (Zelle x Tag, Jan-Dez), liefert taegliches GRO (wasser-/
+# temperaturlimitiertes, NICHT-kumuliertes Wachstum) und cBM (seit 1. Jan.
+# kumuliert, wie growR selbst startet - NICHT ab 1. April wie das einfachere
+# Bucket-Modell oben, da hier die Temperatursumme/Vegetationsbeginn-Suche
+# dieselbe Jan-1-Konvention wie growR brauchen).
+simuliere_wachstumspotenzial <- function(Ta, Tmax, Tmin, precip, PAR, ET0, jahr) {
+  n_zellen <- nrow(Ta); n_tage <- ncol(Ta)
+  co2_ppm <- modvege_atmospheric_CO2(jahr)
+  co2_wachstum <- modvege_fCO2_growth(co2_ppm, modvege_P$CO2_growth_factor)
+  co2_transpiration <- modvege_fCO2_transpiration(co2_ppm)
+
+  # Vegetationsbeginn (MTD-Methode, 10-Tage-Aussen-/5-Tage-Innenfenster) -
+  # sequentiell ueber Tagespositionen, aber vektorisiert ueber alle Zellen
+  # gleichzeitig je Position (exakt wie im validierten Prototyp). Rein lesend
+  # auf Ta, braucht keine grosse Zwischenmatrix.
+  j_start <- rep(NA_integer_, n_zellen)
+  noch_offen <- rep(TRUE, n_zellen)
+  for (j in 30:(n_tage - 10)) {
+    if (!any(noch_offen)) break
+    # na.rm/NA-sicher: Zellen ausserhalb der Schweiz (Rasterrand, maskiert)
+    # haben NA-Wetterwerte - ein NA darf die Vegetationsbeginn-Suche nicht
+    # zum Absturz bringen (if() mit NA), soll fuer diese Zellen aber auch nie
+    # "zutreffen" (sie fallen am Ende auf den n_tage-Fallback zurueck, siehe
+    # unten).
+    aussen <- Ta[, j:(j + 9), drop = FALSE]
+    aussen_ok <- apply(aussen >= 2, 1, function(x) isTRUE(all(x))) & (rowMeans(aussen) >= 6)
+    aussen_ok[is.na(aussen_ok)] <- FALSE
+    for (j_inner in 1:6) {
+      innen <- Ta[, (j + j_inner - 1):(j + j_inner + 3), drop = FALSE]
+      innen_ok <- apply(innen > 5, 1, function(x) isTRUE(all(x)))
+      treffer <- noch_offen & aussen_ok & innen_ok
+      treffer[is.na(treffer)] <- FALSE
+      if (any(treffer)) { j_start[treffer] <- j + j_inner - 1; noch_offen[treffer] <- FALSE }
+      if (!any(noch_offen)) break
+    }
+  }
+  j_start[is.na(j_start)] <- n_tage
+
+  # Nur die beiden TATSAECHLICH gebrauchten Ergebnisgroessen (GRO, cBM)
+  # werden als volle Zelle-x-Tag-Matrix gehalten - alle anderen ModVege-
+  # Zustandsgroessen (Alter/Biomasse je Pool, Temperatursumme, Schnee) sind
+  # reine Tag-zu-Tag-Zwischenwerte (nur "gestern"/"heute" gleichzeitig noetig,
+  # siehe update unten) und werden bewusst NICHT als Zeitreihe gespeichert -
+  # erster Versuch mit 9 vollen Zusatz-Matrizen sprengte bei voller
+  # Schweiz-Rasterung das Speicherlimit (siehe Kommentar bei berechne_ra()
+  # oben zum selben Fallstrick beim Bucket-Modell, hier nur mit mehr
+  # Zustandsgroessen).
+  GRO <- matrix(0, n_zellen, n_tage)
+  cBM <- matrix(0, n_zellen, n_tage)
+
+  ST_prev <- rep(0, n_zellen)
+  schnee_prev <- rep(0, n_zellen)
+  AgeGVp <- rep(modvege_init$AgeGV, n_zellen); AgeGRp <- rep(modvege_init$AgeGR, n_zellen)
+  AgeDVp <- rep(modvege_init$AgeDV, n_zellen); AgeDRp <- rep(modvege_init$AgeDR, n_zellen)
+  BMGVp <- rep(modvege_init$BMGV, n_zellen); BMGRp <- rep(modvege_init$BMGR, n_zellen)
+  BMDVp <- rep(modvege_init$BMDV, n_zellen); BMDRp <- rep(modvege_init$BMDR, n_zellen)
+  SENGV <- rep(0, n_zellen); SENGR <- rep(0, n_zellen); ABSDV <- rep(0, n_zellen); ABSDR <- rep(0, n_zellen)
+  WRp <- rep(modvege_init$WR, n_zellen); cBMp <- rep(0, n_zellen)
+
+  T_melt <- -1; C_melt <- 3; C_freeze <- 0.05
+  for (j in 1:n_tage) {
+    T_avg <- Ta[, j]
+    ST_heute <- ST_prev + pmax(T_avg, 0)
+
+    # Schnee/Regen-Aufteilung + Grad-Tag-Schmelzmodell (growR berechnet dies
+    # IMMER selbst aus Ta/precip, unabhaengig von einem evtl. mitgelieferten
+    # Schnee-Input) - hier Tag fuer Tag statt als vorab berechnete Matrix.
+    liquidP_heute <- (1 / (1 + exp(-1.5 * (T_avg - 2)))) * precip[, j]
+    solidP_heute <- precip[, j] - liquidP_heute
+    schmelze_heute <- ifelse(schnee_prev > 0 & T_avg >= T_melt, pmin(schnee_prev, C_melt * (T_avg - T_melt)), 0)
+    frieren_heute <- ifelse(T_avg < T_melt, pmin(liquidP_heute, C_freeze * (T_melt - T_avg)), 0)
+    schnee_heute <- pmax(0, schnee_prev + solidP_heute + frieren_heute - schmelze_heute)
+    wasser_zufuhr_heute <- liquidP_heute + schmelze_heute
+
+    LAIGV <- modvege_P$SLA * modvege_P$pcLAM * BMGVp / 10
+    LAI_ET <- modvege_P$SLA * modvege_P$pcLAM * (BMGVp + BMGRp) / 10
+    PETeff <- ifelse(precip[, j] > 1, 0.7 * modvege_P$crop_coefficient * ET0[, j], modvege_P$crop_coefficient * ET0[, j])
+    PETeff <- PETeff * co2_transpiration
+    PTr <- PETeff * (1 - exp(-0.6 * LAI_ET))
+    ATr <- PTr * modvege_fW(WRp / modvege_P$WHC, PETeff)
+    PEv <- PETeff - PTr
+    AEv <- PEv * WRp / modvege_P$WHC
+    AET <- ATr + AEv
+    WR_heute <- pmax(0, pmin(modvege_P$WHC, WRp + wasser_zufuhr_heute - AET))
+    ENVfPAR <- modvege_fPAR(PAR[, j])
+    ENVfT <- modvege_fT(T_avg, modvege_P$T0, modvege_P$T1, modvege_P$T2)
+    ENVfW <- modvege_fW(WR_heute / modvege_P$WHC, PETeff)
+    ENV <- ENVfPAR * ENVfT * ENVfW
+    vor_saisonstart <- j < j_start
+    PGRO_tag <- ifelse(vor_saisonstart, 0, PAR[, j] * modvege_P$RUEmax * (1 - exp(-0.6 * LAIGV)) * 10 * co2_wachstum)
+    GRO[, j] <- ifelse(vor_saisonstart, 0, modvege_P$NI * PGRO_tag * ENV *
+      modvege_SEA(ST_heute, modvege_P$minSEA, modvege_P$maxSEA, modvege_P$ST1, modvege_P$ST2))
+
+    REP <- ifelse(ST_heute >= modvege_P$ST1 & ST_heute <= modvege_P$ST2, modvege_P$REP_ON, 0)
+    GROGV <- GRO[, j] * (1 - REP)
+    GROGR <- GRO[, j] * REP
+
+    dAgeGV <- ifelse(BMGVp - SENGV + GROGV != 0,
+      (BMGVp - SENGV) / (BMGVp - SENGV + GROGV) * (AgeGVp + pmax(0, T_avg)) - AgeGVp, -AgeGVp)
+    AgeGV_heute <- AgeGVp + dAgeGV
+    dAgeGR <- ifelse(BMGRp - SENGR + GROGR != 0,
+      (BMGRp - SENGR) / (BMGRp - SENGR + GROGR) * (AgeGRp + pmax(0, T_avg)) - AgeGRp, -AgeGRp)
+    AgeGR_heute <- AgeGRp + dAgeGR
+
+    ratio1 <- AgeGV_heute / modvege_P$LLS
+    fAgeGV <- ifelse(ratio1 < 1 / 3, 1, ifelse(ratio1 < 1, 3 * ratio1, 3))
+    ratio2 <- AgeGR_heute / (modvege_P$ST2 - modvege_P$ST1)
+    fAgeGR <- ifelse(ratio2 < 1 / 3, 1, ifelse(ratio2 < 1, 3 * ratio2, 3))
+
+    SENGV_neu <- ifelse(T_avg > modvege_P$T0, modvege_P$KGV * BMGVp * T_avg * fAgeGV,
+      ifelse(T_avg > 0, 0, modvege_P$KGV * BMGVp * abs(T_avg)))
+    SENGR_neu <- ifelse(T_avg > modvege_P$T0, modvege_P$KGR * BMGRp * T_avg * fAgeGR,
+      ifelse(T_avg > 0, 0, modvege_P$KGR * BMGRp * abs(T_avg)))
+    SENGV <- ifelse(abs(SENGV_neu) > modvege_P$senescence_cap * abs(GROGV), modvege_P$senescence_cap * GROGV, SENGV_neu)
+    SENGR <- ifelse(abs(SENGR_neu) > modvege_P$senescence_cap * abs(GROGR), modvege_P$senescence_cap * GROGR, SENGR_neu)
+
+    dAgeDV <- ifelse(BMDVp - ABSDV + SENGV != 0,
+      (BMDVp - ABSDV) / (BMDVp - ABSDV + SENGV) * (AgeDVp + pmax(0, T_avg)) - AgeDVp, -AgeDVp)
+    AgeDV_heute <- AgeDVp + dAgeDV
+    dAgeDR <- ifelse(BMDRp - ABSDR + SENGR != 0,
+      (BMDRp - ABSDR) / (BMDRp - ABSDR + SENGR) * (AgeDRp + pmax(0, T_avg)) - AgeDRp, -AgeDRp)
+    AgeDR_heute <- AgeDRp + dAgeDR
+
+    ratio3 <- AgeDV_heute / modvege_P$LLS
+    fAgeDV <- ifelse(ratio3 < 1 / 3, 1, ifelse(ratio3 < 2 / 3, 2, 3))
+    ratio4 <- AgeDR_heute / (modvege_P$ST2 - modvege_P$ST1)
+    fAgeDR <- ifelse(ratio4 < 1 / 3, 1, ifelse(ratio4 < 2 / 3, 2, 3))
+    ABSDV <- ifelse(T_avg > 0, modvege_P$KlDV * BMDVp * T_avg * fAgeDV, 0)
+    ABSDR <- ifelse(T_avg > 0, modvege_P$KlDR * BMDRp * T_avg * fAgeDR, 0)
+
+    dBMGV <- GROGV - SENGV
+    dBMGR <- GROGR - SENGR
+    BMGV_heute <- BMGVp + dBMGV
+    BMGR_heute <- BMGRp + dBMGR
+    spaetsaison <- ST_heute >= modvege_P$ST2
+    BMGV_heute <- ifelse(spaetsaison & BMGV_heute < modvege_P$minBMGV, modvege_P$minBMGV, BMGV_heute)
+    BMGR_heute <- ifelse(spaetsaison & BMGR_heute < modvege_P$minBMGR, modvege_P$minBMGR, BMGR_heute)
+
+    dBMDV <- (1 - modvege_P$sigmaGV) * SENGV - ABSDV
+    dBMDR <- (1 - modvege_P$sigmaGR) * SENGR - ABSDR
+    BMDV_heute <- BMDVp + dBMDV
+    BMDR_heute <- BMDRp + dBMDR
+    dBM_heute <- dBMGV + dBMGR + dBMDV + dBMDR
+    cBM[, j] <- cBMp + pmax(0, dBM_heute)
+
+    ST_prev <- ST_heute; schnee_prev <- schnee_heute
+    AgeGVp <- AgeGV_heute; AgeGRp <- AgeGR_heute; AgeDVp <- AgeDV_heute; AgeDRp <- AgeDR_heute
+    BMGVp <- BMGV_heute; BMGRp <- BMGR_heute; BMDVp <- BMDV_heute; BMDRp <- BMDR_heute
+    cBMp <- cBM[, j]; WRp <- WR_heute
+  }
+  list(GRO = GRO, cBM = cBM)
+}
+
+wachstumspotenzial_raster_je_jahr <- list()
+wachstumspotenzial_kumuliert_je_jahr <- list()
+for (jr in jahre_mit_temperatur) {
+  if (is.null(tmax_raster_je_jahr[[jr]]) || is.null(tmin_raster_je_jahr[[jr]]) ||
+      is.null(niederschlag_raster_je_jahr[[jr]]) || is.null(sonnenschein_raster_je_jahr[[jr]])) next
+  gemeinsame_ext_mv <- terra::ext(tmax_raster_je_jahr[[jr]])
+  precip_mv <- terra::crop(niederschlag_raster_je_jahr[[jr]], gemeinsame_ext_mv)
+  tmax_mv <- terra::crop(tmax_raster_je_jahr[[jr]], gemeinsame_ext_mv)
+  tmin_mv <- terra::crop(tmin_raster_je_jahr[[jr]], gemeinsame_ext_mv)
+  tabs_mv <- terra::crop(temperatur_raster_je_jahr[[jr]], gemeinsame_ext_mv)
+  sonne_mv <- terra::crop(sonnenschein_raster_je_jahr[[jr]], gemeinsame_ext_mv)
+
+  gemeinsame_tage_mv <- sort(Reduce(intersect, list(
+    as.Date(time(precip_mv)), as.Date(time(tmax_mv)), as.Date(time(tmin_mv)),
+    as.Date(time(tabs_mv)), as.Date(time(sonne_mv))
+  )))
+  gemeinsame_tage_mv <- as.Date(gemeinsame_tage_mv, origin = "1970-01-01")
+  if (length(gemeinsame_tage_mv) < 40) next # zu kurz fuer die Vegetationsbeginn-Suche (braucht min. 40 Tage)
+  precip_mv <- precip_mv[[match(gemeinsame_tage_mv, as.Date(time(precip_mv)))]]
+  tmax_mv <- tmax_mv[[match(gemeinsame_tage_mv, as.Date(time(tmax_mv)))]]
+  tmin_mv <- tmin_mv[[match(gemeinsame_tage_mv, as.Date(time(tmin_mv)))]]
+  tabs_mv <- tabs_mv[[match(gemeinsame_tage_mv, as.Date(time(tabs_mv)))]]
+  sonne_mv <- sonne_mv[[match(gemeinsame_tage_mv, as.Date(time(sonne_mv)))]]
+
+  r0_mv <- precip_mv[[1]]
+  xy_mv <- xyFromCell(r0_mv, 1:ncell(r0_mv))
+  ll_mv <- project(xy_mv, from = crs(r0_mv), to = "EPSG:4326")
+  lat_vec_mv <- ll_mv[, 2] * pi / 180
+  tag_des_jahres_mv <- as.integer(format(gemeinsame_tage_mv, "%j"))
+  ra_mat_mv <- vapply(tag_des_jahres_mv, function(J) berechne_ra(J, lat_vec_mv), numeric(length(lat_vec_mv)))
+  ra_mm_mv <- rast(r0_mv, nlyrs = length(tag_des_jahres_mv)); values(ra_mm_mv) <- ra_mat_mv * 0.408
+  ra_roh_mv <- rast(r0_mv, nlyrs = length(tag_des_jahres_mv)); values(ra_roh_mv) <- ra_mat_mv # UNKONVERTIERT, MJ/m2/Tag
+
+  et0_mv <- 0.0023 * (tabs_mv + 17.8) * sqrt(clamp(tmax_mv - tmin_mv, lower = 0)) * ra_mm_mv
+  strahlung_mv <- (angstrom_a_s + angstrom_b_s * (sonne_mv / 100)) * ra_roh_mv * 11.574 # MJ/m2/Tag -> W/m2
+  par_mv <- strahlung_mv * 0.0406
+
+  erg_mv <- simuliere_wachstumspotenzial(
+    Ta = terra::values(tabs_mv), Tmax = terra::values(tmax_mv), Tmin = terra::values(tmin_mv),
+    precip = terra::values(precip_mv), PAR = terra::values(par_mv), ET0 = terra::values(et0_mv),
+    jahr = as.integer(jr)
+  )
+  gro_jr <- rast(precip_mv); values(gro_jr) <- erg_mv$GRO
+  names(gro_jr) <- paste0("GRO_", format(gemeinsame_tage_mv, "%Y-%m-%d")); time(gro_jr) <- gemeinsame_tage_mv
+  kum_jr <- rast(precip_mv); values(kum_jr) <- erg_mv$cBM
+  names(kum_jr) <- paste0("cBM_", format(gemeinsame_tage_mv, "%Y-%m-%d")); time(kum_jr) <- gemeinsame_tage_mv
+  wachstumspotenzial_raster_je_jahr[[jr]] <- gro_jr
+  wachstumspotenzial_kumuliert_je_jahr[[jr]] <- kum_jr
+  cat("Potenzielles Wachstum (ModVege)", jr, "berechnet:", format(gemeinsame_tage_mv[1], "%d.%m.%Y"),
+      "-", format(gemeinsame_tage_mv[length(gemeinsame_tage_mv)], "%d.%m.%Y"), "\n")
+}
+
+## Woechentliche Snapshots - Rate (GRO, letzte 7 Tage gemittelt, Bodenwasser-
+## bilanz-Fallback-Muster) und Kumuliert (cBM am Wochenstichtag, GDD-Muster).
+wachstumspotenzial_rate_farben <- c("white", "beige", "yellowgreen", "forestgreen", "darkgreen")
+wachstumspotenzial_quelle <- "Potenzielles Wachstum (ModVege/growR, selbst berechnet aus Temperatur/Strahlung/Bodenwasserhaushalt, NI=1/ohne Schnitt) - kein Ersatz fuer Feldmessung."
+
+wachstumspotenzial_rate_bild_je_woche <- list(); wachstumspotenzial_rate_werte_je_woche <- list()
+wachstumspotenzial_rate_cache_alt <- lade_ebenen_cache("wachstumspotenzial_rate")
+wsp_rate_aus_cache <- 0L; wsp_rate_neu <- 0L
+for (jr in names(wachstumspotenzial_raster_je_jahr)) {
+  alte_schluessel_jahr <- Filter(function(k) startsWith(k, paste0(jr, " ")), names(wachstumspotenzial_rate_cache_alt))
+  if (jr < aktuelles_kalenderjahr && length(alte_schluessel_jahr) > 0) {
+    for (schluessel in alte_schluessel_jahr) {
+      wachstumspotenzial_rate_bild_je_woche[[schluessel]] <- wachstumspotenzial_rate_cache_alt[[schluessel]]$bild
+      wachstumspotenzial_rate_werte_je_woche[[schluessel]] <- wachstumspotenzial_rate_cache_alt[[schluessel]]$werte
+    }
+    wsp_rate_aus_cache <- wsp_rate_aus_cache + length(alte_schluessel_jahr)
+    next
+  }
+  r_jahr <- wachstumspotenzial_raster_je_jahr[[jr]]
+  tage_r <- as.Date(time(r_jahr))
+  for (w in alle_wochen) {
+    stichtag <- montag_von_woche(jr, w)
+    if (stichtag > Sys.Date() + 1) next
+    fenster_ende <- min(stichtag - 1, max(tage_r))
+    fenster_start <- fenster_ende - 6
+    if (fenster_start < min(tage_r)) next
+    idx <- which(tage_r >= fenster_start & tage_r <= fenster_ende)
+    if (length(idx) == 0) next
+    rate_mittel <- mean(r_jahr[[idx]])
+    ergebnis <- raster_zu_datauri(rate_mittel, wachstumspotenzial_rate_farben, c(0, 250))
+    ergebnis$werte$bis <- format(fenster_ende, "%d.%m.%Y")
+    schluessel <- paste(jr, w)
+    wachstumspotenzial_rate_bild_je_woche[[schluessel]] <- ergebnis$bild
+    wachstumspotenzial_rate_werte_je_woche[[schluessel]] <- ergebnis$werte
+    wsp_rate_neu <- wsp_rate_neu + 1L
+  }
+}
+speichere_ebenen_cache("wachstumspotenzial_rate", Map(function(b, w) list(bild = b, werte = w),
+  wachstumspotenzial_rate_bild_je_woche, wachstumspotenzial_rate_werte_je_woche))
+cat("Potenzielles-Wachstum-Rate-Hintergrundbilder erzeugt:", length(wachstumspotenzial_rate_bild_je_woche),
+    "(aus Cache:", wsp_rate_aus_cache, "/ neu:", wsp_rate_neu, ")\n")
+
+wachstumspotenzial_kum_farben <- c("white", "beige", "yellowgreen", "forestgreen", "darkgreen")
+wachstumspotenzial_kum_bild_je_woche <- list(); wachstumspotenzial_kum_werte_je_woche <- list()
+wachstumspotenzial_kum_cache_alt <- lade_ebenen_cache("wachstumspotenzial_kum")
+wsp_kum_aus_cache <- 0L; wsp_kum_neu <- 0L
+for (jr in names(wachstumspotenzial_kumuliert_je_jahr)) {
+  alte_schluessel_jahr <- Filter(function(k) startsWith(k, paste0(jr, " ")), names(wachstumspotenzial_kum_cache_alt))
+  if (jr < aktuelles_kalenderjahr && length(alte_schluessel_jahr) > 0) {
+    for (schluessel in alte_schluessel_jahr) {
+      wachstumspotenzial_kum_bild_je_woche[[schluessel]] <- wachstumspotenzial_kum_cache_alt[[schluessel]]$bild
+      wachstumspotenzial_kum_werte_je_woche[[schluessel]] <- wachstumspotenzial_kum_cache_alt[[schluessel]]$werte
+    }
+    wsp_kum_aus_cache <- wsp_kum_aus_cache + length(alte_schluessel_jahr)
+    next
+  }
+  r_jahr <- wachstumspotenzial_kumuliert_je_jahr[[jr]]
+  tage_r <- as.Date(time(r_jahr))
+  for (w in alle_wochen) {
+    stichtag <- montag_von_woche(jr, w)
+    if (stichtag > Sys.Date() + 1) next
+    passende_tage <- which(tage_r <= stichtag & tage_r >= stichtag - 6)
+    if (length(passende_tage) == 0) next
+    idx <- passende_tage[which.max(tage_r[passende_tage])]
+    ergebnis <- raster_zu_datauri(r_jahr[[idx]], wachstumspotenzial_kum_farben, c(0, 18000))
+    ergebnis$werte$bis <- format(tage_r[idx], "%d.%m.%Y")
+    schluessel <- paste(jr, w)
+    wachstumspotenzial_kum_bild_je_woche[[schluessel]] <- ergebnis$bild
+    wachstumspotenzial_kum_werte_je_woche[[schluessel]] <- ergebnis$werte
+    wsp_kum_neu <- wsp_kum_neu + 1L
+  }
+}
+speichere_ebenen_cache("wachstumspotenzial_kum", Map(function(b, w) list(bild = b, werte = w),
+  wachstumspotenzial_kum_bild_je_woche, wachstumspotenzial_kum_werte_je_woche))
+cat("Potenzielles-Wachstum-Kumuliert-Hintergrundbilder erzeugt:", length(wachstumspotenzial_kum_bild_je_woche),
+    "(aus Cache:", wsp_kum_aus_cache, "/ neu:", wsp_kum_neu, ")\n")
+
 ## Sonnenscheindauer (relativ): gleitendes Fenster (Mittelwert) -----------
 sonnenschein_farben <- c("dimgray", "gray70", "khaki1", "gold", "orange")
 sonnenschein_quelle <- "MeteoSchweiz SrelD, 1km-Raster (Sonnenscheindauer relativ zum astronomisch Moeglichen)."
@@ -1710,7 +2066,9 @@ ebenen_schluessel <- list(
   bodentemperatur = schreibe_fenster_ebenen_dateien("bodentemperatur", bodentemperatur_fenster_ergebnisse),
   sonnenschein = schreibe_fenster_ebenen_dateien("sonnenschein", sonnenschein_fenster_ergebnisse),
   et0 = schreibe_fenster_ebenen_dateien("et0", et0_fenster_ergebnisse),
-  gdd = schreibe_ebene_datei("gdd", gdd_bild_je_woche, gdd_werte_je_woche)
+  gdd = schreibe_ebene_datei("gdd", gdd_bild_je_woche, gdd_werte_je_woche),
+  wachstumspotenzial_rate = schreibe_ebene_datei("wachstumspotenzial_rate", wachstumspotenzial_rate_bild_je_woche, wachstumspotenzial_rate_werte_je_woche),
+  wachstumspotenzial_kum = schreibe_ebene_datei("wachstumspotenzial_kum", wachstumspotenzial_kum_bild_je_woche, wachstumspotenzial_kum_werte_je_woche)
 )
 cat("Ebenen-Dateien geschrieben in:", ebenen_dir, "\n")
 
@@ -1747,7 +2105,18 @@ layer_legenden <- list(
   bodentemperatur = list(label = "Bodentemperatur", farben = farben_zu_hex(temperatur_farben), bereich = c(0, 30), fensterSkaliert = FALSE, symbol = "avg", einheit = "°C", quelle = bodentemperatur_quelle),
   sonnenschein = list(label = "Sonnenscheindauer", farben = farben_zu_hex(sonnenschein_farben), bereich = c(0, 100), fensterSkaliert = FALSE, symbol = "avg", einheit = "%", quelle = sonnenschein_quelle),
   et0 = list(label = "Verdunstung ET0", farben = farben_zu_hex(et0_farben), bereich = c(0, 25), fensterSkaliert = TRUE, symbol = "sum", einheit = "mm", quelle = et0_quelle),
-  gdd = list(label = "Wachstumsgradtage", farben = farben_zu_hex(gdd_farben), bereich = c(0, 2500), fensterSkaliert = FALSE, symbol = NULL, einheit = "°C-Tage", quelle = gdd_quelle)
+  gdd = list(label = "Wachstumsgradtage", farben = farben_zu_hex(gdd_farben), bereich = c(0, 2500), fensterSkaliert = FALSE, symbol = NULL, einheit = "°C-Tage", quelle = gdd_quelle),
+  # bereich empirisch aus dem ersten Testlauf kalibriert (siehe Plan) -
+  # Rate erreicht spaet in der Saison (ungemaeht, LAI baut sich das ganze
+  # Jahr ungebremst auf) bis gegen 200 kg TS/ha/Tag, Kumuliert bis gegen
+  # 17'000 kg TS/ha bis Ende August.
+  wachstumspotenzial_rate = list(label = "Potenzielles Wachstum", farben = farben_zu_hex(wachstumspotenzial_rate_farben), bereich = c(0, 250), fensterSkaliert = FALSE, symbol = NULL, einheit = "kg TS/ha/Tag", quelle = wachstumspotenzial_quelle),
+  # einheit bewusst kurz gehalten (nur "kg TS/ha", nicht zusaetzlich "seit
+  # 1. Jan." wie urspruenglich) - bei den beiden langen Zahlen der Min/Max-
+  # Skala (0.../18000...) brach der laengere Text in der schmalen
+  # Seitenleiste um und ueberlagerte sich optisch. "Seit 1. Januar" steht
+  # bereits im Label/der i-Button-Erklaerung.
+  wachstumspotenzial_kum = list(label = "Potenzielles Wachstum, kumuliert", farben = farben_zu_hex(wachstumspotenzial_kum_farben), bereich = c(0, 18000), fensterSkaliert = FALSE, symbol = NULL, einheit = "kg TS/ha", quelle = wachstumspotenzial_quelle)
 )
 
 ########################################################################
@@ -2150,6 +2519,18 @@ function(el, x) {
       var tage = (name === hintergrundEbene) ? meteoFenster : meteoFensterStandard[name];
       radio.labelTextEl.textContent = info.label + ' ' + symbol + ' ' + tage + 'd';
     });
+    // Potenzielles Wachstum: NUR \"(berechnet)\"-Hinweis, OHNE eigenes Datum
+    // im Label (anders als boden) - das tatsaechliche Datenstand-Datum kommt
+    // hier ausschliesslich ueber den allgemeinen \"Stand ...\"-Mechanismus im
+    // Kartentitel (aktualisiereKartentitel(), ueber werte.bis), sonst
+    // entstuende dieselbe Doppel-Datum-Anzeige, die dort fuer boden extra
+    // behoben werden musste.
+    if (radioWachstumspotenzialRate && radioWachstumspotenzialRate.labelTextEl) {
+      radioWachstumspotenzialRate.labelTextEl.textContent = layerLegenden.wachstumspotenzial_rate.label + ' (berechnet)';
+    }
+    if (radioWachstumspotenzialKum && radioWachstumspotenzialKum.labelTextEl) {
+      radioWachstumspotenzialKum.labelTextEl.textContent = layerLegenden.wachstumspotenzial_kum.label + ' (berechnet)';
+    }
     if (!radioBoden || !radioBoden.labelTextEl) return;
     // bodenCache.datum existiert erst, NACHDEM die Ebene einmal geladen
     // wurde (siehe ladeEbene()) - bis dahin steht im Label schlicht kein
@@ -2575,6 +2956,7 @@ function(el, x) {
   var mapControlsContainer = document.getElementById('datenexplorer-map-controls');
   var radioNiederschlag = null, radioBoden = null, radioTemperatur = null, radioBodentemperatur = null;
   var radioSonnenschein = null, radioEt0 = null, radioGdd = null;
+  var radioWachstumspotenzialRate = null, radioWachstumspotenzialKum = null;
   var radioJeEbene = {};
   function aktualisiereLayerVerfuegbarkeit() {
     if (radioNiederschlag) radioNiederschlag.disabled = !ebeneHatJahr('niederschlag', selectedYear);
@@ -2584,13 +2966,17 @@ function(el, x) {
     if (radioSonnenschein) radioSonnenschein.disabled = !ebeneHatJahr('sonnenschein', selectedYear);
     if (radioEt0) radioEt0.disabled = !ebeneHatJahr('et0', selectedYear);
     if (radioGdd) radioGdd.disabled = !ebeneHatJahr('gdd', selectedYear);
+    if (radioWachstumspotenzialRate) radioWachstumspotenzialRate.disabled = !ebeneHatJahr('wachstumspotenzial_rate', selectedYear);
+    if (radioWachstumspotenzialKum) radioWachstumspotenzialKum.disabled = !ebeneHatJahr('wachstumspotenzial_kum', selectedYear);
     if ((hintergrundEbene === 'niederschlag' && radioNiederschlag && radioNiederschlag.disabled) ||
         (hintergrundEbene === 'boden' && radioBoden && radioBoden.disabled) ||
         (hintergrundEbene === 'temperatur' && radioTemperatur && radioTemperatur.disabled) ||
         (hintergrundEbene === 'bodentemperatur' && radioBodentemperatur && radioBodentemperatur.disabled) ||
         (hintergrundEbene === 'sonnenschein' && radioSonnenschein && radioSonnenschein.disabled) ||
         (hintergrundEbene === 'et0' && radioEt0 && radioEt0.disabled) ||
-        (hintergrundEbene === 'gdd' && radioGdd && radioGdd.disabled)) {
+        (hintergrundEbene === 'gdd' && radioGdd && radioGdd.disabled) ||
+        (hintergrundEbene === 'wachstumspotenzial_rate' && radioWachstumspotenzialRate && radioWachstumspotenzialRate.disabled) ||
+        (hintergrundEbene === 'wachstumspotenzial_kum' && radioWachstumspotenzialKum && radioWachstumspotenzialKum.disabled)) {
       hintergrundEbene = 'keine';
       var radioKeineEl = mapControlsContainer && mapControlsContainer.querySelector('input[value=keine]');
       if (radioKeineEl) radioKeineEl.checked = true;
@@ -2707,6 +3093,8 @@ function(el, x) {
       var radio = radioJeEbene[hintergrundEbene];
       var label = (hintergrundEbene === 'boden')
         ? (layerLegenden.boden.label + ' (berechnet)')
+        : (hintergrundEbene === 'wachstumspotenzial_rate' || hintergrundEbene === 'wachstumspotenzial_kum')
+        ? (layerLegenden[hintergrundEbene].label + ' (berechnet)')
         : ((radio && radio.labelTextEl) ? radio.labelTextEl.textContent : hintergrundEbene);
       var cacheEintrag = ebenenCache[ebeneDateiSchluessel(hintergrundEbene)];
       var werteEintrag = cacheEintrag && cacheEintrag.werte && cacheEintrag.werte[selectedYear + ' ' + selectedWeek];
@@ -3237,6 +3625,15 @@ function(el, x) {
     radioBoden = makeLayerRadio('boden', layerLegenden.boden.label,
       'Der Boden wird vereinfacht wie ein Eimer betrachtet: Regen fuellt ihn, Verdunstung leert ihn. Ist der Eimer voll, laeuft der Ueberschuss ungenutzt ab. Wie viel taeglich verdunstet, wird aus den Temperaturen geschaetzt - ein feuchter Boden verdunstet mehr als ein bereits trockener. Der Wert zeigt den aktuellen Fuellstand: 100 mm = Boden gut mit Wasser versorgt, 0 mm = ausgetrocknet.',
       'gw-layer-vor-boden');
+    // Potenzielles Wachstum (ModVege/growR) - ebenfalls selbst berechnet wie
+    // Bodenwasserbilanz, deshalb hier direkt angeschlossen (kein eigener
+    // Trennstrich noetig). Zwei Varianten: Rate (direkt vergleichbar mit der
+    // gemessenen Graswachstum-Zahl) und Kumuliert (seit 1. Januar, wie
+    // Wachstumsgradtage).
+    radioWachstumspotenzialRate = makeLayerRadio('wachstumspotenzial_rate', layerLegenden.wachstumspotenzial_rate.label,
+      'Zeigt, wie viel Graswachstum das Klima (Temperatur, Strahlung, Wasserhaushalt) diese Woche pro Pixel maximal zulassen wuerde - OHNE Duengung/Naehrstofflimitierung und OHNE Schnitt/Beweidung (\"potenziell\", nicht real gemessen). Berechnet mit ModVege (Jouven et al. 2006, R-Paket growR), demselben Modell, das an den echten AGFF-Standorten validiert wurde. Direkt vergleichbar mit der gemessenen Graswachstum-Zahl (kg TS/ha/Tag).');
+    radioWachstumspotenzialKum = makeLayerRadio('wachstumspotenzial_kum', layerLegenden.wachstumspotenzial_kum.label,
+      'Wie \"Potenzielles Wachstum\", aber seit 1. Januar aufsummiert statt als Wochenwert - zeigt, wie viel sich uebers Jahr an klimatisch moeglichem (ungenutztem) Wachstum angesammelt hat.');
     // Nachschlagetabelle Ebenenname -> Radio, fuer aktualisiereLayerLabels()
     // (haengt dort das Symbol/die Fenstergroesse an alle 5 Fenster-Ebenen).
     radioJeEbene = { niederschlag: radioNiederschlag, temperatur: radioTemperatur, bodentemperatur: radioBodentemperatur, sonnenschein: radioSonnenschein, et0: radioEt0 };
