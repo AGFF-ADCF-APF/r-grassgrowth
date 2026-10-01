@@ -790,9 +790,6 @@ ring_radius_outer <- ring_radius + 0.008 * 1.5
 ring_steps <- 360
 start_angle <- pi / 2
 
-# Schrift fuer die "Tage seit Messung"-Legende (Plotly-natives colorbar).
-legenden_font <- list(family = "Arial, sans-serif", size = 11, color = "black")
-
 tage_farbe <- function(daysold) {
   anteil <- pmax(0, pmin(1, daysold / 14))
   rampe <- grDevices::colorRamp(c("white", "gray46"))
@@ -963,12 +960,12 @@ baue_kartenwerte_trace <- function(fig, snap, wertspalte, einheit, titel) {
   snap$daysold_col <- tage_farbe(snap$daysold)
   fig %>% add_trace(
     data = snap, x = ~lon, y = ~lat, type = "scatter", mode = "markers",
+    # showscale = FALSE: die "Tage seit Messung"-Legende ist jetzt eine
+    # eigene HTML-Box im Ebenen-Kasten (JS: aktualisiereTageSeitMessungLegende())
+    # statt des Plotly-nativen Colorbars hier - Letzterer kollidierte auf der
+    # Karte mit dem (nur bei Hover sichtbaren) Modebar-Bereich oben rechts.
     marker = list(size = 30, color = ~daysold, colorscale = list(list(0, "white"), list(1, "#757575")),
-                  cmin = 0, cmax = 14, showscale = TRUE, opacity = 0,
-                  colorbar = list(
-                    title = list(text = "Tage seit\nMessung", font = legenden_font),
-                    tickfont = legenden_font, len = 0.32, y = 0.1, yanchor = "bottom"
-                  )),
+                  cmin = 0, cmax = 14, showscale = FALSE, opacity = 0),
     hovertext = ~hover, hoverinfo = "text",
     hoverlabel = list(bgcolor = ~daysold_col, font = list(color = "black")),
     showlegend = FALSE, visible = FALSE, name = titel
@@ -1112,7 +1109,7 @@ fig_wachstum <- fig_wachstum %>% layout(
   yaxis = list(visible = FALSE, range = lat_range, scaleanchor = "x", scaleratio = karten_scaleratio),
   margin = list(t = 40, b = 10, l = 10, r = 10),
   images = list(kartenbild_hintergrund)
-) %>% config(responsive = FALSE, scrollZoom = TRUE)
+) %>% config(responsive = FALSE, scrollZoom = TRUE, displayModeBar = FALSE)
 # responsive=FALSE: mit responsive=TRUE hat Plotly die Karte in der
 # kombinierten Seite (htmltools::save_html(), mehrere Widgets) wiederholt
 # auf eine falsche, zu grosse Hoehe aufgeblasen (Ueberlappung mit dem
@@ -1143,13 +1140,6 @@ function(el, x) {
   // Kartenfleck inmitten viel Leerraum als Resultat.
   var xMin = %s, xMax = %s, yMitte = %s, scaleratio = %s;
   var xSpan = xMax - xMin;
-  // Nur die Standort-Snapshot-Traces (eine je Jahr/Woche) haben ueberhaupt
-  // eine sinnvolle 'Tage seit Messung'-Farbskala - explizit auf diese
-  // Indizes beschraenkt, statt showscale ohne Index-Array zu setzen (das
-  // wuerde JEDE Trace treffen, auch spaeter hinzugefuegte wie die
-  // MeteoSchweiz-Stationen, und dort eine bedeutungslose Leer-Colorbar
-  // erzeugen).
-  var snapshotTraceIdx = Array.from({ length: %s }, function(_, i) { return i; });
 
   // 'Ganze Schweiz'-Ansicht (x-/y-Achsenbereich) fuer eine gegebene
   // Containergroesse - x bleibt immer auf dem vollen lon_range_erweitert
@@ -1176,12 +1166,6 @@ function(el, x) {
     var hoehe = mobil ? Math.round(Math.max(200, (breite - 20) * 0.65 + 50)) : 560;
     var voll = vollAnsichtBerechnen(breite, hoehe);
     vollX = voll.x; vollY = voll.y;
-    // Tage-seit-Messung-Farblegende (Colorbar) auf dem schmalen
-    // Handy-Bildschirm ausgeblendet: sie nimmt proportional viel Platz
-    // weg, die Graustufen sind an den Standort-Kreisen selbst ohnehin
-    // ablesbar. Per restyle (nicht nur CSS), damit Plotly den dafuer
-    // reservierten Rand auch wirklich freigibt.
-    Plotly.restyle(el, { 'marker.showscale': !mobil }, snapshotTraceIdx);
     Plotly.relayout(el, { width: breite, height: hoehe, 'xaxis.range': voll.x, 'yaxis.range': voll.y });
     // Container-Hoehe (CSS, fest 560px im HTML) der tatsaechlichen, hier
     // berechneten Kartenhoehe nachfuehren - sonst bleibt auf Mobile (kleinere
@@ -1222,7 +1206,7 @@ function(el, x) {
   // oben (plotly_relayout-Listener) greift unabhaengig davon, WIE gezoomt
   // wird (Mausrad, Pinch, Doppelklick, Modebar).
 }
-", lon_range_erweitert[1], lon_range_erweitert[2], mean(lat_range), karten_scaleratio, nrow(map_wochen)))
+", lon_range_erweitert[1], lon_range_erweitert[2], mean(lat_range), karten_scaleratio))
 
 ########################################################################
 ## 3b. Optionale Hintergrund-Ebenen: Niederschlag (Vorwoche) und
@@ -2138,6 +2122,7 @@ function(el, x) {
     aktualisiereLayerLabels();
     aktualisiereLayerLegende();
     aktualisiereAfcLegende();
+    aktualisiereTageSeitMessungLegende();
     aktualisiereSmnStationen();
   }
 
@@ -2362,6 +2347,11 @@ function(el, x) {
     // transparent) statt eines SVG - conic-gradient uebernimmt die
     // Farbverlauf-Stuetzstellen 1:1 vom vorherigen linear-gradient-Balken.
     '.gw-afc-ring-wrap { position: relative; display: flex; justify-content: center; align-items: center; margin-bottom: 2px; }',
+    // Ring + 0/1500-Beschriftung in EINER zentrierten Zeile (statt Ring
+    // zentriert, Beschriftung darunter ueber die volle Kasten-Breite verteilt)
+    // - haelt die Beschriftung nah am (nur 56px breiten) Ring.
+    '.gw-afc-ring-zeile { display: flex; align-items: center; justify-content: center; gap: 8px; }',
+    '.gw-afc-ring-label { font-size: 11px; color: #555; white-space: nowrap; }',
     '.gw-afc-ring { width: 56px; height: 56px; border-radius: 50%; -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 10px), #000 calc(100% - 10px)); mask: radial-gradient(farthest-side, transparent calc(100% - 10px), #000 calc(100% - 10px)); }',
     // Tick-Strich als Uhrzeiger vom Ringzentrum nach aussen (Standard-CSS-
     // Technik: transform-origin unten am Strich = Ringzentrum, rotate()
@@ -2427,6 +2417,14 @@ function(el, x) {
     '.gw-step-btn:hover { background: #eaf2fb; border-color: #4a90d9; }',
     '.gw-today-btn { width: auto; padding: 0 12px; font-size: 13px; font-weight: 600; margin-left: auto; }',
     '.gw-zukunft-maske { position: absolute; background: rgba(0,0,0,0.4); border-radius: 3px; pointer-events: none; z-index: 2; }',
+    // Ebenen-Box neben der Karte: flex-grow:0 (statt 1) + max-width, damit
+    // sie auf breiten Bildschirmen NICHT am uebrigen Platz mitwaechst (das
+    // tat sie vorher, da auch die Karte flex-grow:1 hat - beide teilten
+    // sich den Rest 50/50, die Box wurde dadurch doppelt so breit wie
+    // beabsichtigt). Im Mobile-Stack-Layout (@media 700px) wieder
+    // flex-grow:1, damit sie dort weiterhin ihre volle Zeile ausfuellt,
+    // statt als schmale Box mit Leerraum daneben zu stehen.
+    '.gw-map-controls-panel { flex: 0 1 220px; min-width: 220px; max-width: 240px; }',
     // Mobile: Kurve + Standort-Legende nebeneinander (Legende fix 210px)
     // liesse auf einem Telefon (~375px) fuer die Kurve selbst kaum noch
     // Platz - deshalb unterhalb 700px gestapelt statt nebeneinander.
@@ -2441,6 +2439,7 @@ function(el, x) {
     '  .gw-legend-edge { order: -1; flex-direction: row; width: 100%; justify-content: flex-end; border-left: none; border-top: 1px solid #ddd; padding: 6px 0; }' +
     '  .gw-info-btn { width: 22px; height: 22px; font-size: 13px; }' +
     '  .gw-step-btn { width: 34px; height: 34px; }' +
+    '  .gw-map-controls-panel { flex: 1 1 auto; max-width: none; }' +
     '}'
   ].join(' ');
   document.head.appendChild(style);
@@ -2651,18 +2650,37 @@ function(el, x) {
     var ringMitte = document.createElement('div');
     ringMitte.className = 'gw-afc-ring-mitte';
     ringWrap.appendChild(ringMitte);
-    var skala = document.createElement('div');
-    skala.className = 'gw-layer-legende-skala';
-    var minEl = document.createElement('span'); minEl.textContent = '0 kg';
-    var maxEl = document.createElement('span'); maxEl.textContent = '1500 kg';
-    skala.appendChild(minEl);
-    skala.appendChild(maxEl);
+    // 0/1500-Beschriftung DIREKT links/rechts neben dem Ring (eine Zeile,
+    // zusammen mit dem Ring zentriert) statt wie zuvor als eigene Zeile mit
+    // justify-content:space-between ueber die GANZE (viel breitere)
+    // Kasten-Breite verteilt - sah bei einem nur 56px breiten Ring
+    // unnoetig auseinandergezogen aus.
+    var ringZeile = document.createElement('div');
+    ringZeile.className = 'gw-afc-ring-zeile';
+    var minEl = document.createElement('span'); minEl.className = 'gw-afc-ring-label'; minEl.textContent = '0 kg';
+    var maxEl = document.createElement('span'); maxEl.className = 'gw-afc-ring-label'; maxEl.textContent = '1500 kg';
+    ringZeile.appendChild(minEl);
+    ringZeile.appendChild(ringWrap);
+    ringZeile.appendChild(maxEl);
     var ziel = document.createElement('div');
     ziel.className = 'gw-layer-legende-quelle';
     ziel.textContent = 'Zielbereich AFC (aktuelle Woche): ' + verlauf.low + '–' + verlauf.high + ' kg TS/ha';
-    afcLegendeBox.appendChild(ringWrap);
-    afcLegendeBox.appendChild(skala);
+    afcLegendeBox.appendChild(ringZeile);
     afcLegendeBox.appendChild(ziel);
+  }
+
+  // \"Tage seit Messung\"-Legende (Graufaerbung von Graswachstum-Kreis/AFC-Ring)
+  // als kompakte Box im Ebenen-Kasten statt als Plotly-natives colorbar auf
+  // der Karte selbst - Letzteres kollidierte dort mit dem (nur bei Hover
+  // sichtbaren) Modebar-Bereich und war auf der Karte zudem schwer zu finden.
+  // Dieselbe Sichtbarkeitsregel wie die Hover-Marker-Trace selbst
+  // (graswachstumOn || afcOn, siehe applyMapState()) - die Faerbung gehoert
+  // zu BEIDEN Ebenen gemeinsam, nicht nur zu AFC.
+  var tageSeitMessungBox = null;
+  function aktualisiereTageSeitMessungLegende() {
+    if (!tageSeitMessungBox) return;
+    if (!graswachstumOn && !afcOn) { tageSeitMessungBox.style.display = 'none'; return; }
+    tageSeitMessungBox.style.display = 'block';
   }
   // Kartentitel IMMER ehrlich zu dem, was gerade zu sehen ist: Kopf nach den
   // tatsaechlich EINGESCHALTETEN Ebenen (Graswachstum/DGV) statt pauschal
@@ -3084,6 +3102,34 @@ function(el, x) {
     afcLegendeBox.className = 'gw-layer-legende';
     afcLegendeBox.style.display = 'none';
     layerPanel.appendChild(afcLegendeBox);
+
+    // \"Tage seit Messung\" (Graufaerbung Graswachstum-Kreis/AFC-Ring) - statt
+    // eines Plotly-nativen Colorbars auf der Karte (kollidierte dort mit dem
+    // Hover-Modebar-Bereich) als kompakte, statische Box direkt hier neben
+    // Graswachstum/DGV. Inhalt aendert sich nie (fixe Skala 0-14 Tage), daher
+    // einmalig aufgebaut statt bei jedem Wochenwechsel neu gerendert.
+    tageSeitMessungBox = document.createElement('div');
+    tageSeitMessungBox.className = 'gw-layer-legende';
+    tageSeitMessungBox.style.display = 'none';
+    var tsmBalkenWrap = document.createElement('div');
+    tsmBalkenWrap.className = 'gw-layer-legende-balken-wrap';
+    var tsmBalken = document.createElement('div');
+    tsmBalken.className = 'gw-layer-legende-balken';
+    tsmBalken.style.background = 'linear-gradient(to right, white, #757575)';
+    tsmBalkenWrap.appendChild(tsmBalken);
+    var tsmSkala = document.createElement('div');
+    tsmSkala.className = 'gw-layer-legende-skala';
+    var tsmMinEl = document.createElement('span'); tsmMinEl.textContent = '0';
+    var tsmMaxEl = document.createElement('span'); tsmMaxEl.textContent = '14 Tage';
+    tsmSkala.appendChild(tsmMinEl);
+    tsmSkala.appendChild(tsmMaxEl);
+    var tsmLabel = document.createElement('div');
+    tsmLabel.className = 'gw-layer-legende-quelle';
+    tsmLabel.textContent = 'Tage seit Messung (Graswachstum/DGV)';
+    tageSeitMessungBox.appendChild(tsmBalkenWrap);
+    tageSeitMessungBox.appendChild(tsmSkala);
+    tageSeitMessungBox.appendChild(tsmLabel);
+    layerPanel.appendChild(tageSeitMessungBox);
 
     macheLayerToggle('MeteoSchweiz-Stationen', false, function(checked) { smnStationenOn = checked; aktualisiereSmnStationen(); },
       'Zeigt die oeffentlichen MeteoSchweiz-Automatikstationen (SwissMetNet) mit ihren aktuellsten Tageswerten (Lufttemperatur, Bodentemperatur, Niederschlag, Globalstrahlung, Sonnenscheindauer) als Diamant-Symbole. Reine Wetter-Referenzstationen, unabhaengig von der gewaehlten Kalenderwoche und NICHT Teil der AGFF-Grasmessungen. Bodentemperatur wird nur an einem Teil der rund 150 Stationen gemessen - dort steht im Tooltip entsprechend keine Daten.');
@@ -3614,12 +3660,15 @@ seite <- htmltools::tagList(
   htmltools::div(style = "font-family: sans-serif; max-width: 1400px; margin: 0 auto; padding: 20px;",
     htmltools::div(style = "display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start;",
       htmltools::div(id = "datenexplorer-growthmap", style = "flex: 1 1 700px; min-width: 320px; height: 560px; overflow: hidden;", fig_wachstum),
-      # flex-grow:1 (statt 0) statt einer festen 220px-Box: faellt die
-      # Ebenen-Box auf einem schmalen (Mobile-)Bildschirm per flex-wrap in
-      # eine eigene Zeile, fuellt sie so deren volle Breite aus, statt
-      # nutzlosen Leerraum daneben zu lassen; neben der Karte (genug Platz)
-      # bleibt sie effektiv bei ihrer min-width von 220px.
-      htmltools::div(id = "datenexplorer-map-controls", style = "flex: 1 1 220px; min-width: 220px;")
+      # class statt nur inline-style: flex-grow:1 auf BEIDEN Geschwistern
+      # (Karte UND Ebenen-Box) verteilte uebrigen Platz 50/50 statt der Karte
+      # allein zugutekommen zu lassen - die Ebenen-Box wurde dadurch auf
+      # breiten Bildschirmen viel breiter als beabsichtigt (sichtbar z.B.
+      # bei max-width:1400px). gw-map-controls-panel (siehe Styles weiter
+      # unten) setzt flex-grow auf 0 (Karte absorbiert den ganzen Rest),
+      # ausser im Mobile-Stack-Layout (dort wieder 1, siehe @media 700px),
+      # damit die Box dort weiterhin ihre volle Zeile ausfuellt.
+      htmltools::div(id = "datenexplorer-map-controls", class = "gw-map-controls-panel")
     ),
     htmltools::div(id = "datenexplorer-slider"),
     fig_kurve
