@@ -173,6 +173,110 @@ for (i in seq_len(nrow(alle_punkte))) {
 cat("\nStationen geladen:", length(wetter_je_station), "\n")
 
 ########################################################################
+## A2b. Strahlungs-Schaetzfehler quantifizieren --------------------------
+########################################################################
+## Fuer die spaetere Rasterphase gibt es KEINE flaechendeckende Strahlungs-
+## messung (siehe Plan) - dort muesste Rs ueber Angstroem-Prescott aus der
+## Sonnenscheindauer geschaetzt werden: Rs = (a_s + b_s*n/N) * Ra (FAO-56
+## Gl. 50, a_s=0.25/b_s=0.50 Standardwerte). Hier wird diese Schaetzung
+## gegen die ECHTE Stationsmessung (gre000d0, bereits als SRad geladen) an
+## allen 10 Vergleichspunkten getestet - ueber die GESAMTE verfuegbare
+## SMN-Historie (nicht nur alle_jahre), da hier mehr Datenpunkte die
+## Fehlerabschaetzung robuster machen und das ohnehin schon im Cache liegt.
+smn_lat_je_abbr <- setNames(alle_punkte$lat, alle_punkte$smn_abbr)
+strahlung_vergleich <- purrr::imap_dfr(wetter_je_station, function(wetter, abbr) {
+  if (is.null(wetter) || nrow(wetter) == 0) return(NULL)
+  phi <- smn_lat_je_abbr[[abbr]] * pi / 180
+  ra_mj <- berechne_ra_punkt(wetter$DOY, phi) # MJ/m2/Tag, UNKONVERTIERT (siehe Hinweis bei et0-Berechnung)
+  rs_ap_mj <- (0.25 + 0.50 * wetter$rSSD) * ra_mj
+  data.frame(
+    abbr = abbr, year = wetter$year, DOY = wetter$DOY,
+    rSSD = wetter$rSSD, Ra_mj = ra_mj, # fuer eine spaetere Rekalibrierung von a_s/b_s mitgefuehrt
+    SRad_gemessen = wetter$SRad, # W/m2, echte Messung (gre000d0)
+    SRad_geschaetzt = rs_ap_mj * 11.574 # MJ/m2/Tag -> W/m2 Tagesmittel (*1e6/86400)
+  )
+})
+strahlung_vergleich <- strahlung_vergleich %>% filter(!is.na(SRad_gemessen), !is.na(SRad_geschaetzt))
+
+cat("\n=== Strahlungs-Schaetzfehler (Angstroem-Prescott vs. SMN-Messung) ===\n")
+cat("Datenpunkte:", nrow(strahlung_vergleich), "ueber", n_distinct(strahlung_vergleich$abbr), "Stationen,",
+    "Zeitraum", min(strahlung_vergleich$year), "-", max(strahlung_vergleich$year), "\n")
+cat("Bias (geschaetzt - gemessen):", round(mean(strahlung_vergleich$SRad_geschaetzt - strahlung_vergleich$SRad_gemessen), 1), "W/m2\n")
+cat("RMSE:", round(sqrt(mean((strahlung_vergleich$SRad_geschaetzt - strahlung_vergleich$SRad_gemessen)^2)), 1), "W/m2\n")
+cat("Korrelation:", round(cor(strahlung_vergleich$SRad_geschaetzt, strahlung_vergleich$SRad_gemessen), 3), "\n")
+cat("Mittlere Messung (Referenzgroesse):", round(mean(strahlung_vergleich$SRad_gemessen), 1), "W/m2\n")
+
+cat("\nJe Station:\n")
+print(strahlung_vergleich %>% group_by(abbr) %>%
+  summarise(n = n(), bias = round(mean(SRad_geschaetzt - SRad_gemessen), 1),
+            rmse = round(sqrt(mean((SRad_geschaetzt - SRad_gemessen)^2)), 1),
+            korr = round(cor(SRad_geschaetzt, SRad_gemessen), 2), .groups = "drop") %>%
+  arrange(desc(rmse)), n = 20)
+
+# Saisonale Aufschluesselung - Angstroem-Prescott ist bekanntermassen bei
+# Nebel/Hochnebel-Lagen (Mittelland-Winter) weniger zuverlaessig, da
+# Sonnenscheindauer=0 trotz diffusem Restlicht nicht denselben Effekt hat
+# wie eine echte Strahlungsmessung.
+strahlung_vergleich$monat <- as.integer(format(as.Date(sprintf("%d-01-01", strahlung_vergleich$year)) + strahlung_vergleich$DOY - 1, "%m"))
+p_strahlung <- ggplot(strahlung_vergleich, aes(x = SRad_gemessen, y = SRad_geschaetzt)) +
+  geom_point(alpha = 0.15, size = 0.6) +
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed") +
+  facet_wrap(~abbr) +
+  labs(title = "Angstroem-Prescott-Schaetzung vs. echte SMN-Strahlungsmessung",
+       x = "gemessen (W/m2)", y = "geschaetzt aus Sonnenscheindauer (W/m2)") +
+  theme_minimal()
+ggsave(file.path(ausgabe_dir, "strahlung_schaetzfehler_scatter.png"), p_strahlung, width = 12, height = 8, dpi = 120)
+
+p_monat <- strahlung_vergleich %>% group_by(abbr, monat) %>%
+  summarise(bias = mean(SRad_geschaetzt - SRad_gemessen), .groups = "drop") %>%
+  ggplot(aes(x = monat, y = bias, color = abbr)) + geom_line() + geom_point() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
+  scale_x_continuous(breaks = 1:12) +
+  labs(title = "Strahlungs-Schaetzfehler (geschaetzt - gemessen) nach Monat", x = "Monat", y = "Bias (W/m2)") +
+  theme_minimal()
+ggsave(file.path(ausgabe_dir, "strahlung_schaetzfehler_monat.png"), p_monat, width = 10, height = 6, dpi = 120)
+saveRDS(strahlung_vergleich, file.path(ausgabe_dir, "strahlung_vergleich.rds"))
+cat("\nPlots gespeichert:  strahlung_schaetzfehler_scatter.png, strahlung_schaetzfehler_monat.png\n")
+
+# Der Fehler ist gross, aber SEHR systematisch (Korrelation 0.947) - die
+# FAO-56-Standardwerte a_s=0.25/b_s=0.50 sind fuer Schweizer Verhaeltnisse
+# offenbar nicht passend. Re-Kalibrierung ueber dieselben Daten:
+# SRad_gemessen/(Ra*11.574) = a_s + b_s*rSSD  - eine einfache lineare
+# Regression liefert die Schweiz-spezifischen Koeffizienten direkt aus den
+# Daten statt den generischen FAO-Default weiterzuverwenden.
+strahlung_vergleich$y_kalibrierung <- strahlung_vergleich$SRad_gemessen / (strahlung_vergleich$Ra_mj * 11.574)
+kalib_modell <- lm(y_kalibrierung ~ rSSD, data = strahlung_vergleich)
+a_s_neu <- coef(kalib_modell)[["(Intercept)"]]
+b_s_neu <- coef(kalib_modell)[["rSSD"]]
+cat("\n=== Schweiz-kalibrierte Angstroem-Prescott-Koeffizienten ===\n")
+cat("a_s =", round(a_s_neu, 3), "(FAO-56-Standard: 0.25)\n")
+cat("b_s =", round(b_s_neu, 3), "(FAO-56-Standard: 0.50)\n")
+
+strahlung_vergleich$SRad_kalibriert <- (a_s_neu + b_s_neu * strahlung_vergleich$rSSD) * strahlung_vergleich$Ra_mj * 11.574
+cat("\nMit kalibrierten Koeffizienten:\n")
+cat("Bias:", round(mean(strahlung_vergleich$SRad_kalibriert - strahlung_vergleich$SRad_gemessen), 1), "W/m2\n")
+cat("RMSE:", round(sqrt(mean((strahlung_vergleich$SRad_kalibriert - strahlung_vergleich$SRad_gemessen)^2)), 1), "W/m2\n")
+cat("Korrelation:", round(cor(strahlung_vergleich$SRad_kalibriert, strahlung_vergleich$SRad_gemessen), 3), "(unveraendert, reine Verschiebung/Streckung)\n")
+
+cat("\nJe Station (kalibriert):\n")
+print(strahlung_vergleich %>% group_by(abbr) %>%
+  summarise(bias = round(mean(SRad_kalibriert - SRad_gemessen), 1),
+            rmse = round(sqrt(mean((SRad_kalibriert - SRad_gemessen)^2)), 1), .groups = "drop") %>%
+  arrange(desc(abs(bias))))
+
+saveRDS(list(a_s = a_s_neu, b_s = b_s_neu, modell = kalib_modell), file.path(ausgabe_dir, "angstrom_prescott_kalibrierung.rds"))
+
+p_kalibriert <- ggplot(strahlung_vergleich, aes(x = SRad_gemessen)) +
+  geom_point(aes(y = SRad_geschaetzt, color = "FAO-56-Standard (a=0.25, b=0.50)"), alpha = 0.1, size = 0.5) +
+  geom_point(aes(y = SRad_kalibriert, color = "Schweiz-kalibriert"), alpha = 0.1, size = 0.5) +
+  geom_abline(slope = 1, intercept = 0, color = "black", linetype = "dashed") +
+  labs(title = "Angstroem-Prescott: FAO-Standard vs. Schweiz-kalibriert",
+       x = "gemessen (W/m2)", y = "geschaetzt (W/m2)", color = "") +
+  theme_minimal() + theme(legend.position = "bottom") +
+  guides(color = guide_legend(override.aes = list(alpha = 1, size = 2)))
+ggsave(file.path(ausgabe_dir, "strahlung_kalibriert_vs_standard.png"), p_kalibriert, width = 9, height = 7, dpi = 120)
+
+########################################################################
 ## A3. growR: Parameter-/Wetterdateien schreiben, Umgebungen bauen, laufen
 ########################################################################
 
