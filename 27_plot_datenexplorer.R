@@ -291,8 +291,15 @@ for (jahr_monat in kandidaten_monate) {
   if (meteo_monat_konsolidiert_vorhanden(jahr_monat)) next
   monatsanfang <- as.Date(paste0(jahr_monat, "01"), format = "%Y%m%d")
   monatsende <- seq(monatsanfang, by = "month", length.out = 2)[2] - 1
-  tage <- seq(monatsanfang, min(monatsende, Sys.Date() - 1), by = "day")
-  for (tag in as.character(tage)) lade_meteo_tag(tag, setdiff(meteo_variablen_gesamt, "sreld"))
+  tage_ende <- min(monatsende, Sys.Date() - 1)
+  # Am 1. eines Monats liegt Sys.Date()-1 noch im VORMONAT, also vor
+  # monatsanfang des gerade erst begonnenen Monats - dann gibt es fuer
+  # diesen Monat schlicht noch keine Tage zum Nachladen (sonst wuerde
+  # seq() mit einem Enddatum vor dem Startdatum abstuerzen).
+  if (tage_ende >= monatsanfang) {
+    tage <- seq(monatsanfang, tage_ende, by = "day")
+    for (tag in as.character(tage)) lade_meteo_tag(tag, setdiff(meteo_variablen_gesamt, "sreld"))
+  }
 }
 
 # Liest (rein lokal, kein Download mehr) alle vorhandenen Dateien einer
@@ -1100,7 +1107,7 @@ fig_wachstum <- fig_wachstum %>% layout(
   # UND, falls eine Meteo-Ebene aktiv ist, deren Name + tatsaechliches
   # Datenstand-Datum) statt eines statischen Build-Datums, das mit der
   # Aktualitaet der einzelnen Ebenen nichts zu tun haben muss.
-  title = list(text = paste0("Graswachstum (kg TS/ha/Tag), KW ", start_woche, " ", neuestes_jahr), font = list(size = 16)),
+  title = list(text = paste0("<b>Graswachstum (kg TS/ha/Tag) / DGV (kg TS/ha), KW ", start_woche, " ", neuestes_jahr, "</b>"), font = list(size = 16)),
   xaxis = list(visible = FALSE, range = lon_range_erweitert, fixedrange = FALSE),
   yaxis = list(visible = FALSE, range = lat_range, scaleanchor = "x", scaleratio = karten_scaleratio),
   margin = list(t = 40, b = 10, l = 10, r = 10),
@@ -1876,18 +1883,18 @@ function(el, x) {
   var growthMapKlickGebunden = false;
   var growthMapHoverGebunden = false;
   var growthMapZeigerGebunden = false;
-  // Schalter Messnetz-Standorte (Ebenen-Kasten): blendet die (unsichtbaren,
-  // nur fuer Hover benoetigten) Marker der Wachstumskarte komplett aus -
-  // z.B. um eine Hintergrund-Ebene (Niederschlag/Bodenwasserbilanz)
-  // ungestoert zu betrachten. Default an (Messnetz-Standorte sind der
-  // Hauptzweck der Karte). Graswachstum-Kreis und AFC-Ring (die BILD-
-  // Ebenen) haben je einen EIGENEN Schalter, siehe graswachstumOn/afcOn.
-  var messnetzOn = true;
+  // Graswachstum-Kreis und DGV-Ring (AFC, die BILD-Ebenen) haben je einen
+  // eigenen Schalter. Die (unsichtbaren, nur fuer Hover + die \"Tage seit
+  // Messung\"-Farblegende benoetigten) Standort-Marker selbst haben KEINEN
+  // eigenen Schalter mehr (vormals \"Messnetz-Standorte\") - sie sind
+  // hoverbar, sobald mindestens einer der beiden Schalter an ist (siehe
+  // applyMapState()), da die Legende ja genau zu diesen beiden Ebenen
+  // gehoert.
   var graswachstumOn = true;
   var afcOn = true;
-  // Schalter MeteoSchweiz-Stationen (Ebenen-Kasten, neben Messnetz-
-  // Standorte): Default AUS - reine Referenz-Ebene, nicht Teil der
-  // eigentlichen AGFF-Auswertung. smnStationenTraceIdx zeigt auf die EINE,
+  // Schalter MeteoSchweiz-Stationen (Ebenen-Kasten): Default AUS - reine
+  // Referenz-Ebene, nicht Teil der eigentlichen AGFF-Auswertung.
+  // smnStationenTraceIdx zeigt auf die EINE,
   // von Jahr/Woche unabhaengige Trace (siehe R: smn_stationen_trace_idx).
   var smnStationenOn = false;
   var smnStationenTraceIdx = __SMN_STATIONEN_TRACE_IDX__;
@@ -2060,10 +2067,11 @@ function(el, x) {
     // bleibende) Referenz wuerde die Karte nie mehr aktualisieren.
     var growthMapGd = document.querySelector('#datenexplorer-growthmap .js-plotly-plot');
     var idx = mapTraceIndexFor(selectedYear, selectedWeek);
-    // messnetzOn=false blendet auch die (unsichtbare) Hover-Marker-Trace
-    // aus - sonst waeren die Standorte trotz ausgeblendetem Bild weiterhin
-    // geisterhaft hoverbar.
-    var vis = mapWochen.map(function(m, i) { return messnetzOn && i === idx; });
+    // Hover-Marker-Trace (inkl. \"Tage seit Messung\"-Farblegende) nur
+    // sichtbar, wenn Graswachstum oder DGV eingeschaltet ist - sonst waeren
+    // die Standorte trotz ausgeblendeten Bildern weiterhin geisterhaft
+    // hoverbar bzw. die Legende ohne zugehoerige Ebene sichtbar.
+    var vis = mapWochen.map(function(m, i) { return (graswachstumOn || afcOn) && i === idx; });
     if (growthMapGd) Plotly.restyle(growthMapGd, { visible: vis });
     if (idx >= 0 && growthMapGd) {
       var hl = highlightArrayFor(idx);
@@ -2345,7 +2353,11 @@ function(el, x) {
     // Legende (direkt unter dem Schieberegler): beide gehoeren optisch zum
     // jeweils direkt darueberliegenden Schalter/Schieberegler.
     '.gw-layer-legende { margin-top: 10px; }',
+    '.gw-layer-legende-balken-wrap { position: relative; padding-bottom: 7px; }',
     '.gw-layer-legende-balken { height: 12px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.15); }',
+    // Kleines Dreieck unter dem Farbverlaufs-Balken, zeigt per left:X% die
+    // Position des Werts am Cursor (siehe aktualisierePfeilPosition()).
+    '.gw-legende-pfeil { position: absolute; top: 12px; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-bottom: 6px solid #333; transform: translateX(-50%); pointer-events: none; }',
     // Donut-Ring per Masken-Trick (radial-gradient schneidet die Mitte
     // transparent) statt eines SVG - conic-gradient uebernimmt die
     // Farbverlauf-Stuetzstellen 1:1 vom vorherigen linear-gradient-Balken.
@@ -2375,11 +2387,6 @@ function(el, x) {
     '.gw-lade-punkte span:nth-child(3) { animation-delay: 0.3s; }',
     '@keyframes gwBlink { 0%, 80%, 100% { opacity: 0.2; } 40% { opacity: 1; } }',
     '.gw-toggle-wrap { display: flex; align-items: center; gap: 8px; }',
-    '.gw-layer-messnetz-toggle { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #ddd; }',
-    // Trennlinie vor dem Meteodaten-Abschnitt (AFC-Schalter/-Legende darueber,
-    // keine Meteodaten & Co. darunter) - dieselbe Technik wie bei
-    // .gw-layer-messnetz-toggle (border-bottom auf der letzten Zeile davor).
-    '.gw-layer-vor-meteodaten { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #ddd; }',
     // Trennlinie vor Bodenwasserbilanz (SELBST BERECHNETE Groesse, siehe
     // Kommentar bei deren makeLayerRadio()-Aufruf) - hier als border-TOP auf
     // der Zeile selbst, da sie (anders als bei den anderen Trennlinien) die
@@ -2601,6 +2608,11 @@ function(el, x) {
   var ortschaftEl = null;
   var ladeHinweisEl = null;
   var afcLegendeBox = null;
+  // Pfeil auf dem Farbverlaufs-Balken, der die Position des Werts am Cursor
+  // zeigt (zeigeWertAmPunkt()) - legendeBereich ist der [min,max]-Wertebereich
+  // der gerade aktiven Ebene, fuer die Prozent-Umrechnung.
+  var legendePfeilEl = null;
+  var legendeBereich = null;
   // Kompakte AFC-Legende im Ebenen-Kasten (zusaetzlich zur grossen Ring-
   // Legende auf der Karte selbst) - nur sichtbar, wenn der AFC-Schalter an
   // ist (Default), und mit dem jahreszeitlichen Zielbereich der GERADE
@@ -2647,30 +2659,43 @@ function(el, x) {
     skala.appendChild(maxEl);
     var ziel = document.createElement('div');
     ziel.className = 'gw-layer-legende-quelle';
-    ziel.textContent = 'Zielbereich (aktuelle Woche): ' + verlauf.low + '–' + verlauf.high + ' kg TS/ha';
+    ziel.textContent = 'Zielbereich AFC (aktuelle Woche): ' + verlauf.low + '–' + verlauf.high + ' kg TS/ha';
     afcLegendeBox.appendChild(ringWrap);
     afcLegendeBox.appendChild(skala);
     afcLegendeBox.appendChild(ziel);
   }
-  // Kartentitel IMMER ehrlich zu dem, was gerade zu sehen ist: Kalenderwoche
-  // (nicht mit dem Datenstand einer Meteo-Ebene zu verwechseln - die kann,
-  // v.a. bei der allerneuesten Woche, wegen Publikationsverzoegerung
-  // hinterherhinken) plus, falls eine Meteo-Ebene aktiv ist, deren Name und
-  // tatsaechliches Datenstand-Datum (werte.bis, siehe R: baue_fenster_
-  // ebenen()/GDD/Bodenwasserbilanz) statt eines pauschalen Build-Datums.
+  // Kartentitel IMMER ehrlich zu dem, was gerade zu sehen ist: Kopf nach den
+  // tatsaechlich EINGESCHALTETEN Ebenen (Graswachstum/DGV) statt pauschal
+  // \"Graswachstum\" zu behaupten, plus Kalenderwoche (nicht mit dem
+  // Datenstand einer Meteo-Ebene zu verwechseln - die kann, v.a. bei der
+  // allerneuesten Woche, wegen Publikationsverzoegerung hinterherhinken)
+  // plus, falls eine Meteo-Ebene aktiv ist, deren Name und tatsaechliches
+  // Datenstand-Datum (werte.bis, siehe R: baue_fenster_ebenen()/GDD/
+  // Bodenwasserbilanz) statt eines pauschalen Build-Datums.
   function aktualisiereKartentitel() {
     var growthMapGd = document.querySelector('#datenexplorer-growthmap .js-plotly-plot');
     if (!growthMapGd) return;
-    var titel = 'Graswachstum (kg TS/ha/Tag), KW ' + selectedWeek + ' ' + selectedYear;
+    var kopfTeile = [];
+    if (graswachstumOn) kopfTeile.push('Graswachstum (kg TS/ha/Tag)');
+    if (afcOn) kopfTeile.push('DGV (kg TS/ha)');
+    var titel = kopfTeile.join(' / ');
+    titel += (titel ? ', ' : '') + 'KW ' + selectedWeek + ' ' + selectedYear;
     if (hintergrundEbene !== 'keine') {
-      var radio = radioJeEbene[hintergrundEbene] || radioBoden;
-      var label = (radio && radio.labelTextEl) ? radio.labelTextEl.textContent : hintergrundEbene;
+      // Bodenwasserbilanz traegt ihr \"(berechnet) <Datum>\" bereits im
+      // Radio-Label (siehe aktualisiereLayerLabels()) - hier deshalb die
+      // Basis-Bezeichnung OHNE das Datum verwenden, das unten per \"Stand
+      // ...\" ohnehin einmal dazukommt. Sonst stuende dasselbe Datum zweimal
+      // im Titel.
+      var radio = radioJeEbene[hintergrundEbene];
+      var label = (hintergrundEbene === 'boden')
+        ? (layerLegenden.boden.label + ' (berechnet)')
+        : ((radio && radio.labelTextEl) ? radio.labelTextEl.textContent : hintergrundEbene);
       var cacheEintrag = ebenenCache[ebeneDateiSchluessel(hintergrundEbene)];
       var werteEintrag = cacheEintrag && cacheEintrag.werte && cacheEintrag.werte[selectedYear + ' ' + selectedWeek];
       var stand = (werteEintrag && werteEintrag.bis) ? ('Stand ' + werteEintrag.bis) : 'lädt…';
       titel += ' · ' + label + ', ' + stand;
     }
-    Plotly.relayout(growthMapGd, { 'title.text': titel });
+    Plotly.relayout(growthMapGd, { 'title.text': '<b>' + titel + '</b>' });
   }
 
   function aktualisiereLayerLegende() {
@@ -2678,16 +2703,27 @@ function(el, x) {
     aktualisiereKartentitel();
     if (!layerLegendeBox) return;
     var info = layerLegenden[hintergrundEbene];
-    if (!info) { layerLegendeBox.style.display = 'none'; wertAnzeigeEl = null; koordinatenEl = null; ortschaftEl = null; return; }
+    if (!info) { layerLegendeBox.style.display = 'none'; wertAnzeigeEl = null; koordinatenEl = null; ortschaftEl = null; legendePfeilEl = null; legendeBereich = null; return; }
     layerLegendeBox.style.display = 'block';
     layerLegendeBox.innerHTML = '';
     // Wertebereich bei Summen-Ebenen (info.fensterSkaliert) proportional zur
     // aktuellen Fenstergroesse hochskaliert (siehe R: baue_fenster_ebenen())
     // - bei Mittelwert-Ebenen bleibt der Bereich unveraendert.
     var bereich = info.fensterSkaliert ? [info.bereich[0], Math.round(info.bereich[1] * meteoFenster / 7)] : info.bereich;
+    legendeBereich = bereich;
+    var balkenWrap = document.createElement('div');
+    balkenWrap.className = 'gw-layer-legende-balken-wrap';
     var balken = document.createElement('div');
     balken.className = 'gw-layer-legende-balken';
     balken.style.background = 'linear-gradient(to right, ' + info.farben.join(',') + ')';
+    // Pfeil zeigt die Position des Werts am Cursor auf dem Farbverlauf -
+    // Positionierung/Sichtbarkeit uebernimmt zeigeWertAmPunkt()/
+    // versteckeWertAnzeige(), hier nur frisch angelegt und initial versteckt.
+    legendePfeilEl = document.createElement('div');
+    legendePfeilEl.className = 'gw-legende-pfeil';
+    legendePfeilEl.style.display = 'none';
+    balkenWrap.appendChild(balken);
+    balkenWrap.appendChild(legendePfeilEl);
     var skala = document.createElement('div');
     skala.className = 'gw-layer-legende-skala';
     var minEl = document.createElement('span'); minEl.textContent = bereich[0] + ' ' + info.einheit;
@@ -2724,7 +2760,7 @@ function(el, x) {
     keinDatenHinweisEl.className = 'gw-layer-wert-anzeige';
     keinDatenHinweisEl.textContent = 'Keine Daten für diese Woche';
     keinDatenHinweisEl.style.display = (ladeHinweisEl.style.display === 'none' && !ebeneHatWoche(hintergrundEbene, selectedYear, selectedWeek)) ? 'block' : 'none';
-    layerLegendeBox.appendChild(balken);
+    layerLegendeBox.appendChild(balkenWrap);
     layerLegendeBox.appendChild(skala);
     layerLegendeBox.appendChild(quelle);
     layerLegendeBox.appendChild(ladeHinweisEl);
@@ -2797,6 +2833,21 @@ function(el, x) {
       if (ortschaftEl && meineId === ortschaftAnfrageId) ortschaftEl.textContent = 'Ort: nicht abrufbar (offline?)';
     });
   }
+  // Positioniert den Pfeil auf dem Farbverlaufs-Balken proportional zum Wert
+  // innerhalb legendeBereich ([min,max] der aktiven Ebene) - versteckt ihn,
+  // wenn kein gueltiger Zahlenwert vorliegt (keine Daten/ausserhalb der
+  // Schweiz/keine Ebene aktiv).
+  function aktualisierePfeilPosition(wert) {
+    if (!legendePfeilEl) return;
+    if (wert === null || wert === undefined || isNaN(wert) || !legendeBereich) {
+      legendePfeilEl.style.display = 'none';
+      return;
+    }
+    var anteil = (wert - legendeBereich[0]) / (legendeBereich[1] - legendeBereich[0]);
+    anteil = Math.max(0, Math.min(1, anteil));
+    legendePfeilEl.style.left = (anteil * 100) + '%';
+    legendePfeilEl.style.display = 'block';
+  }
   function zeigeWertAmPunkt(lon, lat) {
     if (!wertAnzeigeEl) return;
     var lv95 = wgs84ZuLv95(lon, lat);
@@ -2813,21 +2864,24 @@ function(el, x) {
     var gitterJeWoche = aktivesWerteGitter();
     var info = layerLegenden[hintergrundEbene];
     var gitter = gitterJeWoche ? gitterJeWoche[selectedYear + ' ' + selectedWeek] : null;
-    if (!gitter || !info) return;
+    if (!gitter || !info) { aktualisierePfeilPosition(null); return; }
     var col = Math.floor((lon - gitter.x0) / (gitter.x1 - gitter.x0) * gitter.ncol);
     var row = Math.floor((gitter.y1 - lat) / (gitter.y1 - gitter.y0) * gitter.nrow);
     if (col < 0 || col >= gitter.ncol || row < 0 || row >= gitter.nrow) {
       wertAnzeigeEl.textContent = 'Wert am Cursor: ausserhalb der Schweiz';
+      aktualisierePfeilPosition(null);
       return;
     }
     var wert = gitter.m[row][col];
     wertAnzeigeEl.textContent = (wert === null || wert === undefined) ?
       'Wert am Cursor: keine Daten' : 'Wert am Cursor: ' + wert + ' ' + info.einheit;
+    aktualisierePfeilPosition(wert);
   }
   function versteckeWertAnzeige() {
     if (wertAnzeigeEl) wertAnzeigeEl.textContent = 'Wert am Cursor: –';
     if (koordinatenEl) koordinatenEl.textContent = 'Koordinaten: –';
     if (ortschaftEl) ortschaftEl.textContent = 'Ort: –';
+    aktualisierePfeilPosition(null);
     ortschaftAnfrageId++;
     clearTimeout(ortschaftAbfrageTimer);
   }
@@ -2958,23 +3012,6 @@ function(el, x) {
       zeigeWertAmPunkt(lon, lat);
     }
 
-    // Messnetz-Standorte (die Standort-Positionen selbst, per Hover
-    // abfragbar) ist die Basisebene, unabhaengig von der optionalen
-    // Hintergrund-Rasterebene weiter unten - deshalb als eigener Schalter,
-    // standardmaessig an, statt als weitere Radio-Option. Graswachstum-
-    // Kreis und AFC-Ring sind je eigene Bild-Ebenen mit eigenem Schalter
-    // (siehe weiter unten), unabhaengig ein-/ausblendbar.
-    var messnetzToggleWrap = schalterLinksbuendig(makeToggle('Messnetz-Standorte', true, function(checked) { messnetzOn = checked; applyState(); }));
-    messnetzToggleWrap.title = 'Hoverbare Standort-Positionen auf der Karte ein-/ausblenden';
-    layerPanel.appendChild(messnetzToggleWrap);
-    // Trennlinie (gw-layer-messnetz-toggle) liegt jetzt auf dieser Zeile
-    // (MeteoSchweiz-Stationen), nicht mehr auf Messnetz-Standorte - beide
-    // gehoeren als Standort-Ebenen zusammen ueber die Linie, Graswachstum/
-    // AFC (Bild-Ebenen) darunter.
-    macheLayerToggle('MeteoSchweiz-Stationen', false, function(checked) { smnStationenOn = checked; aktualisiereSmnStationen(); },
-      'Zeigt die oeffentlichen MeteoSchweiz-Automatikstationen (SwissMetNet) mit ihren aktuellsten Tageswerten (Lufttemperatur, Bodentemperatur, Niederschlag, Globalstrahlung, Sonnenscheindauer) als Diamant-Symbole. Reine Wetter-Referenzstationen, unabhaengig von der gewaehlten Kalenderwoche und NICHT Teil der AGFF-Grasmessungen. Bodentemperatur wird nur an einem Teil der rund 150 Stationen gemessen - dort steht im Tooltip entsprechend keine Daten.',
-      'gw-layer-messnetz-toggle');
-
     // Kleiner i-Knopf mit Klapp-Popup fuer laengere Erklaerungstexte (die
     // Quellenangabe als nativer title-Tooltip reicht fuer eine ganze
     // Absatz-Erklaerung nicht) - per Klick statt nur Hover, damit es auch
@@ -3017,9 +3054,9 @@ function(el, x) {
     }
 
     // Wie makeLayerRadio() unten, nur fuer einen Umschalter (Toggle) statt
-    // eines Radiobuttons - fuer Graswachstum/AFC, die (anders als die
-    // Hintergrund-Raster-Ebenen) unabhaengig VONEINANDER ein-/ausblendbar
-    // sein sollen, nicht als Radiogruppe.
+    // eines Radiobuttons - fuer Graswachstum/DGV/MeteoSchweiz-Stationen, die
+    // (anders als die Hintergrund-Raster-Ebenen) unabhaengig VONEINANDER
+    // ein-/ausblendbar sein sollen, nicht als Radiogruppe.
     function macheLayerToggle(labelText, checked, onChange, erklaerung, zusatzKlasse) {
       var zeile = document.createElement('div');
       zeile.className = 'gw-layer-option-zeile' + (zusatzKlasse ? ' ' + zusatzKlasse : '');
@@ -3029,20 +3066,27 @@ function(el, x) {
       layerPanel.appendChild(zeile);
       return toggleWrap;
     }
-    macheLayerToggle('Graswachstum', true, function(checked) { graswachstumOn = checked; applyState(); },
+    // Reihenfolge Graswachstum / DGV / MeteoSchweiz-Stationen: die beiden
+    // Betriebs-Ebenen (Graswachstum-Kreis, DGV-Ring) zuerst, je eigener
+    // Schalter - danach MeteoSchweiz-Stationen als reine Wetter-
+    // Referenzebene. DGV = Durchschnittlicher GrasVorrat, der intern/in der
+    // Erklaerung weiterhin als AFC (Average Farm Cover) referenzierte
+    // Fachbegriff.
+    macheLayerToggle('Graswachstum (kg TS/ha/Tag)', true, function(checked) { graswachstumOn = checked; applyState(); },
       'Die Zahl im Kreis zeigt das zuletzt gemessene Graswachstum in kg TS/ha/Tag (Trockensubstanz-Zuwachs pro Hektare und Tag). Die Graufaerbung des Kreises zeigt, wie lange die Messung zurueckliegt: weiss = frisch gemessen (0 Tage), dunkelgrau = bis zu 14 Tage alt. Standorte ohne Messung in den letzten 14 Tagen werden nicht mehr angezeigt.');
-    macheLayerToggle('AFC', true, function(checked) { afcOn = checked; applyState(); },
-      'AFC (Average Farm Cover) schaetzt den aktuellen Grasvorrat des Betriebs in kg Trockensubstanz pro Hektare (kg TS/ha). Der Ring zeigt diesen Vorrat als Fortschrittsbalken auf einer Skala von 0 bis 1500 kg TS/ha und faerbt ihn nach dem jahreszeitlichen Zielbereich: rot = deutlich zu wenig (unter 200 kg praktisch leer), gruen = im Zielbereich, blaugruen = deutlich mehr als noetig. Der Zielbereich verschiebt sich uebers Jahr, z.B. Fruehling ca. 500-700, Sommer ca. 700-800, Herbst ca. 900-1200 kg TS/ha.',
-      'gw-layer-vor-meteodaten');
+    macheLayerToggle('DGV (kg TS/ha)', true, function(checked) { afcOn = checked; applyState(); },
+      'DGV (Durchschnittlicher GrasVorrat, international AFC = Average Farm Cover) schaetzt den aktuellen Grasvorrat des Betriebs in kg Trockensubstanz pro Hektare (kg TS/ha). Der Ring zeigt diesen Vorrat als Fortschrittsbalken auf einer Skala von 0 bis 1500 kg TS/ha und faerbt ihn nach dem jahreszeitlichen Zielbereich: rot = deutlich zu wenig (unter 200 kg praktisch leer), gruen = im Zielbereich, blaugruen = deutlich mehr als noetig. Der Zielbereich verschiebt sich uebers Jahr, z.B. Fruehling ca. 500-700, Sommer ca. 700-800, Herbst ca. 900-1200 kg TS/ha.');
 
-    // Kompakte AFC-Legende (Ring) DIREKT nach dem AFC-Schalter, statt erst
-    // ganz unten nach den Meteodaten-Ebenen/der Legende dazu - gehoert
-    // inhaltlich zum AFC-Schalter direkt darueber. aktualisiereAfcLegende()
-    // (siehe unten) blendet die Box aus, sobald AFC ausgeschaltet ist.
+    // Kompakte DGV-Legende (Ring) DIREKT nach dem DGV-Schalter - gehoert
+    // inhaltlich dazu. aktualisiereAfcLegende() (siehe unten) blendet die
+    // Box aus, sobald DGV ausgeschaltet ist.
     afcLegendeBox = document.createElement('div');
     afcLegendeBox.className = 'gw-layer-legende';
     afcLegendeBox.style.display = 'none';
     layerPanel.appendChild(afcLegendeBox);
+
+    macheLayerToggle('MeteoSchweiz-Stationen', false, function(checked) { smnStationenOn = checked; aktualisiereSmnStationen(); },
+      'Zeigt die oeffentlichen MeteoSchweiz-Automatikstationen (SwissMetNet) mit ihren aktuellsten Tageswerten (Lufttemperatur, Bodentemperatur, Niederschlag, Globalstrahlung, Sonnenscheindauer) als Diamant-Symbole. Reine Wetter-Referenzstationen, unabhaengig von der gewaehlten Kalenderwoche und NICHT Teil der AGFF-Grasmessungen. Bodentemperatur wird nur an einem Teil der rund 150 Stationen gemessen - dort steht im Tooltip entsprechend keine Daten.');
 
     // Schieberegler fuer die Fenstergroesse (Tage) der gleitendes-Fenster-
     // Ebenen (meteoFensterEbenen, siehe oben) - wird OBERHALB der Legende
@@ -3118,6 +3162,16 @@ function(el, x) {
       layerPanel.appendChild(zeile);
       return radio;
     }
+    // Ueberschrift statt Trennlinie: macht den Abschnittswechsel von den
+    // Standort-/Stations-Schaltern oben zu den flaechendeckenden MeteoSchweiz-
+    // Gitterdaten-Ebenen klar, ohne zusaetzlich eine Trennlinie zu brauchen.
+    // \"Gitterdatensatz\" ist MeteoSchweiz' eigener Fachbegriff fuer diese
+    // raeumlich interpolierten Produkte (RhiresD/TabsD/SrelD/...).
+    var meteoGitterHeading = document.createElement('div');
+    meteoGitterHeading.className = 'gw-layer-heading';
+    meteoGitterHeading.style.marginTop = '10px';
+    meteoGitterHeading.textContent = 'MeteoSchweiz-Gitterdaten';
+    layerPanel.appendChild(meteoGitterHeading);
     makeLayerRadio('keine', 'keine Meteodaten');
     radioNiederschlag = makeLayerRadio('niederschlag', layerLegenden.niederschlag.label);
     radioTemperatur = makeLayerRadio('temperatur', layerLegenden.temperatur.label,
