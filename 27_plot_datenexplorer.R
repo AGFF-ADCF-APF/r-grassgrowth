@@ -1811,9 +1811,19 @@ simuliere_wachstumspotenzial <- function(Ta, Tmax, Tmin, precip, PAR, ET0, jahr)
   list(GRO = GRO, cBM = cBM)
 }
 
+## VORLAEUFIG DEAKTIVIERT (2026-10-01, siehe Kommentar bei den Radio-Buttons
+## weiter unten im JS-Teil): Diagnose an echten AGFF-Messdaten zeigte, dass
+## das Modell nach einer laengeren Trockenperiode mit einem einzelnen
+## Regenereignis sofort auf fast volles Potenzial zurueckspringt, waehrend
+## reale Wiesen dafuer Wochen brauchen - keine Portierungsfehler, sondern
+## eine bekannte Schwaeche von ModVege's Bucket-Wassermodell ohne
+## Erholungsverzoegerung. Die Schleife bleibt vollstaendig erhalten (nur
+## uebersprungen), damit die Funktion nach einer Loesung einfach wieder
+## freigeschaltet werden kann.
+wachstumspotenzial_freigeschaltet <- FALSE
 wachstumspotenzial_raster_je_jahr <- list()
 wachstumspotenzial_kumuliert_je_jahr <- list()
-for (jr in jahre_mit_temperatur) {
+for (jr in if (wachstumspotenzial_freigeschaltet) jahre_mit_temperatur else character(0)) {
   if (is.null(tmax_raster_je_jahr[[jr]]) || is.null(tmin_raster_je_jahr[[jr]]) ||
       is.null(niederschlag_raster_je_jahr[[jr]]) || is.null(sonnenschein_raster_je_jahr[[jr]])) next
   gemeinsame_ext_mv <- terra::ext(tmax_raster_je_jahr[[jr]])
@@ -3625,15 +3635,20 @@ function(el, x) {
     radioBoden = makeLayerRadio('boden', layerLegenden.boden.label,
       'Der Boden wird vereinfacht wie ein Eimer betrachtet: Regen fuellt ihn, Verdunstung leert ihn. Ist der Eimer voll, laeuft der Ueberschuss ungenutzt ab. Wie viel taeglich verdunstet, wird aus den Temperaturen geschaetzt - ein feuchter Boden verdunstet mehr als ein bereits trockener. Der Wert zeigt den aktuellen Fuellstand: 100 mm = Boden gut mit Wasser versorgt, 0 mm = ausgetrocknet.',
       'gw-layer-vor-boden');
-    // Potenzielles Wachstum (ModVege/growR) - ebenfalls selbst berechnet wie
-    // Bodenwasserbilanz, deshalb hier direkt angeschlossen (kein eigener
-    // Trennstrich noetig). Zwei Varianten: Rate (direkt vergleichbar mit der
-    // gemessenen Graswachstum-Zahl) und Kumuliert (seit 1. Januar, wie
-    // Wachstumsgradtage).
-    radioWachstumspotenzialRate = makeLayerRadio('wachstumspotenzial_rate', layerLegenden.wachstumspotenzial_rate.label,
-      'Zeigt, wie viel Graswachstum das Klima (Temperatur, Strahlung, Wasserhaushalt) diese Woche pro Pixel maximal zulassen wuerde - OHNE Duengung/Naehrstofflimitierung und OHNE Schnitt/Beweidung (\"potenziell\", nicht real gemessen). Berechnet mit ModVege (Jouven et al. 2006, R-Paket growR), demselben Modell, das an den echten AGFF-Standorten validiert wurde. Direkt vergleichbar mit der gemessenen Graswachstum-Zahl (kg TS/ha/Tag).');
-    radioWachstumspotenzialKum = makeLayerRadio('wachstumspotenzial_kum', layerLegenden.wachstumspotenzial_kum.label,
-      'Wie \"Potenzielles Wachstum\", aber seit 1. Januar aufsummiert statt als Wochenwert - zeigt, wie viel sich uebers Jahr an klimatisch moeglichem (ungenutztem) Wachstum angesammelt hat.');
+    // Potenzielles Wachstum (ModVege/growR): VORLAEUFIG DEAKTIVIERT (2026-10-
+    // 01) - Diagnose an echten Messdaten (Flawil/Mattenhof, Duerre Sommer
+    // 2026) zeigte, dass das Modell nach Regen auf einen laengeren
+    // Trockenstress SOFORT auf fast volles Potenzial zurueckspringt (der
+    // 130mm-Bodenwasserspeicher fuellt sich mit einem einzelnen Regenereignis),
+    // waehrend reale Wiesen dafuer Wochen brauchen (Blattverlust/reduzierte
+    // Bestockung) - keine Portierungsfehler (Code stimmt exakt mit growR
+    // selbst ueberein), sondern eine bekannte Schwaeche von ModVege's
+    // Bucket-Wassermodell ohne Erholungsverzoegerung. Radios bewusst NICHT
+    // erzeugt, damit die Ebenen aus der UI verschwinden; die Berechnung
+    // selbst ist weiter oben per wachstumspotenzial_freigeschaltet <- FALSE
+    // abgeschaltet. Siehe outputs/vergleich_wachstumsmodelle/ fuer die
+    // Diagnose-Rohdaten, bis zur Loesung (z.B. eigene Erholungsverzoegerung)
+    // wieder einschalten.
     // Nachschlagetabelle Ebenenname -> Radio, fuer aktualisiereLayerLabels()
     // (haengt dort das Symbol/die Fenstergroesse an alle 5 Fenster-Ebenen).
     radioJeEbene = { niederschlag: radioNiederschlag, temperatur: radioTemperatur, bodentemperatur: radioBodentemperatur, sonnenschein: radioSonnenschein, et0: radioEt0 };
