@@ -20,7 +20,16 @@ lauf() {
 
 lauf >> /var/log/grassgrowth-lauf.log 2>&1 &
 
-echo "0 3 * * * cd /app && Rscript automate.R >> /var/log/grassgrowth-lauf.log 2>&1" | crontab -
+# PATH explizit setzen: Cron startet Jobs NICHT mit dem PATH des Containers/
+# der Shell, die die Crontab installiert (hier: dieses Skript), sondern mit
+# einem eigenen, minimalen Standard-PATH (meist nur /usr/bin:/bin) - ohne
+# diese Zeile schlug der naechtliche Lauf mit "Rscript: not found" fehl,
+# obwohl Rscript (unter /usr/local/bin) im Container ganz normal vorhanden
+# und ueber die interaktive Shell/dieses Skript selbst auffindbar war.
+{
+  echo "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  echo "0 2 * * * cd /app && Rscript automate.R >> /var/log/grassgrowth-lauf.log 2>&1"
+} | crontab -
 cron
 
 nginx -g "daemon off;"
