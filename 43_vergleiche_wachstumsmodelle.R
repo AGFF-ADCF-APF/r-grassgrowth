@@ -184,14 +184,22 @@ cat("\nStationen geladen:", length(wetter_je_station), "\n")
 ## SMN-Historie (nicht nur alle_jahre), da hier mehr Datenpunkte die
 ## Fehlerabschaetzung robuster machen und das ohnehin schon im Cache liegt.
 smn_lat_je_abbr <- setNames(alle_punkte$lat, alle_punkte$smn_abbr)
+# Astronomisch moegliche Tageslaenge N (FAO-56 Gl. 34). Angstroem-Prescott
+# braucht n/N - rSSD (growR-Eingabe) ist dagegen n/24h und darf hier NICHT
+# direkt eingesetzt werden (fuehrte in einer frueheren Fassung zu b_s ~ 1.0).
+tageslaenge_punkt <- function(J, phi) {
+  delta <- 0.409 * sin(2 * pi * J / 365 - 1.39)
+  24 / pi * acos(pmin(pmax(-tan(phi) * tan(delta), -1), 1))
+}
 strahlung_vergleich <- purrr::imap_dfr(wetter_je_station, function(wetter, abbr) {
   if (is.null(wetter) || nrow(wetter) == 0) return(NULL)
   phi <- smn_lat_je_abbr[[abbr]] * pi / 180
   ra_mj <- berechne_ra_punkt(wetter$DOY, phi) # MJ/m2/Tag, UNKONVERTIERT (siehe Hinweis bei et0-Berechnung)
-  rs_ap_mj <- (0.25 + 0.50 * wetter$rSSD) * ra_mj
+  n_N <- wetter$rSSD * 24 / tageslaenge_punkt(wetter$DOY, phi)
+  rs_ap_mj <- (0.25 + 0.50 * n_N) * ra_mj
   data.frame(
     abbr = abbr, year = wetter$year, DOY = wetter$DOY,
-    rSSD = wetter$rSSD, Ra_mj = ra_mj, # fuer eine spaetere Rekalibrierung von a_s/b_s mitgefuehrt
+    n_N = n_N, Ra_mj = ra_mj, # fuer eine spaetere Rekalibrierung von a_s/b_s mitgefuehrt
     SRad_gemessen = wetter$SRad, # W/m2, echte Messung (gre000d0)
     SRad_geschaetzt = rs_ap_mj * 11.574 # MJ/m2/Tag -> W/m2 Tagesmittel (*1e6/86400)
   )
@@ -238,21 +246,18 @@ ggsave(file.path(ausgabe_dir, "strahlung_schaetzfehler_monat.png"), p_monat, wid
 saveRDS(strahlung_vergleich, file.path(ausgabe_dir, "strahlung_vergleich.rds"))
 cat("\nPlots gespeichert:  strahlung_schaetzfehler_scatter.png, strahlung_schaetzfehler_monat.png\n")
 
-# Der Fehler ist gross, aber SEHR systematisch (Korrelation 0.947) - die
-# FAO-56-Standardwerte a_s=0.25/b_s=0.50 sind fuer Schweizer Verhaeltnisse
-# offenbar nicht passend. Re-Kalibrierung ueber dieselben Daten:
-# SRad_gemessen/(Ra*11.574) = a_s + b_s*rSSD  - eine einfache lineare
-# Regression liefert die Schweiz-spezifischen Koeffizienten direkt aus den
-# Daten statt den generischen FAO-Default weiterzuverwenden.
+# Re-Kalibrierung ueber dieselben Daten: SRad_gemessen/(Ra*11.574) =
+# a_s + b_s*n/N - lineare Regression (Ergebnis 2026-10: a_s=0.245,
+# b_s=0.561, nahe am FAO-56-Standard).
 strahlung_vergleich$y_kalibrierung <- strahlung_vergleich$SRad_gemessen / (strahlung_vergleich$Ra_mj * 11.574)
-kalib_modell <- lm(y_kalibrierung ~ rSSD, data = strahlung_vergleich)
+kalib_modell <- lm(y_kalibrierung ~ n_N, data = strahlung_vergleich)
 a_s_neu <- coef(kalib_modell)[["(Intercept)"]]
-b_s_neu <- coef(kalib_modell)[["rSSD"]]
+b_s_neu <- coef(kalib_modell)[["n_N"]]
 cat("\n=== Schweiz-kalibrierte Angstroem-Prescott-Koeffizienten ===\n")
 cat("a_s =", round(a_s_neu, 3), "(FAO-56-Standard: 0.25)\n")
 cat("b_s =", round(b_s_neu, 3), "(FAO-56-Standard: 0.50)\n")
 
-strahlung_vergleich$SRad_kalibriert <- (a_s_neu + b_s_neu * strahlung_vergleich$rSSD) * strahlung_vergleich$Ra_mj * 11.574
+strahlung_vergleich$SRad_kalibriert <- (a_s_neu + b_s_neu * strahlung_vergleich$n_N) * strahlung_vergleich$Ra_mj * 11.574
 cat("\nMit kalibrierten Koeffizienten:\n")
 cat("Bias:", round(mean(strahlung_vergleich$SRad_kalibriert - strahlung_vergleich$SRad_gemessen), 1), "W/m2\n")
 cat("RMSE:", round(sqrt(mean((strahlung_vergleich$SRad_kalibriert - strahlung_vergleich$SRad_gemessen)^2)), 1), "W/m2\n")
