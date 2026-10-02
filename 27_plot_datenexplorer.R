@@ -1811,16 +1811,13 @@ simuliere_wachstumspotenzial <- function(Ta, Tmax, Tmin, precip, PAR, ET0, jahr)
   list(GRO = GRO, cBM = cBM)
 }
 
-## VORLAEUFIG DEAKTIVIERT (2026-10-01, siehe Kommentar bei den Radio-Buttons
-## weiter unten im JS-Teil): Diagnose an echten AGFF-Messdaten zeigte, dass
-## das Modell nach einer laengeren Trockenperiode mit einem einzelnen
-## Regenereignis sofort auf fast volles Potenzial zurueckspringt, waehrend
-## reale Wiesen dafuer Wochen brauchen - keine Portierungsfehler, sondern
-## eine bekannte Schwaeche von ModVege's Bucket-Wassermodell ohne
-## Erholungsverzoegerung. Die Schleife bleibt vollstaendig erhalten (nur
-## uebersprungen), damit die Funktion nach einer Loesung einfach wieder
-## freigeschaltet werden kann.
-wachstumspotenzial_freigeschaltet <- FALSE
+## Experimentell: Die Ebenen werden berechnet, in der App aber nur mit dem
+## URL-Parameter ?experimentell angezeigt (siehe experimentellerModus im
+## JS-Teil). Grund: Abgleich mit AGFF-Messungen (Duerre 2026) zeigte, dass
+## ModVege's Ein-Eimer-Wassermodell nach Regen sofort auf volles Potenzial
+## zurueckspringt (keine Erholungsverzoegerung) und Grundwasserboeden (z.B.
+## Gampelen) nicht abbildet. FALSE ueberspringt die Berechnung ganz.
+wachstumspotenzial_freigeschaltet <- TRUE
 wachstumspotenzial_raster_je_jahr <- list()
 wachstumspotenzial_kumuliert_je_jahr <- list()
 for (jr in if (wachstumspotenzial_freigeschaltet) jahre_mit_temperatur else character(0)) {
@@ -2536,10 +2533,10 @@ function(el, x) {
     // entstuende dieselbe Doppel-Datum-Anzeige, die dort fuer boden extra
     // behoben werden musste.
     if (radioWachstumspotenzialRate && radioWachstumspotenzialRate.labelTextEl) {
-      radioWachstumspotenzialRate.labelTextEl.textContent = layerLegenden.wachstumspotenzial_rate.label + ' (berechnet)';
+      radioWachstumspotenzialRate.labelTextEl.textContent = layerLegenden.wachstumspotenzial_rate.label + ' (experimentell)';
     }
     if (radioWachstumspotenzialKum && radioWachstumspotenzialKum.labelTextEl) {
-      radioWachstumspotenzialKum.labelTextEl.textContent = layerLegenden.wachstumspotenzial_kum.label + ' (berechnet)';
+      radioWachstumspotenzialKum.labelTextEl.textContent = layerLegenden.wachstumspotenzial_kum.label + ' (experimentell)';
     }
     if (!radioBoden || !radioBoden.labelTextEl) return;
     // bodenCache.datum existiert erst, NACHDEM die Ebene einmal geladen
@@ -2967,6 +2964,7 @@ function(el, x) {
   var radioNiederschlag = null, radioBoden = null, radioTemperatur = null, radioBodentemperatur = null;
   var radioSonnenschein = null, radioEt0 = null, radioGdd = null;
   var radioWachstumspotenzialRate = null, radioWachstumspotenzialKum = null;
+  var experimentellerModus = new URLSearchParams(window.location.search).has('experimentell');
   var radioJeEbene = {};
   function aktualisiereLayerVerfuegbarkeit() {
     if (radioNiederschlag) radioNiederschlag.disabled = !ebeneHatJahr('niederschlag', selectedYear);
@@ -3104,7 +3102,7 @@ function(el, x) {
       var label = (hintergrundEbene === 'boden')
         ? (layerLegenden.boden.label + ' (berechnet)')
         : (hintergrundEbene === 'wachstumspotenzial_rate' || hintergrundEbene === 'wachstumspotenzial_kum')
-        ? (layerLegenden[hintergrundEbene].label + ' (berechnet)')
+        ? (layerLegenden[hintergrundEbene].label + ' (experimentell)')
         : ((radio && radio.labelTextEl) ? radio.labelTextEl.textContent : hintergrundEbene);
       var cacheEintrag = ebenenCache[ebeneDateiSchluessel(hintergrundEbene)];
       var werteEintrag = cacheEintrag && cacheEintrag.werte && cacheEintrag.werte[selectedYear + ' ' + selectedWeek];
@@ -3635,20 +3633,15 @@ function(el, x) {
     radioBoden = makeLayerRadio('boden', layerLegenden.boden.label,
       'Der Boden wird vereinfacht wie ein Eimer betrachtet: Regen fuellt ihn, Verdunstung leert ihn. Ist der Eimer voll, laeuft der Ueberschuss ungenutzt ab. Wie viel taeglich verdunstet, wird aus den Temperaturen geschaetzt - ein feuchter Boden verdunstet mehr als ein bereits trockener. Der Wert zeigt den aktuellen Fuellstand: 100 mm = Boden gut mit Wasser versorgt, 0 mm = ausgetrocknet.',
       'gw-layer-vor-boden');
-    // Potenzielles Wachstum (ModVege/growR): VORLAEUFIG DEAKTIVIERT (2026-10-
-    // 01) - Diagnose an echten Messdaten (Flawil/Mattenhof, Duerre Sommer
-    // 2026) zeigte, dass das Modell nach Regen auf einen laengeren
-    // Trockenstress SOFORT auf fast volles Potenzial zurueckspringt (der
-    // 130mm-Bodenwasserspeicher fuellt sich mit einem einzelnen Regenereignis),
-    // waehrend reale Wiesen dafuer Wochen brauchen (Blattverlust/reduzierte
-    // Bestockung) - keine Portierungsfehler (Code stimmt exakt mit growR
-    // selbst ueberein), sondern eine bekannte Schwaeche von ModVege's
-    // Bucket-Wassermodell ohne Erholungsverzoegerung. Radios bewusst NICHT
-    // erzeugt, damit die Ebenen aus der UI verschwinden; die Berechnung
-    // selbst ist weiter oben per wachstumspotenzial_freigeschaltet <- FALSE
-    // abgeschaltet. Siehe outputs/vergleich_wachstumsmodelle/ fuer die
-    // Diagnose-Rohdaten, bis zur Loesung (z.B. eigene Erholungsverzoegerung)
-    // wieder einschalten.
+    // Potenzielles Wachstum (ModVege/growR): experimentell, nur mit
+    // ?experimentell in der URL sichtbar (siehe wachstumspotenzial_
+    // freigeschaltet im R-Teil fuer die bekannten Schwaechen).
+    if (experimentellerModus) {
+      radioWachstumspotenzialRate = makeLayerRadio('wachstumspotenzial_rate', layerLegenden.wachstumspotenzial_rate.label,
+        'EXPERIMENTELL. Zeigt, wie viel Graswachstum das Klima (Temperatur, Strahlung, Wasserhaushalt) diese Woche pro Pixel maximal zulassen wuerde - ohne Naehrstofflimitierung und ohne Schnitt/Beweidung. Berechnet mit ModVege (Jouven et al. 2006, R-Paket growR). Bekannte Schwaechen: nach Regen auf eine Trockenperiode springt das Modell sofort auf volles Potenzial zurueck (reale Wiesen brauchen dafuer Wochen), und Grundwasserboeden werden nicht abgebildet.');
+      radioWachstumspotenzialKum = makeLayerRadio('wachstumspotenzial_kum', layerLegenden.wachstumspotenzial_kum.label,
+        'EXPERIMENTELL. Wie Potenzielles Wachstum, aber seit 1. Januar aufsummiert - zeigt, wie viel sich uebers Jahr an klimatisch moeglichem (ungenutztem) Wachstum angesammelt hat. Gleiche bekannte Schwaechen bei Trockenheit.');
+    }
     // Nachschlagetabelle Ebenenname -> Radio, fuer aktualisiereLayerLabels()
     // (haengt dort das Symbol/die Fenstergroesse an alle 5 Fenster-Ebenen).
     radioJeEbene = { niederschlag: radioNiederschlag, temperatur: radioTemperatur, bodentemperatur: radioBodentemperatur, sonnenschein: radioSonnenschein, et0: radioEt0 };
