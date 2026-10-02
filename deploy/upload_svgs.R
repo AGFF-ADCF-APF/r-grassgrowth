@@ -10,6 +10,25 @@
 # liegt und nicht versioniert ist.
 library(RCurl)
 
+out_dir <- Sys.getenv("GRASSGROWTH_OUT_DIR", "outputs")
+mapfile <- file.path(out_dir, "Graswachstumskarte_aktuell.svg")
+curvefile <- file.path(out_dir, "Graswachstumskurve_aktuell.svg")
+
+# svglite schreibt nur die im Container aufgeloeste Schrift ("Nimbus Sans"),
+# die kaum ein Endgeraet hat - der Browser faellt dann auf seine (oft
+# Serifen-)Standardschrift zurueck. Ersatzkette mit laufweitengleichen
+# Schriften, damit das Layout identisch bleibt. Gilt auch fuer die Vorschau
+# auf apps.graswachstum.ch (nginx liefert dieselben Dateien aus).
+svg_schrift_ersatz <- function(datei) {
+  if (!file.exists(datei)) return(invisible(FALSE))
+  x <- readLines(datei, warn = FALSE)
+  x <- gsub('font-family: "[^"]*";', 'font-family: Arial, Helvetica, "Liberation Sans", "Nimbus Sans", sans-serif;', x)
+  writeLines(x, datei, useBytes = TRUE)
+  invisible(TRUE)
+}
+svg_schrift_ersatz(mapfile)
+svg_schrift_ersatz(curvefile)
+
 ftp_host <- Sys.getenv("FTP_HOST")
 ftp_user <- Sys.getenv("FTP_USER")
 ftp_passwd <- Sys.getenv("FTP_PASSWORD")
@@ -18,10 +37,6 @@ if (!nzchar(ftp_host) || !nzchar(ftp_user) || !nzchar(ftp_passwd)) {
   cat("FTP-Upload uebersprungen: FTP_HOST/FTP_USER/FTP_PASSWORD nicht gesetzt (siehe deploy/.env).\n")
   quit(save = "no", status = 0)
 }
-
-out_dir <- Sys.getenv("GRASSGROWTH_OUT_DIR", "outputs")
-mapfile <- file.path(out_dir, "Graswachstumskarte_aktuell.svg")
-curvefile <- file.path(out_dir, "Graswachstumskurve_aktuell.svg")
 
 ftp_base_url <- paste0("ftp://", ftp_host, "/")
 ftp_handle <- RCurl::getCurlHandle(userpwd = paste0(ftp_user, ":", ftp_passwd), ftp.create.missing.dirs = TRUE)
