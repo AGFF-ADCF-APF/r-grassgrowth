@@ -1654,6 +1654,12 @@ modvege_P <- list(
 modvege_P$minBMGV <- modvege_P$stubble_height * 10 * modvege_P$BDGV
 modvege_P$minBMGR <- modvege_P$stubble_height * 10 * modvege_P$BDGR
 modvege_P$REP_ON <- 0.25 + (0.75 * (modvege_P$NI - 0.35)) / 0.65 # = 1.0 bei NI=1
+# Nur fuer das optionale Schnittverfahren (growR-Defaults und Tabelle
+# management_parameters, Intensitaet "high").
+modvege_P$BDDV <- 500; modvege_P$BDDR <- 150
+modvege_P$cut_height <- 0.05; modvege_P$last_DOY_for_initial_cut <- 150; modvege_P$max_cut_delay <- 5
+modvege_schnitt_hoehen <- c(500, 700, 900, 1100, 1300)
+modvege_schnitt_anzahl <- c(5.5, 5, 4, 3.5, 3)
 modvege_init <- list(AgeGV = 100, AgeGR = 2000, AgeDV = 500, AgeDR = 500,
                       BMGV = 420, BMGR = 0, BMDV = 300, BMDR = 30, WR = 130)
 
@@ -1668,7 +1674,12 @@ modvege_init <- list(AgeGV = 100, AgeGR = 2000, AgeDV = 500, AgeDR = 500,
 # darf je Tag hoechstens um 1/erholung_tage steigen, Verschlechterungen
 # wirken sofort - volle Erholung aus totalem Stress dauert also
 # erholung_tage Tage. Der Wasserhaushalt (Transpiration) bleibt unveraendert.
-simuliere_wachstumspotenzial <- function(Ta, precip, PAR, ET0, jahr, erholung_tage = 0) {
+# schnitt_hoehe (m ue. M. je Zelle): automatische Schnitte nach growR
+# (determine_cut_automatically/apply_cuts, Intensitaet "high") - nur fuer
+# Auswertungen (45_sentinel_erholung.R), die Karte rechnet ohne Schnitt.
+# mit_lai: zusaetzlich gruenes LAI und Schnitttage je Zelle/Tag zurueckgeben.
+simuliere_wachstumspotenzial <- function(Ta, precip, PAR, ET0, jahr, erholung_tage = 0,
+                                         schnitt_hoehe = NULL, mit_lai = FALSE) {
   n_zellen <- nrow(Ta); n_tage <- ncol(Ta)
   co2_ppm <- modvege_atmospheric_CO2(jahr)
   co2_wachstum <- modvege_fCO2_growth(co2_ppm, modvege_P$CO2_growth_factor)
@@ -1722,6 +1733,25 @@ simuliere_wachstumspotenzial <- function(Ta, precip, PAR, ET0, jahr, erholung_ta
   SENGV <- rep(0, n_zellen); SENGR <- rep(0, n_zellen); ABSDV <- rep(0, n_zellen); ABSDR <- rep(0, n_zellen)
   WRp <- rep(modvege_init$WR, n_zellen); cBMp <- rep(0, n_zellen)
   fW_wachstum_prev <- rep(1, n_zellen)
+  schnitt_in_wachstumsphase <- rep(FALSE, n_zellen)
+  if (mit_lai) { LAI <- matrix(0, n_zellen, n_tage); SCHNITT <- matrix(FALSE, n_zellen, n_tage) }
+
+  schneiden_aktiv <- !is.null(schnitt_hoehe)
+  if (schneiden_aktiv) {
+    P <- modvege_P
+    bm_nach_schnitt <- P$cut_height * 10 * (P$BDGV + P$BDGR + P$BDDV + P$BDDR)
+    jahresertrag <- (15.9 - 0.0058 * pmax(schnitt_hoehe, 500)) * 1000
+    ende_schnittsaison <- (bm_nach_schnitt - jahresertrag * 0.4896) / (jahresertrag * -0.001228)
+    erwartete_schnitte <- vapply(schnitt_hoehe, function(h) {
+      i0 <- which.min(abs(modvege_schnitt_hoehen - h)); i1 <- which.min(abs(modvege_schnitt_hoehen[-i0] - h))
+      a0 <- modvege_schnitt_hoehen[i0]; a1 <- modvege_schnitt_hoehen[-i0][i1]
+      n0 <- modvege_schnitt_anzahl[i0]; n1 <- modvege_schnitt_anzahl[-i0][i1]
+      (n1 - n0) / (a1 - a0) * (h - a0) + n0
+    }, numeric(1))
+    max_schnittintervall <- round((ende_schnittsaison - 150) / erwartete_schnitte)
+    letzter_schnitt <- rep(NA_real_, n_zellen); n_schnitte <- rep(0L, n_zellen); verzoegerung <- rep(0, n_zellen)
+    trocken <- precip < 1
+  }
 
   T_melt <- -1; C_melt <- 3; C_freeze <- 0.05
   for (j in 1:n_tage) {
@@ -1741,6 +1771,7 @@ simuliere_wachstumspotenzial <- function(Ta, precip, PAR, ET0, jahr, erholung_ta
     LAIGV <- modvege_P$SLA * modvege_P$pcLAM * BMGVp / 10
     LAI_ET <- modvege_P$SLA * modvege_P$pcLAM * (BMGVp + BMGRp) / 10
     PETeff <- ifelse(precip[, j] > 1, 0.7 * modvege_P$crop_coefficient * ET0[, j], modvege_P$crop_coefficient * ET0[, j])
+    PETeff <- ifelse(schnee_heute > 5, 0.2, PETeff) # growR: unter Schneedecke minimale Verdunstung
     PETeff <- PETeff * co2_transpiration
     PTr <- PETeff * (1 - exp(-0.6 * LAI_ET))
     ATr <- PTr * modvege_fW(WRp / modvege_P$WHC, PETeff)
@@ -1759,7 +1790,7 @@ simuliere_wachstumspotenzial <- function(Ta, precip, PAR, ET0, jahr, erholung_ta
     GRO[, j] <- ifelse(vor_saisonstart, 0, modvege_P$NI * PGRO_tag * ENV *
       modvege_SEA(ST_heute, modvege_P$minSEA, modvege_P$maxSEA, modvege_P$ST1, modvege_P$ST2))
 
-    REP <- ifelse(ST_heute >= modvege_P$ST1 & ST_heute <= modvege_P$ST2, modvege_P$REP_ON, 0)
+    REP <- ifelse(!schnitt_in_wachstumsphase & ST_heute >= modvege_P$ST1 & ST_heute <= modvege_P$ST2, modvege_P$REP_ON, 0)
     GROGV <- GRO[, j] * (1 - REP)
     GROGR <- GRO[, j] * REP
 
@@ -1800,9 +1831,15 @@ simuliere_wachstumspotenzial <- function(Ta, precip, PAR, ET0, jahr, erholung_ta
     dBMGR <- GROGR - SENGR
     BMGV_heute <- BMGVp + dBMGV
     BMGR_heute <- BMGRp + dBMGR
+    # Mindestbestand ab ST2 - wie growR's update_biomass() inkl. angepasster
+    # Tageszunahme (zaehlt fuer dBM/cBM).
     spaetsaison <- ST_heute >= modvege_P$ST2
-    BMGV_heute <- ifelse(spaetsaison & BMGV_heute < modvege_P$minBMGV, modvege_P$minBMGV, BMGV_heute)
-    BMGR_heute <- ifelse(spaetsaison & BMGR_heute < modvege_P$minBMGR, modvege_P$minBMGR, BMGR_heute)
+    gv_boden <- spaetsaison & BMGV_heute < modvege_P$minBMGV
+    gr_boden <- spaetsaison & BMGR_heute < modvege_P$minBMGR
+    BMGV_heute <- ifelse(gv_boden, modvege_P$minBMGV, BMGV_heute)
+    BMGR_heute <- ifelse(gr_boden, modvege_P$minBMGR, BMGR_heute)
+    dBMGV <- ifelse(gv_boden, BMGV_heute - BMGVp, dBMGV)
+    dBMGR <- ifelse(gr_boden, BMGR_heute - BMGRp, dBMGR)
 
     dBMDV <- (1 - modvege_P$sigmaGV) * SENGV - ABSDV
     dBMDR <- (1 - modvege_P$sigmaGR) * SENGR - ABSDR
@@ -1811,11 +1848,35 @@ simuliere_wachstumspotenzial <- function(Ta, precip, PAR, ET0, jahr, erholung_ta
     dBM_heute <- dBMGV + dBMGR + dBMDV + dBMDR
     cBM[, j] <- cBMp + pmax(0, dBM_heute)
 
+    if (schneiden_aktiv) {
+      bm_heute <- BMGV_heute + BMGR_heute + BMDV_heute + BMDR_heute
+      zielbiomasse <- pmax((-0.1228 * max(130, j) + 48.96) * 0.01 * jahresertrag, bm_nach_schnitt)
+      faellig <- bm_heute >= zielbiomasse
+      faellig <- faellig | ifelse(n_schnitte == 0, j > modvege_P$last_DOY_for_initial_cut,
+                                  j - letzter_schnitt > max_schnittintervall)
+      faellig <- faellig & j <= ende_schnittsaison
+      trockenfenster <- rowSums(!trocken[, max(j - 1, 1):min(j + 2, n_tage), drop = FALSE]) == 0
+      schnitt <- faellig & (trockenfenster | verzoegerung >= modvege_P$max_cut_delay)
+      verzoegerung <- ifelse(schnitt, 0, ifelse(faellig, verzoegerung + 1, verzoegerung))
+      schnitt_in_wachstumsphase <- schnitt_in_wachstumsphase |
+        (schnitt & ST_heute >= modvege_P$ST1 & ST_heute <= modvege_P$ST2)
+      rest <- function(bm_vortag, dichte) pmin(bm_vortag, modvege_P$cut_height * 10 * dichte)
+      BMGV_heute <- ifelse(schnitt, rest(BMGVp, modvege_P$BDGV), BMGV_heute)
+      BMDV_heute <- ifelse(schnitt, rest(BMDVp, modvege_P$BDDV), BMDV_heute)
+      BMGR_heute <- ifelse(schnitt, rest(BMGRp, modvege_P$BDGR), BMGR_heute)
+      BMDR_heute <- ifelse(schnitt, rest(BMDRp, modvege_P$BDDR), BMDR_heute)
+      letzter_schnitt <- ifelse(schnitt, j, letzter_schnitt)
+      n_schnitte <- n_schnitte + schnitt
+      if (mit_lai) SCHNITT[, j] <- schnitt
+    }
+    if (mit_lai) LAI[, j] <- modvege_P$SLA * modvege_P$pcLAM * (BMGV_heute + BMGR_heute) / 10
+
     ST_prev <- ST_heute; schnee_prev <- schnee_heute
     AgeGVp <- AgeGV_heute; AgeGRp <- AgeGR_heute; AgeDVp <- AgeDV_heute; AgeDRp <- AgeDR_heute
     BMGVp <- BMGV_heute; BMGRp <- BMGR_heute; BMDVp <- BMDV_heute; BMDRp <- BMDR_heute
     cBMp <- cBM[, j]; WRp <- WR_heute
   }
+  if (mit_lai) return(list(GRO = GRO, cBM = cBM, LAI = LAI, SCHNITT = SCHNITT))
   list(GRO = GRO, cBM = cBM)
 }
 
