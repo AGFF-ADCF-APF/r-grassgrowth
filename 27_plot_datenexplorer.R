@@ -2205,7 +2205,7 @@ function(el, x) {
   // Potenzielles Wachstum: je Stufe der Erholungsverzoegerung eine eigene
   // Datei <name>_e<stufe> (siehe R: erholung_stufen_tage).
   var erholungStufen = [0, 7, 14, 21];
-  var erholung = 0;
+  var erholung = 14;
   function istErholungsEbene(name) { return name === 'wachstumspotenzial_rate' || name === 'wachstumspotenzial_kum'; }
   function ebeneDateiSchluessel(name) {
     if (istFensterEbene(name)) return name + '_' + meteoFenster;
