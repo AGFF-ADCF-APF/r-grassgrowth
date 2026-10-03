@@ -1657,6 +1657,8 @@ modvege_P$REP_ON <- 0.25 + (0.75 * (modvege_P$NI - 0.35)) / 0.65 # = 1.0 bei NI=
 # Nur fuer das optionale Schnittverfahren (growR-Defaults und Tabelle
 # management_parameters, Intensitaet "high").
 modvege_P$BDDV <- 500; modvege_P$BDDR <- 150
+modvege_P$maxOMDGV <- 0.9; modvege_P$minOMDGV <- 0.705; modvege_P$maxOMDGR <- 0.9; modvege_P$minOMDGR <- 0.59
+modvege_P$OMDDV <- 0.45; modvege_P$OMDDR <- 0.4
 modvege_P$cut_height <- 0.05; modvege_P$last_DOY_for_initial_cut <- 150; modvege_P$max_cut_delay <- 5
 modvege_schnitt_hoehen <- c(500, 700, 900, 1100, 1300)
 modvege_schnitt_anzahl <- c(5.5, 5, 4, 3.5, 3)
@@ -1677,10 +1679,23 @@ modvege_init <- list(AgeGV = 100, AgeGR = 2000, AgeDV = 500, AgeDR = 500,
 # schnitt_hoehe (m ue. M. je Zelle): automatische Schnitte nach growR
 # (determine_cut_automatically/apply_cuts, Intensitaet "high") - nur fuer
 # Auswertungen (45_sentinel_erholung.R), die Karte rechnet ohne Schnitt.
-# mit_lai: zusaetzlich gruenes LAI und Schnitttage je Zelle/Tag zurueckgeben.
+# schnitt_matrix (logisch, Zelle x Tag): Schnitte an vorgegebenen Tagen (wie
+# growR's determine_cut_from_input), hat Vorrang vor schnitt_hoehe.
+# parameter/init: Listen, die einzelne Eintraege von modvege_P/modvege_init
+# ueberschreiben (z.B. andere Artenmischung, NI, Startwerte je Standort).
+# mit_lai: zusaetzlich gruenes LAI, Verdaulichkeit OMD (vor dem Schnitt),
+# Erntemenge und Schnitttage je Zelle/Tag zurueckgeben.
 simuliere_wachstumspotenzial <- function(Ta, precip, PAR, ET0, jahr, erholung_tage = 0,
-                                         schnitt_hoehe = NULL, mit_lai = FALSE) {
+                                         schnitt_hoehe = NULL, mit_lai = FALSE,
+                                         schnitt_matrix = NULL, parameter = NULL, init = NULL) {
   n_zellen <- nrow(Ta); n_tage <- ncol(Ta)
+  if (!is.null(parameter)) {
+    for (n in names(parameter)) modvege_P[[n]] <- parameter[[n]]
+    modvege_P$minBMGV <- modvege_P$stubble_height * 10 * modvege_P$BDGV
+    modvege_P$minBMGR <- modvege_P$stubble_height * 10 * modvege_P$BDGR
+    modvege_P$REP_ON <- 0.25 + (0.75 * (modvege_P$NI - 0.35)) / 0.65
+  }
+  if (!is.null(init)) for (n in names(init)) modvege_init[[n]] <- init[[n]]
   co2_ppm <- modvege_atmospheric_CO2(jahr)
   co2_wachstum <- modvege_fCO2_growth(co2_ppm, modvege_P$CO2_growth_factor)
   co2_transpiration <- modvege_fCO2_transpiration(co2_ppm)
@@ -1734,10 +1749,14 @@ simuliere_wachstumspotenzial <- function(Ta, precip, PAR, ET0, jahr, erholung_ta
   WRp <- rep(modvege_init$WR, n_zellen); cBMp <- rep(0, n_zellen)
   fW_wachstum_prev <- rep(1, n_zellen)
   schnitt_in_wachstumsphase <- rep(FALSE, n_zellen)
-  if (mit_lai) { LAI <- matrix(0, n_zellen, n_tage); SCHNITT <- matrix(FALSE, n_zellen, n_tage) }
+  if (mit_lai) {
+    LAI <- matrix(0, n_zellen, n_tage); SCHNITT <- matrix(FALSE, n_zellen, n_tage)
+    OMD <- matrix(NA_real_, n_zellen, n_tage); ERNTE <- matrix(0, n_zellen, n_tage)
+  }
 
-  schneiden_aktiv <- !is.null(schnitt_hoehe)
-  if (schneiden_aktiv) {
+  schnitt_vorgegeben <- !is.null(schnitt_matrix)
+  schneiden_aktiv <- schnitt_vorgegeben || !is.null(schnitt_hoehe)
+  if (schneiden_aktiv && !schnitt_vorgegeben) {
     P <- modvege_P
     bm_nach_schnitt <- P$cut_height * 10 * (P$BDGV + P$BDGR + P$BDDV + P$BDDR)
     jahresertrag <- (15.9 - 0.0058 * pmax(schnitt_hoehe, 500)) * 1000
@@ -1749,9 +1768,9 @@ simuliere_wachstumspotenzial <- function(Ta, precip, PAR, ET0, jahr, erholung_ta
       (n1 - n0) / (a1 - a0) * (h - a0) + n0
     }, numeric(1))
     max_schnittintervall <- round((ende_schnittsaison - 150) / erwartete_schnitte)
-    letzter_schnitt <- rep(NA_real_, n_zellen); n_schnitte <- rep(0L, n_zellen); verzoegerung <- rep(0, n_zellen)
     trocken <- precip < 1
   }
+  if (schneiden_aktiv) { letzter_schnitt <- rep(NA_real_, n_zellen); n_schnitte <- rep(0L, n_zellen); verzoegerung <- rep(0, n_zellen) }
 
   T_melt <- -1; C_melt <- 3; C_freeze <- 0.05
   for (j in 1:n_tage) {
@@ -1848,23 +1867,38 @@ simuliere_wachstumspotenzial <- function(Ta, precip, PAR, ET0, jahr, erholung_ta
     dBM_heute <- dBMGV + dBMGR + dBMDV + dBMDR
     cBM[, j] <- cBMp + pmax(0, dBM_heute)
 
+    if (mit_lai) {
+      # growR's calculate_digestibility() - vor dem Schnitt, also die
+      # Qualitaet des gesamten stehenden Bestands am Schnitttag.
+      bm_vor <- BMGV_heute + BMGR_heute + BMDV_heute + BMDR_heute
+      omdgv <- modvege_P$maxOMDGV - AgeGV_heute * (modvege_P$maxOMDGV - modvege_P$minOMDGV) / modvege_P$LLS
+      omdgr <- modvege_P$maxOMDGR - AgeGR_heute * (modvege_P$maxOMDGR - modvege_P$minOMDGR) / (modvege_P$ST2 - modvege_P$ST1)
+      OMD[, j] <- (omdgv * BMGV_heute + omdgr * BMGR_heute + modvege_P$OMDDV * BMDV_heute + modvege_P$OMDDR * BMDR_heute) / bm_vor
+    }
     if (schneiden_aktiv) {
-      bm_heute <- BMGV_heute + BMGR_heute + BMDV_heute + BMDR_heute
-      zielbiomasse <- pmax((-0.1228 * max(130, j) + 48.96) * 0.01 * jahresertrag, bm_nach_schnitt)
-      faellig <- bm_heute >= zielbiomasse
-      faellig <- faellig | ifelse(n_schnitte == 0, j > modvege_P$last_DOY_for_initial_cut,
-                                  j - letzter_schnitt > max_schnittintervall)
-      faellig <- faellig & j <= ende_schnittsaison
-      trockenfenster <- rowSums(!trocken[, max(j - 1, 1):min(j + 2, n_tage), drop = FALSE]) == 0
-      schnitt <- faellig & (trockenfenster | verzoegerung >= modvege_P$max_cut_delay)
-      verzoegerung <- ifelse(schnitt, 0, ifelse(faellig, verzoegerung + 1, verzoegerung))
+      if (schnitt_vorgegeben) {
+        schnitt <- schnitt_matrix[, j]
+      } else {
+        bm_heute <- BMGV_heute + BMGR_heute + BMDV_heute + BMDR_heute
+        zielbiomasse <- pmax((-0.1228 * max(130, j) + 48.96) * 0.01 * jahresertrag, bm_nach_schnitt)
+        faellig <- bm_heute >= zielbiomasse
+        faellig <- faellig | ifelse(n_schnitte == 0, j > modvege_P$last_DOY_for_initial_cut,
+                                    j - letzter_schnitt > max_schnittintervall)
+        faellig <- faellig & j <= ende_schnittsaison
+        trockenfenster <- rowSums(!trocken[, max(j - 1, 1):min(j + 2, n_tage), drop = FALSE]) == 0
+        schnitt <- faellig & (trockenfenster | verzoegerung >= modvege_P$max_cut_delay)
+        verzoegerung <- ifelse(schnitt, 0, ifelse(faellig, verzoegerung + 1, verzoegerung))
+      }
       schnitt_in_wachstumsphase <- schnitt_in_wachstumsphase |
         (schnitt & ST_heute >= modvege_P$ST1 & ST_heute <= modvege_P$ST2)
       rest <- function(bm_vortag, dichte) pmin(bm_vortag, modvege_P$cut_height * 10 * dichte)
-      BMGV_heute <- ifelse(schnitt, rest(BMGVp, modvege_P$BDGV), BMGV_heute)
-      BMDV_heute <- ifelse(schnitt, rest(BMDVp, modvege_P$BDDV), BMDV_heute)
-      BMGR_heute <- ifelse(schnitt, rest(BMGRp, modvege_P$BDGR), BMGR_heute)
-      BMDR_heute <- ifelse(schnitt, rest(BMDRp, modvege_P$BDDR), BMDR_heute)
+      neu_gv <- ifelse(schnitt, rest(BMGVp, modvege_P$BDGV), BMGV_heute)
+      neu_dv <- ifelse(schnitt, rest(BMDVp, modvege_P$BDDV), BMDV_heute)
+      neu_gr <- ifelse(schnitt, rest(BMGRp, modvege_P$BDGR), BMGR_heute)
+      neu_dr <- ifelse(schnitt, rest(BMDRp, modvege_P$BDDR), BMDR_heute)
+      # Erntemenge wie growR's hvBM-Zuwachs: Vortagesbestand minus Rest
+      if (mit_lai) ERNTE[, j] <- ifelse(schnitt, (BMGVp - neu_gv) + (BMGRp - neu_gr) + (BMDVp - neu_dv) + (BMDRp - neu_dr), 0)
+      BMGV_heute <- neu_gv; BMDV_heute <- neu_dv; BMGR_heute <- neu_gr; BMDR_heute <- neu_dr
       letzter_schnitt <- ifelse(schnitt, j, letzter_schnitt)
       n_schnitte <- n_schnitte + schnitt
       if (mit_lai) SCHNITT[, j] <- schnitt
@@ -1876,7 +1910,7 @@ simuliere_wachstumspotenzial <- function(Ta, precip, PAR, ET0, jahr, erholung_ta
     BMGVp <- BMGV_heute; BMGRp <- BMGR_heute; BMDVp <- BMDV_heute; BMDRp <- BMDR_heute
     cBMp <- cBM[, j]; WRp <- WR_heute
   }
-  if (mit_lai) return(list(GRO = GRO, cBM = cBM, LAI = LAI, SCHNITT = SCHNITT))
+  if (mit_lai) return(list(GRO = GRO, cBM = cBM, LAI = LAI, SCHNITT = SCHNITT, OMD = OMD, ERNTE = ERNTE))
   list(GRO = GRO, cBM = cBM)
 }
 
@@ -2217,6 +2251,22 @@ layer_legenden <- list(
   wachstumspotenzial_kum = list(label = "Potenzielles Wachstum, kumuliert", farben = farben_zu_hex(wachstumspotenzial_kum_farben), bereich = c(0, 18000), fensterSkaliert = FALSE, symbol = NULL, einheit = "kg TS/ha", quelle = wachstumspotenzial_quelle)
 )
 
+# Schnittanalyse Testgebiet (experimentell): Bilder/Werte schreibt
+# 47_ertrag_qualitaet.R einmalig nach outputs/ebenen/ (nicht naechtlich);
+# hier nur die kleine Indexdatei lesen und Schluessel/Legenden uebernehmen.
+schnittanalyse_index <- file.path(ebenen_dir, "schnittanalyse_index.json")
+schnittanalyse_gebiet <- NULL
+if (file.exists(schnittanalyse_index)) {
+  sa <- jsonlite::fromJSON(schnittanalyse_index, simplifyVector = FALSE)
+  schnittanalyse_gebiet <- sa$gebiet
+  for (n in names(sa$ebenen)) {
+    e <- sa$ebenen[[n]]
+    ebenen_schluessel[[n]] <- unlist(e$schluessel)
+    layer_legenden[[n]] <- list(label = e$label, farben = unlist(e$farben), bereich = unlist(e$bereich), fensterSkaliert = FALSE,
+                                symbol = NULL, einheit = e$einheit, quelle = e$quelle, ausserhalb = "ausserhalb des Testgebiets")
+  }
+}
+
 ########################################################################
 ## 4. Verknuepfung: Jahr-Auswahl, Standort-Sidebar, Kalenderwochen-
 ##    Schieberegler, Karten-Hervorhebung - als onRender() auf der Kurve.
@@ -2249,6 +2299,9 @@ function(el, x) {
   // beim ersten Auswaehlen der jeweiligen Ebene nachgeladen (siehe unten) -
   // ebenenCache haelt sie danach im Speicher (kein wiederholtes Nachladen).
   var ebenenSchluessel = __EBENEN_SCHLUESSEL__;
+  var schnittanalyseGebiet = __SCHNITTANALYSE_GEBIET__;
+  var schnittRadios = [];
+  function istSchnittEbene(name) { return name.indexOf('schnittanalyse_') === 0; }
   var ebenenCache = {};
   // Ebenen mit waehlbarer Fenstergroesse (Schieberegler oberhalb der
   // Legende, siehe macheMeteoFensterSchieberegler() weiter unten) - deren
@@ -3076,7 +3129,9 @@ function(el, x) {
     if (radioGdd) radioGdd.disabled = !ebeneHatJahr('gdd', selectedYear);
     if (radioWachstumspotenzialRate) radioWachstumspotenzialRate.disabled = !ebeneHatJahr('wachstumspotenzial_rate', selectedYear);
     if (radioWachstumspotenzialKum) radioWachstumspotenzialKum.disabled = !ebeneHatJahr('wachstumspotenzial_kum', selectedYear);
-    if ((hintergrundEbene === 'niederschlag' && radioNiederschlag && radioNiederschlag.disabled) ||
+    schnittRadios.forEach(function(r) { r.disabled = !ebeneHatJahr(r.value, selectedYear); });
+    var schnittWeg = schnittRadios.some(function(r) { return hintergrundEbene === r.value && r.disabled; });
+    if (schnittWeg || (hintergrundEbene === 'niederschlag' && radioNiederschlag && radioNiederschlag.disabled) ||
         (hintergrundEbene === 'boden' && radioBoden && radioBoden.disabled) ||
         (hintergrundEbene === 'temperatur' && radioTemperatur && radioTemperatur.disabled) ||
         (hintergrundEbene === 'bodentemperatur' && radioBodentemperatur && radioBodentemperatur.disabled) ||
@@ -3203,7 +3258,8 @@ function(el, x) {
         ? (layerLegenden.boden.label + ' (berechnet)')
         : (hintergrundEbene === 'wachstumspotenzial_rate' || hintergrundEbene === 'wachstumspotenzial_kum')
         ? (layerLegenden[hintergrundEbene].label + ' (experimentell, Erholung ' + erholung + ' Tage)')
-        : ((radio && radio.labelTextEl) ? radio.labelTextEl.textContent : hintergrundEbene);
+        : ((radio && radio.labelTextEl) ? radio.labelTextEl.textContent
+           : (layerLegenden[hintergrundEbene] ? layerLegenden[hintergrundEbene].label : hintergrundEbene));
       var cacheEintrag = ebenenCache[ebeneDateiSchluessel(hintergrundEbene)];
       var werteEintrag = cacheEintrag && cacheEintrag.werte && cacheEintrag.werte[selectedYear + ' ' + selectedWeek];
       var stand = (werteEintrag && werteEintrag.bis) ? ('Stand ' + werteEintrag.bis) : 'lädt…';
@@ -3382,7 +3438,7 @@ function(el, x) {
     var col = Math.floor((lon - gitter.x0) / (gitter.x1 - gitter.x0) * gitter.ncol);
     var row = Math.floor((gitter.y1 - lat) / (gitter.y1 - gitter.y0) * gitter.nrow);
     if (col < 0 || col >= gitter.ncol || row < 0 || row >= gitter.nrow) {
-      wertAnzeigeEl.textContent = 'Wert am Cursor: ausserhalb der Schweiz';
+      wertAnzeigeEl.textContent = 'Wert am Cursor: ' + (info.ausserhalb || 'ausserhalb der Schweiz');
       aktualisierePfeilPosition(null);
       return;
     }
@@ -3768,6 +3824,27 @@ function(el, x) {
         'EXPERIMENTELL. Zeigt, wie viel Graswachstum das Klima (Temperatur, Strahlung, Wasserhaushalt) diese Woche pro Pixel maximal zulassen wuerde - ohne Naehrstofflimitierung und ohne Schnitt/Beweidung. Berechnet mit ModVege (Jouven et al. 2006, R-Paket growR). Bekannte Schwaechen: nach Regen auf eine Trockenperiode springt das Modell sofort auf volles Potenzial zurueck (reale Wiesen brauchen dafuer Wochen), und Grundwasserboeden werden nicht abgebildet.');
       radioWachstumspotenzialKum = makeLayerRadio('wachstumspotenzial_kum', layerLegenden.wachstumspotenzial_kum.label,
         'EXPERIMENTELL. Wie Potenzielles Wachstum, aber seit 1. Januar aufsummiert - zeigt, wie viel sich uebers Jahr an klimatisch moeglichem (ungenutztem) Wachstum angesammelt hat. Gleiche bekannte Schwaechen bei Trockenheit.');
+    }
+    // Schnittanalyse Testgebiet (experimentell): Radios nur, wenn die Daten
+    // vorliegen (siehe R: schnittanalyse_index). Beim Auswaehlen zoomt die
+    // Karte auf das Testgebiet - auf der Schweizkarte waere es nur ein Punkt.
+    if (experimentellerModus && schnittanalyseGebiet) {
+      var saHeading = document.createElement('div');
+      saHeading.className = 'gw-layer-heading';
+      saHeading.style.marginTop = '10px';
+      saHeading.textContent = 'Schnittanalyse ' + schnittanalyseGebiet.name;
+      layerPanel.appendChild(saHeading);
+      Object.keys(ebenenSchluessel).filter(istSchnittEbene).forEach(function(n) {
+        var r = makeLayerRadio(n, layerLegenden[n].label, 'EXPERIMENTELL. ' + layerLegenden[n].quelle + ' Stand jeweils bis Montag der gewaehlten Woche.');
+        r.addEventListener('change', function() {
+          if (!r.checked) return;
+          var gd = document.querySelector('#datenexplorer-growthmap .js-plotly-plot');
+          var g = schnittanalyseGebiet, rand = 0.15;
+          var dx = (g.lon1 - g.lon0) * rand, dy = (g.lat1 - g.lat0) * rand;
+          if (gd) Plotly.relayout(gd, { 'xaxis.range': [g.lon0 - dx, g.lon1 + dx], 'yaxis.range': [g.lat0 - dy, g.lat1 + dy] });
+        });
+        schnittRadios.push(r);
+      });
     }
     // Nachschlagetabelle Ebenenname -> Radio, fuer aktualisiereLayerLabels()
     // (haengt dort das Symbol/die Fenstergroesse an alle 5 Fenster-Ebenen).
@@ -4157,6 +4234,7 @@ js_ersetzungen <- list(
   # werden erst bei Bedarf per fetch() nachgeladen (siehe schreibe_ebene_
   # datei() oben und ladeEbene() im js_template).
   "__EBENEN_SCHLUESSEL__" = jsonlite::toJSON(ebenen_schluessel, auto_unbox = TRUE),
+  "__SCHNITTANALYSE_GEBIET__" = if (is.null(schnittanalyse_gebiet)) "null" else jsonlite::toJSON(schnittanalyse_gebiet, auto_unbox = TRUE, digits = NA),
   "__SMN_STATIONEN_TRACE_IDX__" = as.character(smn_stationen_trace_idx),
   "__SMN_STATIONEN_META__" = jsonlite::toJSON(smn_stationen_meta_liste, auto_unbox = TRUE),
   "__SMN_BASIS_URL__" = jsonlite::toJSON(smn_basis_url, auto_unbox = TRUE),
