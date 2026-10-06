@@ -1104,10 +1104,11 @@ fig_wachstum <- fig_wachstum %>% layout(
   # UND, falls eine Meteo-Ebene aktiv ist, deren Name + tatsaechliches
   # Datenstand-Datum) statt eines statischen Build-Datums, das mit der
   # Aktualitaet der einzelnen Ebenen nichts zu tun haben muss.
-  title = list(text = paste0("<b>Graswachstum (kg TS/ha/Tag) / DGV (kg TS/ha), KW ", start_woche, " ", neuestes_jahr, "</b>"), font = list(size = 16)),
+  title = list(text = paste0("<b>Graswachstum</b><br><span style='font-size:12px'>KW ", start_woche, " ", neuestes_jahr,
+                             " · Grafik vom ", format(Sys.Date(), "%d.%m.%Y"), "</span>"), font = list(size = 16)),
   xaxis = list(visible = FALSE, range = lon_range_erweitert, fixedrange = FALSE),
   yaxis = list(visible = FALSE, range = lat_range, scaleanchor = "x", scaleratio = karten_scaleratio),
-  margin = list(t = 40, b = 10, l = 10, r = 10),
+  margin = list(t = 58, b = 10, l = 10, r = 10),
   images = list(kartenbild_hintergrund)
 ) %>% config(responsive = FALSE, scrollZoom = TRUE, displayModeBar = FALSE)
 # responsive=FALSE: mit responsive=TRUE hat Plotly die Karte in der
@@ -2372,6 +2373,7 @@ function(el, x) {
   var afcVerlaeufe = __AFC_VERLAEUFE__;
   var kartenbildHintergrund = __KARTENBILD_HINTERGRUND__;
   var heutigeWoche = __HEUTIGE_WOCHE__;
+  var grafikDatum = '__GRAFIK_DATUM__';
   var standardKurveTraceIdx = __STANDARD_KURVE_TRACE_IDX__;
 
   var selection = { type: 'group', idx: 0 };
@@ -2887,27 +2889,12 @@ function(el, x) {
     // Donut-Ring per Masken-Trick (radial-gradient schneidet die Mitte
     // transparent) statt eines SVG - conic-gradient uebernimmt die
     // Farbverlauf-Stuetzstellen 1:1 vom vorherigen linear-gradient-Balken.
-    '.gw-afc-ring-wrap { position: relative; display: flex; justify-content: center; align-items: center; margin-bottom: 2px; }',
-    // Ring + 0/1500-Beschriftung in EINER zentrierten Zeile (statt Ring
-    // zentriert, Beschriftung darunter ueber die volle Kasten-Breite verteilt)
-    // - haelt die Beschriftung nah am (nur 56px breiten) Ring.
-    '.gw-afc-ring-zeile { display: flex; align-items: center; justify-content: center; gap: 8px; }',
-    '.gw-afc-ring-label { font-size: 11px; color: #555; white-space: nowrap; }',
-    '.gw-afc-ring { width: 56px; height: 56px; border-radius: 50%; -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 10px), #000 calc(100% - 10px)); mask: radial-gradient(farthest-side, transparent calc(100% - 10px), #000 calc(100% - 10px)); }',
-    // Tick-Strich als Uhrzeiger vom Ringzentrum nach aussen (Standard-CSS-
-    // Technik: transform-origin unten am Strich = Ringzentrum, rotate()
-    // schwenkt den Strich dadurch sauber um das Zentrum statt exzentrisch).
-    '.gw-afc-tick { position: absolute; top: 50%; left: 50%; width: 2px; height: 30px; background: #000; transform-origin: 50% 100%; margin-left: -1px; margin-top: -30px; }',
-    // Deckt den Teil des Tick-Strichs ab, der durch das Loch in der Mitte
-    // des Rings ragt (wie beim Ring auf der Karte selbst - dort sind die
-    // Ticks als kurze Segmente NUR im farbigen Band gezeichnet, siehe
-    // ring_ticks in baue_afc_ring_bild()/R). Durchmesser = Ring-Loch
-    // (Ring-Radius 28px minus Bandbreite 10px = 18px Loch-Radius, siehe
-    // .gw-afc-ring-Maske oben) - Panel-Hintergrundfarbe (#f7f7f7, siehe
-    // .gw-layer-panel) statt der Ring-Elemente selbst, da Letztere die
-    // Ticks nicht ueberdecken koennten (Maske wirkt nur auf den Ring, nicht
-    // auf seine Geschwister-Elemente).
-    '.gw-afc-ring-mitte { position: absolute; top: 50%; left: 50%; width: 36px; height: 36px; margin-left: -18px; margin-top: -18px; border-radius: 50%; background: #f7f7f7; }',
+    // AFC-Legende: CSS-Donut (conic-gradient, Mitte per Maske transparent)
+    // plus SVG-Ebene darueber fuer Nullpunkt-Strich und Zielbereich-Pfeil.
+    '.gw-afc-ring-wrap { position: relative; width: 80px; height: 80px; margin: 0 auto; }',
+    '.gw-afc-ring { position: absolute; top: 12px; left: 12px; width: 56px; height: 56px; border-radius: 50%; -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 10px), #000 calc(100% - 10px)); mask: radial-gradient(farthest-side, transparent calc(100% - 10px), #000 calc(100% - 10px)); }',
+    '.gw-afc-ring-svg { position: absolute; top: 0; left: 0; overflow: visible; }',
+    '.gw-afc-null { text-align: center; font-size: 10px; color: #555; margin-bottom: -6px; }',
     '.gw-layer-legende-skala { display: flex; justify-content: space-between; font-size: 11px; color: #555; margin-top: 3px; }',
     '.gw-layer-legende-quelle { font-size: 10px; color: #888; margin-top: 4px; }',
     '.gw-layer-wert-anzeige { font-size: 12px; font-weight: 600; margin-top: 8px; padding-top: 8px; border-top: 1px solid #eee; }',
@@ -3174,46 +3161,42 @@ function(el, x) {
     if (!verlauf) { afcLegendeBox.style.display = 'none'; return; }
     afcLegendeBox.style.display = 'block';
     afcLegendeBox.innerHTML = '';
-    // Ring statt Balken - passend zum grossen AFC-Ring auf der Karte selbst
-    // (baue_afc_ring_bild()/R): conic-gradient beginnt wie dort bei 12 Uhr
-    // und laeuft im Uhrzeigersinn von 0 bis 1500 kg, dieselben Farb-
-    // Stuetzstellen (verlauf.farben) wie zuvor beim linear-gradient-Balken.
+    // Ring wie der AFC-Ring auf der Karte: conic-gradient beginnt bei 12 Uhr
+    // und laeuft im Uhrzeigersinn von 0 bis 1500 kg - 0 und 1500 liegen also
+    // beide oben, dort markiert ein Strich den Nullpunkt. Der Zielbereich
+    // der Woche ist ein gebogener Doppelpfeil aussen am Ring (statt zweier
+    // Striche, die mit dem Nullpunkt-Strich verwechselt werden konnten).
     var ringWrap = document.createElement('div');
     ringWrap.className = 'gw-afc-ring-wrap';
     var ring = document.createElement('div');
     ring.className = 'gw-afc-ring';
     ring.style.background = 'conic-gradient(' + verlauf.farben.join(',') + ')';
     ringWrap.appendChild(ring);
-    // Tick-Striche am Zielbereich (low/high) - conic-gradient beginnt bei
-    // 0deg (12 Uhr) und laeuft im Uhrzeigersinn, CSS rotate() ebenso, daher
-    // genuegt eine einfache Prozent-zu-Grad-Umrechnung ohne Trigonometrie.
-    [verlauf.low, verlauf.high].forEach(function(wert) {
-      var tick = document.createElement('div');
-      tick.className = 'gw-afc-tick';
-      tick.style.transform = 'rotate(' + (wert / 1500 * 360) + 'deg)';
-      ringWrap.appendChild(tick);
-    });
-    // Nach den Ticks angehaengt, damit sie darueber liegt: deckt den Teil
-    // der Tick-Striche im Ring-Loch ab, sichtbar bleibt nur das kurze Stueck
-    // im farbigen Band (wie bei den Ticks auf der Karte selbst).
-    var ringMitte = document.createElement('div');
-    ringMitte.className = 'gw-afc-ring-mitte';
-    ringWrap.appendChild(ringMitte);
-    // 0/1500-Beschriftung DIREKT links/rechts neben dem Ring (eine Zeile,
-    // zusammen mit dem Ring zentriert) statt wie zuvor als eigene Zeile mit
-    // justify-content:space-between ueber die GANZE (viel breitere)
-    // Kasten-Breite verteilt - sah bei einem nur 56px breiten Ring
-    // unnoetig auseinandergezogen aus.
+    var NS = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('class', 'gw-afc-ring-svg');
+    svg.setAttribute('width', '80'); svg.setAttribute('height', '80'); svg.setAttribute('viewBox', '0 0 80 80');
+    var el = function(name, attrs) { var e = document.createElementNS(NS, name); Object.keys(attrs).forEach(function(k) { e.setAttribute(k, attrs[k]); }); return e; };
+    var defs = el('defs', {});
+    var marker = el('marker', { id: 'gw-afc-pfeil', viewBox: '0 0 10 10', refX: '6', refY: '5', markerWidth: '5', markerHeight: '5', orient: 'auto-start-reverse' });
+    marker.appendChild(el('path', { d: 'M0,0 L10,5 L0,10 z', fill: '#000' }));
+    defs.appendChild(marker); svg.appendChild(defs);
+    svg.appendChild(el('line', { x1: 40, y1: 9, x2: 40, y2: 24, stroke: '#000', 'stroke-width': 2 }));
+    var punkt = function(wert, r) { var a = wert / 1500 * 2 * Math.PI; return [40 + r * Math.sin(a), 40 - r * Math.cos(a)]; };
+    var p1 = punkt(verlauf.low, 34), p2 = punkt(verlauf.high, 34);
+    var gross = (verlauf.high - verlauf.low) / 1500 > 0.5 ? 1 : 0;
+    svg.appendChild(el('path', { d: 'M' + p1[0] + ',' + p1[1] + ' A34,34 0 ' + gross + ',1 ' + p2[0] + ',' + p2[1],
+      fill: 'none', stroke: '#000', 'stroke-width': 1.5, 'marker-start': 'url(#gw-afc-pfeil)', 'marker-end': 'url(#gw-afc-pfeil)' }));
+    ringWrap.appendChild(svg);
     var ringZeile = document.createElement('div');
-    ringZeile.className = 'gw-afc-ring-zeile';
-    var minEl = document.createElement('span'); minEl.className = 'gw-afc-ring-label'; minEl.textContent = '0 kg';
-    var maxEl = document.createElement('span'); maxEl.className = 'gw-afc-ring-label'; maxEl.textContent = '1500 kg';
-    ringZeile.appendChild(minEl);
+    var nullEl = document.createElement('div');
+    nullEl.className = 'gw-afc-null';
+    nullEl.textContent = '0 / 1500 kg';
+    ringZeile.appendChild(nullEl);
     ringZeile.appendChild(ringWrap);
-    ringZeile.appendChild(maxEl);
     var ziel = document.createElement('div');
     ziel.className = 'gw-layer-legende-quelle';
-    ziel.textContent = 'Zielbereich AFC (aktuelle Woche): ' + verlauf.low + '–' + verlauf.high + ' kg TS/ha';
+    ziel.textContent = 'DGV im Uhrzeigersinn ab 0 (oben). Pfeil = Zielbereich dieser Woche: ' + verlauf.low + '–' + verlauf.high + ' kg TS/ha';
     afcLegendeBox.appendChild(ringZeile);
     afcLegendeBox.appendChild(ziel);
   }
@@ -3231,22 +3214,17 @@ function(el, x) {
     if (!graswachstumOn && !afcOn) { tageSeitMessungBox.style.display = 'none'; return; }
     tageSeitMessungBox.style.display = 'block';
   }
-  // Kartentitel IMMER ehrlich zu dem, was gerade zu sehen ist: Kopf nach den
-  // tatsaechlich EINGESCHALTETEN Ebenen (Graswachstum/DGV) statt pauschal
-  // \"Graswachstum\" zu behaupten, plus Kalenderwoche (nicht mit dem
-  // Datenstand einer Meteo-Ebene zu verwechseln - die kann, v.a. bei der
-  // allerneuesten Woche, wegen Publikationsverzoegerung hinterherhinken)
-  // plus, falls eine Meteo-Ebene aktiv ist, deren Name und tatsaechliches
-  // Datenstand-Datum (werte.bis, siehe R: baue_fenster_ebenen()/GDD/
-  // Bodenwasserbilanz) statt eines pauschalen Build-Datums.
+  // Kartentitel: fester Kopf \"Graswachstum\", darunter Kalenderwoche und
+  // Grafikdatum (Erstellung der Seite). Ist eine Meteo-Ebene aktiv, folgt deren
+  // Name mit dem tatsaechlichen Datenstand (werte.bis) - der kann, v.a. in der
+  // neuesten Woche, wegen Publikationsverzoegerung hinterherhinken.
   function aktualisiereKartentitel() {
     var growthMapGd = document.querySelector('#datenexplorer-growthmap .js-plotly-plot');
     if (!growthMapGd) return;
-    var kopfTeile = [];
-    if (graswachstumOn) kopfTeile.push('Graswachstum (kg TS/ha/Tag)');
-    if (afcOn) kopfTeile.push('DGV (kg TS/ha)');
-    var titel = kopfTeile.join(' / ');
-    titel += (titel ? ', ' : '') + 'KW ' + selectedWeek + ' ' + selectedYear;
+    // Kurz (auch fuer Mobile): fester Titel, darunter Woche und Grafikdatum,
+    // bei aktiver Meteo-Ebene eine dritte Zeile mit Ebene und Datenstand.
+    var titel = '<b>Graswachstum</b><br><span style=\"font-size:12px\">KW ' + selectedWeek + ' ' + selectedYear + ' · Grafik vom ' + grafikDatum + '</span>';
+    var zeilen = 2;
     if (hintergrundEbene !== 'keine') {
       // Bodenwasserbilanz traegt ihr \"(berechnet) <Datum>\" bereits im
       // Radio-Label (siehe aktualisiereLayerLabels()) - hier deshalb die
@@ -3263,9 +3241,10 @@ function(el, x) {
       var cacheEintrag = ebenenCache[ebeneDateiSchluessel(hintergrundEbene)];
       var werteEintrag = cacheEintrag && cacheEintrag.werte && cacheEintrag.werte[selectedYear + ' ' + selectedWeek];
       var stand = (werteEintrag && werteEintrag.bis) ? ('Stand ' + werteEintrag.bis) : 'lädt…';
-      titel += ' · ' + label + ', ' + stand;
+      titel += '<br><span style=\"font-size:11px\">' + label + ', ' + stand + '</span>';
+      zeilen = 3;
     }
-    Plotly.relayout(growthMapGd, { 'title.text': '<b>' + titel + '</b>' });
+    Plotly.relayout(growthMapGd, { 'title.text': titel, 'margin.t': zeilen === 3 ? 74 : 58 });
   }
 
   function aktualisiereLayerLegende() {
@@ -4245,6 +4224,7 @@ js_ersetzungen <- list(
   "__AFC_VERLAEUFE__" = jsonlite::toJSON(afc_verlaeufe_je_fenster, auto_unbox = TRUE),
   "__KARTENBILD_HINTERGRUND__" = jsonlite::toJSON(kartenbild_hintergrund, auto_unbox = TRUE),
   "__HEUTIGE_WOCHE__" = as.character(heutige_woche),
+  "__GRAFIK_DATUM__" = format(Sys.Date(), "%d.%m.%Y"),
   "__START_WOCHE__" = as.character(start_woche)
 )
 js_code <- js_template
