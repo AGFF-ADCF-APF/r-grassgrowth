@@ -3163,9 +3163,9 @@ function(el, x) {
     afcLegendeBox.innerHTML = '';
     // Ring wie der AFC-Ring auf der Karte: conic-gradient beginnt bei 12 Uhr
     // und laeuft im Uhrzeigersinn von 0 bis 1500 kg - 0 und 1500 liegen also
-    // beide oben, dort markiert ein Strich den Nullpunkt. Der Zielbereich
-    // der Woche ist ein gebogener Doppelpfeil aussen am Ring (statt zweier
-    // Striche, die mit dem Nullpunkt-Strich verwechselt werden konnten).
+    // beide oben, dort markiert ein Strich den Nullpunkt (mit Beschriftung).
+    // Der Zielbereich der Woche: duenne Striche an den Grenzen plus ein
+    // gebogener Doppelpfeil aussen am Ring.
     var ringWrap = document.createElement('div');
     ringWrap.className = 'gw-afc-ring-wrap';
     var ring = document.createElement('div');
@@ -3183,6 +3183,12 @@ function(el, x) {
     defs.appendChild(marker); svg.appendChild(defs);
     svg.appendChild(el('line', { x1: 40, y1: 9, x2: 40, y2: 24, stroke: '#000', 'stroke-width': 2 }));
     var punkt = function(wert, r) { var a = wert / 1500 * 2 * Math.PI; return [40 + r * Math.sin(a), 40 - r * Math.cos(a)]; };
+    // Striche an Zielunter-/-obergrenze quer ueber das Farbband, wie auf den
+    // AFC-Ringen der Karte - der Pfeil aussen verbindet sie.
+    [verlauf.low, verlauf.high].forEach(function(wert) {
+      var innen = punkt(wert, 16), aussen = punkt(wert, 30);
+      svg.appendChild(el('line', { x1: innen[0], y1: innen[1], x2: aussen[0], y2: aussen[1], stroke: '#000', 'stroke-width': 1.5 }));
+    });
     var p1 = punkt(verlauf.low, 34), p2 = punkt(verlauf.high, 34);
     var gross = (verlauf.high - verlauf.low) / 1500 > 0.5 ? 1 : 0;
     svg.appendChild(el('path', { d: 'M' + p1[0] + ',' + p1[1] + ' A34,34 0 ' + gross + ',1 ' + p2[0] + ',' + p2[1],
