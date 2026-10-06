@@ -1180,6 +1180,9 @@ function(el, x) {
   // y-Achse auf einen viel zu grossen Bereich gestreckt, mit einem winzigen
   // Kartenfleck inmitten viel Leerraum als Resultat.
   var xMin = %s, xMax = %s, yMitte = %s, scaleratio = %s;
+  // Mobile: rechter Rand fuer die AFC-Legende entfaellt (Legende dort hinter
+  // dem i-Knopf), die Schweiz fuellt die ganze Breite.
+  var xMaxSchweiz = %s, ySpanSchweiz = %s;
   var xSpan = xMax - xMin;
 
   // 'Ganze Schweiz'-Ansicht (x-/y-Achsenbereich) fuer eine gegebene
@@ -1192,9 +1195,11 @@ function(el, x) {
   // den Mobile-Fall (wie zuvor).
   function vollAnsichtBerechnen(breite, hoehe) {
     // Mobile: kein Plotly-Titel (Kopfzeile ist HTML), Rand oben nur 6px.
-    var plotBreite = breite - 20, plotHoehe = hoehe - (breite < 700 ? 16 : 50);
-    var ySpan = xSpan * plotHoehe / (scaleratio * plotBreite);
-    return { x: [xMin, xMax], y: [yMitte - ySpan / 2, yMitte + ySpan / 2] };
+    var mobil = breite < 700;
+    var xHi = mobil ? xMaxSchweiz : xMax, span = xHi - xMin;
+    var plotBreite = breite - 20, plotHoehe = hoehe - (mobil ? 16 : 50);
+    var ySpan = span * plotHoehe / (scaleratio * plotBreite);
+    return { x: [xMin, xHi], y: [yMitte - ySpan / 2, yMitte + ySpan / 2] };
   }
   var vollX = null, vollY = null;
 
@@ -1205,7 +1210,7 @@ function(el, x) {
     // Desktop-Hoehe (560px) - der y-Achsenbereich wird fuer BEIDE Faelle
     // ueber vollAnsichtBerechnen() explizit gesetzt (nicht Plotlys eigene,
     // s.o. instabile Bereichsanpassung).
-    var hoehe = mobil ? Math.round(Math.max(200, (breite - 20) * 0.65 + 16)) : 560;
+    var hoehe = mobil ? Math.round(Math.max(200, (breite - 20) * ySpanSchweiz * scaleratio / (xMaxSchweiz - xMin) * 1.03 + 16)) : 560;
     var voll = vollAnsichtBerechnen(breite, hoehe);
     vollX = voll.x; vollY = voll.y;
     Plotly.relayout(el, { width: breite, height: hoehe, 'xaxis.range': voll.x, 'yaxis.range': voll.y });
@@ -1248,7 +1253,8 @@ function(el, x) {
   // oben (plotly_relayout-Listener) greift unabhaengig davon, WIE gezoomt
   // wird (Mausrad, Pinch, Doppelklick, Modebar).
 }
-", lon_range_erweitert[1], lon_range_erweitert[2], mean(lat_range), karten_scaleratio))
+", lon_range_erweitert[1], lon_range_erweitert[2], mean(lat_range), karten_scaleratio,
+   lon_range[2] + diff(lon_range) * 0.01, diff(lat_range)))
 
 ########################################################################
 ## 3b. Optionale Hintergrund-Ebenen: Niederschlag (Vorwoche) und
@@ -2318,6 +2324,10 @@ if (file.exists(schnittanalyse_index)) {
 
 js_template <- "
 function(el, x) {
+  // Eingebettet in eine andere Seite (Grav-Plugin datenexplorer): der Lader
+  // setzt die Adresse der App, damit nachgeladene Ebenen von dort kommen.
+  var gwBasis = window.GW_DATENEXPLORER_BASIS || '';
+  var eingebettet = !!window.GW_DATENEXPLORER_EINGEBETTET;
   var alleJahre = __ALLE_JAHRE__;
   var neuestesJahr = __NEUESTES_JAHR__;
   var jahreMitNiederschlag = __JAHRE_MIT_NIEDERSCHLAG__;
@@ -2402,7 +2412,7 @@ function(el, x) {
   // Ergebnis anwenden.
   function ladeEbene(dateiSchluessel, callback) {
     if (ebenenCache[dateiSchluessel]) { callback(ebenenCache[dateiSchluessel]); return; }
-    fetch('ebenen/' + dateiSchluessel + '.json')
+    fetch(gwBasis + 'ebenen/' + dateiSchluessel + '.json')
       .then(function(r) { return r.json(); })
       .then(function(daten) { ebenenCache[dateiSchluessel] = daten; callback(daten); })
       .catch(function(err) { console.error('Ebene ' + dateiSchluessel + ' konnte nicht geladen werden:', err); });
@@ -2903,28 +2913,28 @@ function(el, x) {
     // border-box wuerden solche Elemente breiter als angegeben, was auf
     // schmalen (Mobile-)Viewports zu horizontalem Ueberlauf fuehren kann.
     '*, *:before, *:after { box-sizing: border-box; }',
-    '.gw-title { font-family: sans-serif; font-size: 22px; font-weight: 600; margin: 4px 0 10px 0; }',
-    '.gw-controls { margin-bottom: 10px; font-family: sans-serif; font-size: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 20px; }',
+    '.gw-title { font-family: var(--gw-schrift, sans-serif); font-size: 22px; font-weight: 600; margin: 4px 0 10px 0; }',
+    '.gw-controls { margin-bottom: 10px; font-family: var(--gw-schrift, sans-serif); font-size: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 20px; }',
     '.gw-combo { position: relative; display: inline-block; max-width: 100%; }',
     '.gw-combo input { padding: 5px 8px; font-size: 14px; width: 240px; max-width: 100%; border: 1px solid #bbb; border-radius: 4px; }',
     '.gw-combo-list { position: absolute; z-index: 1000; top: 100%; left: 0; background: white; border: 1px solid #bbb; border-radius: 4px; max-height: 260px; overflow-y: auto; width: 240px; max-width: 100%; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }',
     '.gw-combo-item { padding: 6px 9px; cursor: pointer; }',
-    '.gw-combo-item:hover, .gw-combo-item.active { background: #eaf2fb; }',
+    '.gw-combo-item:hover, .gw-combo-item.active { background: var(--gw-akzent-hell, #eaf2fb); }',
     '.gw-combo-sep { padding: 4px 9px; font-size: 11px; color: #888; border-top: 1px solid #eee; margin-top: 2px; user-select: none; }',
     '.gw-year-select { padding: 5px 8px; font-size: 14px; border: 1px solid #bbb; border-radius: 4px; }',
-    '.gw-layer-panel { font-family: sans-serif; font-size: 13px; background: #f7f7f7; border-radius: 6px; padding: 12px 14px; }',
+    '.gw-layer-panel { font-family: var(--gw-schrift, sans-serif); font-size: 13px; background: #f7f7f7; border-radius: 6px; padding: 12px 14px; }',
     // Plotlys eigene Hover-Box fuer die Karte ausgeblendet (siehe
     // tooltipModalEl/plotly_hover weiter oben) - sie wird vom
     // overflow:hidden des Kartencontainers bzw. der Iframe-Groesse
     // abgeschnitten, sobald ein Punkt nahe am Rand liegt.
     '#datenexplorer-growthmap .hoverlayer { display: none !important; }',
-    '.gw-tooltip-modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); z-index: 2000; background: white; border: 1px solid #999; border-radius: 8px; padding: 10px 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); max-width: 85vw; max-height: 80vh; overflow-y: auto; font-family: sans-serif; font-size: 13px; line-height: 1.5; color: #222; pointer-events: none; }',
+    '.gw-tooltip-modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); z-index: 2000; background: white; border: 1px solid #999; border-radius: 8px; padding: 10px 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); max-width: 85vw; max-height: 80vh; overflow-y: auto; font-family: var(--gw-schrift, sans-serif); font-size: 13px; line-height: 1.5; color: #222; pointer-events: none; }',
     '.gw-layer-heading { font-weight: 600; margin-bottom: 8px; }',
     '.gw-layer-option { display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer; }',
     '.gw-layer-option-zeile { display: flex; align-items: center; gap: 4px; }',
     '.gw-info-wrap { position: relative; display: inline-flex; }',
     '.gw-info-btn { width: 16px; height: 16px; border-radius: 50%; border: 1px solid #888; background: white; color: #555; font-size: 11px; line-height: 1; cursor: pointer; padding: 0; display: flex; align-items: center; justify-content: center; font-style: italic; font-family: Georgia, serif; flex-shrink: 0; }',
-    '.gw-info-btn:hover { background: #eaf2fb; border-color: #4a90d9; color: #2a6fbf; }',
+    '.gw-info-btn:hover { background: var(--gw-akzent-hell, #eaf2fb); border-color: var(--gw-akzent, #4a90d9); color: var(--gw-akzent-dunkel, #2a6fbf); }',
     '.gw-info-popup { position: absolute; z-index: 20; top: 20px; left: 0; width: 210px; max-width: 85vw; background: white; border: 1px solid #bbb; border-radius: 6px; padding: 10px 12px; font-size: 12px; line-height: 1.4; color: #333; box-shadow: 0 2px 10px rgba(0,0,0,0.15); cursor: auto; }',
     '.gw-layer-option input:disabled + span { color: #aaa; }',
     '.gw-meteo-fenster { margin-top: 10px; }',
@@ -2968,11 +2978,11 @@ function(el, x) {
     '.gw-toggle input { opacity: 0; width: 0; height: 0; }',
     '.gw-toggle-slider { position: absolute; inset: 0; background-color: #ccc; transition: .15s; border-radius: 22px; cursor: pointer; }',
     '.gw-toggle-slider:before { position: absolute; content: \"\"; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: white; transition: .15s; border-radius: 50%; }',
-    '.gw-toggle input:checked + .gw-toggle-slider { background-color: #4a90d9; }',
+    '.gw-toggle input:checked + .gw-toggle-slider { background-color: var(--gw-akzent, #4a90d9); }',
     '.gw-toggle input:checked + .gw-toggle-slider:before { transform: translateX(20px); }',
     '.gw-toggle input:disabled + .gw-toggle-slider { opacity: 0.4; cursor: not-allowed; }',
     '.gw-chart-row { display: flex; flex-direction: row; width: 100%; }',
-    '.gw-legend-panel { flex: 0 0 210px; width: 210px; overflow-y: auto; overflow-x: hidden; border-left: 1px solid #ddd; box-sizing: border-box; padding: 10px 14px; font-family: sans-serif; font-size: 13px; transition: flex-basis .15s ease, width .15s ease, padding .15s ease, border-color .15s ease; }',
+    '.gw-legend-panel { flex: 0 0 210px; width: 210px; overflow-y: auto; overflow-x: hidden; border-left: 1px solid #ddd; box-sizing: border-box; padding: 10px 14px; font-family: var(--gw-schrift, sans-serif); font-size: 13px; transition: flex-basis .15s ease, width .15s ease, padding .15s ease, border-color .15s ease; }',
     '.gw-legend-panel.collapsed { flex-basis: 0; width: 0; padding-left: 0; padding-right: 0; border-left-color: transparent; }',
     '.gw-legend-header { display: flex; align-items: center; justify-content: space-between; font-weight: 600; margin-bottom: 8px; white-space: nowrap; }',
     '.gw-legend-options { display: flex; flex-direction: column; gap: 8px; padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid #eee; }',
@@ -2980,13 +2990,13 @@ function(el, x) {
     '.gw-legend-close:hover { color: #000; }',
     '.gw-legend-item { display: flex; align-items: center; gap: 8px; padding: 3px 4px; white-space: nowrap; border-radius: 3px; }',
     '.gw-legend-item-clickable { cursor: pointer; }',
-    '.gw-legend-item-clickable:hover { background: #eef4fb; }',
+    '.gw-legend-item-clickable:hover { background: var(--gw-akzent-hell, #eef4fb); }',
     '.gw-legend-swatch { display: inline-block; width: 22px; height: 0; border-top-width: 3px; border-top-style: solid; flex-shrink: 0; }',
     '.gw-legend-edge { flex: 0 0 34px; width: 34px; border-left: 1px solid #ddd; display: flex; flex-direction: column; align-items: center; padding-top: 6px; box-sizing: border-box; }',
     '.gw-edge-btn { width: 26px; height: 26px; border: 1px solid #bbb; border-radius: 4px; background: white; cursor: pointer; font-size: 15px; display: flex; align-items: center; justify-content: center; color: #333; padding: 0; }',
     '.gw-edge-btn:hover { background: #f2f2f2; }',
-    '.gw-edge-btn.active { background: #eaf2fb; border-color: #4a90d9; color: #2a6fbf; }',
-    '.gw-slider-row { font-family: sans-serif; font-size: 14px; display: flex; align-items: center; margin: 10px 0; padding: 10px 16px; background: #f7f7f7; border-radius: 6px; }',
+    '.gw-edge-btn.active { background: var(--gw-akzent-hell, #eaf2fb); border-color: var(--gw-akzent, #4a90d9); color: var(--gw-akzent-dunkel, #2a6fbf); }',
+    '.gw-slider-row { font-family: var(--gw-schrift, sans-serif); font-size: 14px; display: flex; align-items: center; margin: 10px 0; padding: 10px 16px; background: #f7f7f7; border-radius: 6px; }',
     '.gw-slider-aligned { flex: 0 0 auto; box-sizing: border-box; min-width: 0; }',
     '.gw-slider-label-row { display: flex; align-items: center; gap: 10px; width: 100%; margin-bottom: 8px; }',
     '.gw-slider-track-row { display: flex; align-items: center; width: 100%; }',
@@ -2996,7 +3006,7 @@ function(el, x) {
     '.gw-slider-tooltip { position: absolute; top: -8px; transform: translate(-50%, -100%); background: #333; color: white; padding: 3px 9px; border-radius: 4px; font-size: 12px; white-space: nowrap; pointer-events: none; z-index: 10; }',
     '.gw-slider-tooltip:after { content: \"\"; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); border: 5px solid transparent; border-top-color: #333; }',
     '.gw-step-btn { flex: 0 0 auto; width: 30px; height: 30px; border: 1px solid #bbb; border-radius: 4px; background: white; cursor: pointer; font-size: 12px; display: flex; align-items: center; justify-content: center; color: #333; }',
-    '.gw-step-btn:hover { background: #eaf2fb; border-color: #4a90d9; }',
+    '.gw-step-btn:hover { background: var(--gw-akzent-hell, #eaf2fb); border-color: var(--gw-akzent, #4a90d9); }',
     '.gw-today-btn { width: auto; padding: 0 12px; font-size: 13px; font-weight: 600; margin-left: auto; }',
     '.gw-zukunft-maske { position: absolute; background: rgba(0,0,0,0.4); border-radius: 3px; pointer-events: none; z-index: 2; }',
     // Ebenen-Box neben der Karte: flex-grow:0 (statt 1) + max-width, damit
@@ -3035,7 +3045,7 @@ function(el, x) {
   // Knoepfen - Karte, Wert und Wochenumschalter passen ohne Scrollen.
   var stilMobil = document.createElement('style');
   stilMobil.textContent = [
-    '.gw-blatt { position: fixed; z-index: 3000; background: white; box-shadow: 0 4px 24px rgba(0,0,0,0.25); font-family: sans-serif; font-size: 13px; color: #222; overflow-y: auto; right: 20px; bottom: 20px; width: 340px; max-height: 70vh; border-radius: 10px; padding: 12px 16px; box-sizing: border-box; }',
+    '.gw-blatt { position: fixed; z-index: 3000; background: white; box-shadow: 0 4px 24px rgba(0,0,0,0.25); font-family: var(--gw-schrift, sans-serif); font-size: 13px; color: #222; overflow-y: auto; right: 20px; bottom: 20px; width: 340px; max-height: 70vh; max-height: 70dvh; border-radius: 10px; padding: 12px 16px; box-sizing: border-box; }',
     '.gw-blatt-griff { display: none; width: 36px; height: 4px; border-radius: 2px; background: #ccc; margin: 0 auto 8px; }',
     '.gw-blatt-kopf { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 4px; }',
     '.gw-blatt-titel { flex: 1; font-weight: 600; font-size: 15px; }',
@@ -3053,10 +3063,24 @@ function(el, x) {
     '.gw-kartenleiste-balken { flex: 1; height: 8px; border-radius: 2px; min-width: 40px; }',
     '.gw-kartenleiste-wert { font-weight: 600; }',
     '.gw-mobil-knoepfe { gap: 8px; padding: 4px 10px 10px; }',
-    '.gw-mobil-knoepfe button { flex: 1; padding: 9px; border: 1px solid #bbb; border-radius: 6px; background: white; font-size: 14px; cursor: pointer; }',
+    '.gw-mobil-knoepfe button, .gw-werkzeug-knopf { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 9px 12px; border: 1px solid #c8c8c8; border-radius: 8px; background: white; color: #222; font: inherit; font-size: 14px; font-weight: 500; line-height: 1.2; cursor: pointer; }',
+    '.gw-mobil-knoepfe button { flex: 1; }',
+    '.gw-mobil-knoepfe button:active, .gw-werkzeug-knopf:active { background: var(--gw-akzent-hell, #eaf2fb); }',
+    '.gw-mobil-knoepfe button.aktiv { background: var(--gw-akzent-hell, #eaf2fb); border-color: var(--gw-akzent, #4a90d9); color: var(--gw-akzent-dunkel, #2a6fbf); }',
+    '.gw-icon { flex: none; display: inline-block; width: 18px; height: 18px; color: var(--gw-akzent, #4a90d9); }',
+    '.gw-mobil-knoepfe button.aktiv .gw-icon { color: inherit; }',
+    '.gw-werkzeugleiste { display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 8px; }',
+    '.gw-werkzeug-knopf { padding: 6px 10px; font-size: 13px; }',
+    ':root { --gw-akzent: #459185; --gw-akzent-dunkel: #244c46; --gw-akzent-hell: #e3f0ee; --gw-schrift: Inter, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif; }',
+    '#gw-seite { position: relative; accent-color: var(--gw-akzent, #4a90d9); font-family: var(--gw-schrift, sans-serif) !important; }',
+    '#gw-seite.gw-eingebettet { padding: 0 !important; max-width: none !important; font-family: var(--gw-schrift, sans-serif) !important; }',
+    '#gw-seite.gw-vollbild { position: fixed; inset: 0; z-index: 2500; margin: 0 !important; max-width: none !important; padding: 12px 20px !important; background: white; overflow-y: auto; overscroll-behavior: contain; }',
+    'html.gw-vollbild-aktiv, html.gw-vollbild-aktiv body { overflow: hidden !important; }',
+    '#gw-seite svg, #gw-seite img, #gw-seite canvas { max-width: none; }',
+    '#gw-seite .main-svg { display: inline; }',
     '.gw-ebenen-zu-zeile { justify-content: space-between; align-items: center; margin-bottom: 4px; }',
     '@media (max-width: 700px) {' +
-    '  .gw-blatt { left: 0; right: 0; bottom: 0; width: auto; max-height: 65vh; border-radius: 14px 14px 0 0; padding: 8px 16px calc(14px + env(safe-area-inset-bottom)); }' +
+    '  .gw-blatt { left: 0; right: 0; bottom: 0; width: auto; max-height: 65vh; max-height: 65dvh; border-radius: 14px 14px 0 0; padding: 8px 16px calc(14px + env(safe-area-inset-bottom)); }' +
     '  .gw-blatt-griff { display: block; }' +
     '  .gw-desktop-only { display: none !important; }' +
     '  .gw-mobil-only { display: block; }' +
@@ -3064,8 +3088,14 @@ function(el, x) {
     '  #gw-seite { padding: 0 !important; }' +
     '  #gw-kartenzeile { gap: 0 !important; }' +
     '  .gw-mobil-kopf { padding: 8px 10px 2px; }' +
+    '  .gw-werkzeugleiste { position: absolute; top: 8px; right: 10px; margin: 0; z-index: 5; }' +
+    '  #gw-seite.gw-eingebettet .gw-mobil-kopf { padding-right: 56px; }' +
+    '  .gw-werkzeug-knopf span { display: none; }' +
+    '  .gw-werkzeug-knopf { padding: 7px; }' +
+    '  #gw-seite.gw-vollbild { padding: 0 !important; }' +
     '  .gw-map-controls-panel { display: none; }' +
-    '  body.gw-ebenen-offen .gw-map-controls-panel { display: block; position: fixed; left: 0; right: 0; bottom: 0; z-index: 2900; max-height: 70vh; overflow-y: auto; border-radius: 14px 14px 0 0; box-shadow: 0 -4px 24px rgba(0,0,0,0.25); padding-bottom: env(safe-area-inset-bottom); background: #f7f7f7; }' +
+    '  body.gw-ebenen-offen .gw-map-controls-panel { display: block; position: fixed; left: 0; right: 0; bottom: 0; z-index: 2900; max-height: 72vh; max-height: 72dvh; overflow-y: auto; overscroll-behavior: contain; border-radius: 14px 14px 0 0; box-shadow: 0 -4px 24px rgba(0,0,0,0.25); padding-bottom: env(safe-area-inset-bottom); background: #f7f7f7; }' +
+    '  .gw-ebenen-zu-zeile { position: sticky; top: -12px; z-index: 2; background: #f7f7f7; margin: -12px -14px 6px; padding: 10px 14px 6px; border-bottom: 1px solid #e4e4e4; }' +
     '  .gw-afc-legende-box { display: none !important; }' +
     '  .gw-kurvenbereich { display: none; }' +
     '  body.gw-kurve-offen .gw-kurvenbereich { display: block; }' +
@@ -3113,6 +3143,75 @@ function(el, x) {
     }
   });
 
+  // Icons (Tabler, MIT) als SVG per DOM - im R-String keine Anfuehrungszeichen
+  var GW_ICON_PFADE = {
+    ebenen: ['M12 4l-8 4l8 4l8 -4l-8 -4', 'M4 12l8 4l8 -4', 'M4 16l8 4l8 -4'],
+    kurve: ['M4 19l16 0', 'M4 15l4 -6l4 2l4 -5l4 4'],
+    vollbild: ['M16 4l4 0l0 4', 'M14 10l6 -6', 'M8 20l-4 0l0 -4', 'M4 20l6 -6', 'M16 20l4 0l0 -4', 'M14 14l6 6', 'M8 4l-4 0l0 4', 'M4 4l6 6'],
+    verkleinern: ['M5 9l4 0l0 -4', 'M3 3l6 6', 'M5 15l4 0l0 4', 'M3 21l6 -6', 'M19 9l-4 0l0 -4', 'M15 9l6 -6', 'M19 15l-4 0l0 4', 'M15 15l6 6']
+  };
+  function gwIcon(name) {
+    var ns = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(ns, 'svg');
+    var attr = { viewBox: '0 0 24 24', width: '18', height: '18', fill: 'none', stroke: 'currentColor',
+      'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true', 'class': 'gw-icon' };
+    Object.keys(attr).forEach(function(k) { svg.setAttribute(k, attr[k]); });
+    GW_ICON_PFADE[name].forEach(function(d) { var pf = document.createElementNS(ns, 'path'); pf.setAttribute('d', d); svg.appendChild(pf); });
+    return svg;
+  }
+  function setzeKnopfInhalt(knopf, icon, text) {
+    knopf.innerHTML = '';
+    knopf.appendChild(gwIcon(icon));
+    var sp = document.createElement('span'); sp.textContent = text; knopf.appendChild(sp);
+    knopf.setAttribute('aria-label', text);
+  }
+
+  // Eingebettet (Grav-Plugin datenexplorer, siehe Datenexplorer_einbettung.json):
+  // Schrift und Akzentfarbe der Website, Vollbild nur auf Wunsch.
+  var seiteEl = document.getElementById('gw-seite');
+  if (eingebettet && seiteEl) {
+    seiteEl.classList.add('gw-eingebettet');
+    var wurzel = document.documentElement;
+    var schrift = getComputedStyle(seiteEl.parentElement || document.body).fontFamily;
+    wurzel.style.setProperty('--gw-schrift', schrift);
+    var akzent = getComputedStyle(wurzel).getPropertyValue('--custom-color-primary').trim();
+    if (akzent) {
+      wurzel.style.setProperty('--gw-akzent', akzent);
+      wurzel.style.setProperty('--gw-akzent-dunkel', getComputedStyle(wurzel).getPropertyValue('--custom-color-primary-darker').trim() || akzent);
+      wurzel.style.setProperty('--gw-akzent-hell', 'color-mix(in srgb, ' + akzent + ' 14%, white)');
+    }
+    setTimeout(function() {
+      document.querySelectorAll('#gw-seite .js-plotly-plot').forEach(function(g) {
+        try { Plotly.relayout(g, { 'font.family': schrift }); } catch (e) {}
+      });
+    }, 0);
+  }
+  var vollbildKnopfEl = null;
+  function istVollbild() { return !!(seiteEl && seiteEl.classList.contains('gw-vollbild')); }
+  function setzeVollbild(an) {
+    if (!seiteEl) return;
+    seiteEl.classList.toggle('gw-vollbild', an);
+    document.documentElement.classList.toggle('gw-vollbild-aktiv', an);
+    if (vollbildKnopfEl) setzeKnopfInhalt(vollbildKnopfEl, an ? 'verkleinern' : 'vollbild', an ? 'Vollbild beenden' : 'Vollbild');
+    if (!an) seiteEl.scrollIntoView({ block: 'start' });
+    window.dispatchEvent(new Event('resize'));
+  }
+  if (eingebettet && seiteEl) {
+    var werkzeugleiste = document.createElement('div');
+    werkzeugleiste.className = 'gw-werkzeugleiste';
+    vollbildKnopfEl = document.createElement('button');
+    vollbildKnopfEl.type = 'button'; vollbildKnopfEl.className = 'gw-werkzeug-knopf';
+    setzeKnopfInhalt(vollbildKnopfEl, 'vollbild', 'Vollbild');
+    vollbildKnopfEl.addEventListener('click', function(evt) { evt.stopPropagation(); setzeVollbild(!istVollbild()); });
+    werkzeugleiste.appendChild(vollbildKnopfEl);
+    seiteEl.insertBefore(werkzeugleiste, seiteEl.firstChild);
+  }
+  document.addEventListener('keydown', function(evt) {
+    if (evt.key !== 'Escape' || !istVollbild()) return;
+    var offen = blattEl.style.display !== 'none' || document.body.classList.contains('gw-ebenen-offen');
+    if (!offen) setzeVollbild(false);
+  }, true);
+
   // Mobile-Elemente rund um die Karte (auf dem Desktop per CSS ausgeblendet)
   var kartenzeileEl = document.getElementById('gw-kartenzeile');
   var mobilKopfUnterEl = null, kartenleisteLegendeEl = null, kartenleisteWertEl = null, kurveKnopfEl = null;
@@ -3135,20 +3234,21 @@ function(el, x) {
     kartenzeileEl.parentNode.insertBefore(kartenleiste, kartenzeileEl.nextSibling);
     var knoepfe = document.createElement('div');
     knoepfe.className = 'gw-mobil-knoepfe gw-mobil-only';
-    var ebenenKnopf = document.createElement('button'); ebenenKnopf.type = 'button'; ebenenKnopf.textContent = 'Ebenen';
+    var ebenenKnopf = document.createElement('button'); ebenenKnopf.type = 'button'; setzeKnopfInhalt(ebenenKnopf, 'ebenen', 'Ebenen');
     ebenenKnopf.addEventListener('click', function(evt) {
       evt.stopPropagation();
       schliesseBlatt();
       document.body.classList.toggle('gw-ebenen-offen');
       blattGeoeffnetUm = Date.now();
     });
-    kurveKnopfEl = document.createElement('button'); kurveKnopfEl.type = 'button'; kurveKnopfEl.textContent = 'Kurve';
+    kurveKnopfEl = document.createElement('button'); kurveKnopfEl.type = 'button'; setzeKnopfInhalt(kurveKnopfEl, 'kurve', 'Kurve');
     kurveKnopfEl.addEventListener('click', function(evt) {
       evt.stopPropagation();
       schliesseBlatt();
       if (document.body.classList.contains('gw-kurve-offen')) {
         document.body.classList.remove('gw-kurve-offen');
-        kurveKnopfEl.textContent = 'Kurve';
+        setzeKnopfInhalt(kurveKnopfEl, 'kurve', 'Kurve');
+        kurveKnopfEl.classList.remove('aktiv');
       } else {
         zeigeKurve();
       }
@@ -3306,7 +3406,7 @@ function(el, x) {
   function zeigeKurve() {
     if (istMobil()) {
       document.body.classList.add('gw-kurve-offen');
-      if (kurveKnopfEl) kurveKnopfEl.textContent = 'Kurve ausblenden';
+      if (kurveKnopfEl) { setzeKnopfInhalt(kurveKnopfEl, 'kurve', 'Kurve ausblenden'); kurveKnopfEl.classList.add('aktiv'); }
       Plotly.Plots.resize(el);
     }
     var bereich = document.querySelector('.gw-kurvenbereich');
@@ -4561,17 +4661,7 @@ fig_kurve <- htmlwidgets::onRender(fig_kurve, js_code)
 ## 5. Seite zusammensetzen und speichern -------------------------------
 ########################################################################
 
-seite <- htmltools::tagList(
-  # OHNE viewport-Meta-Tag rendern mobile Browser die Seite auf einem
-  # virtuellen Desktop-Layout-Viewport (typischerweise ~980px) und skalieren
-  # sie nur optisch herunter - die @media(max-width:700px)-Regeln (siehe
-  # oben, gw-chart-row etc.) wuerden dadurch NIE greifen, selbst auf einem
-  # echten Telefon.
-  htmltools::tags$head(
-    htmltools::tags$title(paste0("Datenexplorer Graswachstum")),
-    htmltools::tags$meta(name = "viewport", content = "width=device-width, initial-scale=1")
-  ),
-  htmltools::div(id = "gw-seite", style = "font-family: sans-serif; max-width: 1400px; margin: 0 auto; padding: 20px;",
+seite_inhalt <- htmltools::div(id = "gw-seite", style = "font-family: sans-serif; max-width: 1400px; margin: 0 auto; padding: 20px;",
     htmltools::div(id = "gw-kartenzeile", style = "display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start;",
       htmltools::div(id = "datenexplorer-growthmap", style = "flex: 1 1 700px; min-width: 320px; height: 560px; overflow: hidden;", fig_wachstum),
       # class statt nur inline-style: flex-grow:1 auf BEIDEN Geschwistern
@@ -4586,7 +4676,19 @@ seite <- htmltools::tagList(
     ),
     htmltools::div(id = "datenexplorer-slider"),
     fig_kurve
-  )
+)
+
+seite <- htmltools::tagList(
+  # OHNE viewport-Meta-Tag rendern mobile Browser die Seite auf einem
+  # virtuellen Desktop-Layout-Viewport (typischerweise ~980px) und skalieren
+  # sie nur optisch herunter - die @media(max-width:700px)-Regeln (siehe
+  # oben, gw-chart-row etc.) wuerden dadurch NIE greifen, selbst auf einem
+  # echten Telefon.
+  htmltools::tags$head(
+    htmltools::tags$title(paste0("Datenexplorer Graswachstum")),
+    htmltools::tags$meta(name = "viewport", content = "width=device-width, initial-scale=1")
+  ),
+  seite_inhalt
 )
 
 # Unter "Datenexplorer_app.html" statt "Datenexplorer.html" gespeichert: die
@@ -4599,6 +4701,31 @@ seite <- htmltools::tagList(
 datenexplorer_app_datei <- file.path(out_dir, "Datenexplorer_app.html")
 htmltools::save_html(seite, datenexplorer_app_datei)
 cat("Datenexplorer-App gespeichert in:", datenexplorer_app_datei, "\n")
+
+## Einbettung in eine andere Seite (Grav-Plugin datenexplorer): dieselbe App
+## als HTML-Fragment plus Liste der Skripte/Stylesheets (relativ zu outputs/,
+## save_html() hat sie eben nach lib/ kopiert). Der Lader auf der Website holt
+## diese Datei, setzt Stylesheets und Fragment ein, laedt die Skripte und
+## startet die Widgets - die App erscheint so im Seitenrahmen der Website.
+einbettung_deps <- lapply(
+  htmltools::resolveDependencies(htmltools::findDependencies(seite)),
+  function(d) htmltools::makeDependencyRelative(
+    htmltools::copyDependencyToDir(d, file.path(out_dir, "lib"), mustWork = FALSE), out_dir)
+)
+einbettung_dateien <- function(d, feld) {
+  x <- d[[feld]]
+  if (is.null(x) || length(x) == 0) return(character())
+  x <- vapply(x, function(s) if (is.list(s)) s$src else s, character(1))
+  utils::URLencode(file.path(d$src[["file"]], x))
+}
+einbettung <- list(
+  stand = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z"),
+  css = I(unname(unlist(lapply(einbettung_deps, einbettung_dateien, "stylesheet")))),
+  js = I(unname(unlist(lapply(einbettung_deps, einbettung_dateien, "script")))),
+  html = as.character(htmltools::renderTags(seite_inhalt)$html)
+)
+jsonlite::write_json(einbettung, file.path(out_dir, "Datenexplorer_einbettung.json"), auto_unbox = TRUE)
+cat("Datenexplorer-Einbettung gespeichert in:", file.path(out_dir, "Datenexplorer_einbettung.json"), "\n")
 
 ########################################################################
 ## 5. Statische Vorschauseite (Klick-zum-Laden) ------------------------
