@@ -20,15 +20,19 @@ lauf() {
 
 lauf >> /var/log/grassgrowth-lauf.log 2>&1 &
 
-# PATH explizit setzen: Cron startet Jobs NICHT mit dem PATH des Containers/
-# der Shell, die die Crontab installiert (hier: dieses Skript), sondern mit
-# einem eigenen, minimalen Standard-PATH (meist nur /usr/bin:/bin) - ohne
-# diese Zeile schlug der naechtliche Lauf mit "Rscript: not found" fehl,
-# obwohl Rscript (unter /usr/local/bin) im Container ganz normal vorhanden
-# und ueber die interaktive Shell/dieses Skript selbst auffindbar war.
+# Cron startet Jobs NICHT mit der Umgebung des Containers, sondern mit einer
+# minimalen eigenen (PATH meist nur /usr/bin:/bin, keine env_file-Variablen).
+# Ohne PATH-Zeile: "Rscript: not found". Ohne die Variablen: der naechtliche
+# Lauf rechnete zwar, uebersprang aber den FTP-Upload (FTP_* fehlten) und
+# nutzte die Standard-Pfade statt GRASSGROWTH_*. Deshalb hier die noetigen
+# Variablen (bash-sicher gequotet) in eine nur fuer root lesbare Datei, die
+# der Cron-Job vor dem Lauf laedt.
+export -p | grep -E '^declare -x (FTP_|GRASSGROWTH_)' > /etc/grassgrowth.env
+chmod 600 /etc/grassgrowth.env
 {
+  echo "SHELL=/bin/bash"
   echo "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-  echo "0 2 * * * cd /app && Rscript automate.R >> /var/log/grassgrowth-lauf.log 2>&1"
+  echo '0 2 * * * . /etc/grassgrowth.env && cd /app && { echo "=== Graswachstum-Lauf gestartet (Cron): $(date -Is) ==="; Rscript automate.R; echo "=== Graswachstum-Lauf beendet (Cron): $(date -Is), Exit-Code $? ==="; } >> /var/log/grassgrowth-lauf.log 2>&1'
 } | crontab -
 cron
 
