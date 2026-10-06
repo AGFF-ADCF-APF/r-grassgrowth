@@ -94,16 +94,51 @@ lade_ebenen_cache <- function(name) {
   datei <- file.path(ebenen_cache_dir, paste0(name, ".rds"))
   if (file.exists(datei)) tryCatch(readRDS(datei), error = function(e) list()) else list()
 }
-speichere_ebenen_cache <- function(name, cache) {
+# art: woraus die Ebene gerechnet wird - "meteo" (MeteoSchweiz-Dateien) oder
+# "daten" (AGFF-Messungen); bestimmt den Fingerabdruck fuer den Schnellmodus.
+gespeicherte_caches <- list()
+speichere_ebenen_cache <- function(name, cache, art = "meteo") {
   saveRDS(cache, file.path(ebenen_cache_dir, paste0(name, ".rds")))
+  gespeicherte_caches[[name]] <<- art
 }
+
+## Schnellmodus (GRASSGROWTH_SCHNELL=1, z.B. nach einem Code-Deploy): auch das
+## LAUFENDE Jahr kommt aus dem Cache, wenn sich seit dem letzten vollstaendigen
+## Lauf weder die Eingangsdaten (MeteoSchweiz-Dateien bzw. AGFF-Messungen)
+## noch der R-Rechencode geaendert haben. Der JS-Teil (js_template) zaehlt
+## nicht zum Rechencode - reine Darstellungsaenderungen brauchen kein
+## Neurechnen. Ohne die Variable (naechtlicher Lauf) wird wie bisher alles
+## frisch gerechnet; die Staende werden am Ende des Laufs festgehalten.
+schnellmodus <- identical(Sys.getenv("GRASSGROWTH_SCHNELL"), "1")
+staende_datei <- file.path(ebenen_cache_dir, "_staende.rds")
+staende_alt <- if (file.exists(staende_datei)) tryCatch(readRDS(staende_datei), error = function(e) list()) else list()
+code_stand <- local({
+  z <- readLines("27_plot_datenexplorer.R", warn = FALSE)
+  a <- which(z == 'js_template <- "')[1]
+  e <- a + which(z[(a + 1):length(z)] == '"')[1]
+  digest::digest(paste(z[-(a:e)], collapse = "\n"), algo = "md5")
+})
+geodata_stand <- function() {
+  f <- list.files(geodata_dir, recursive = TRUE, full.names = TRUE)
+  i <- file.info(f)
+  digest::digest(paste(f, i$size, as.numeric(i$mtime), collapse = "\n"), algo = "md5")
+}
+geodata_stand_jetzt <- if (schnellmodus) geodata_stand() else NA_character_
+daten_stand <- NA_character_ # wird nach dem Laden der Messdaten gesetzt
+eingangsstand <- function(art) paste(code_stand, if (art == "daten") daten_stand else geodata_stand_jetzt)
+# TRUE = dieses Jahr der Ebene aus dem Cache uebernehmen
+jahr_aus_cache <- function(name, jahr, art = "meteo") {
+  jahr < aktuelles_kalenderjahr ||
+    (schnellmodus && !is.null(name) && identical(staende_alt[[name]], eingangsstand(art)))
+}
+if (schnellmodus) cat("Schnellmodus: laufendes Jahr aus dem Cache, sofern Daten und Rechencode unveraendert\n")
 # Fuer die drei Bild-Ebenen ausserhalb von baue_fenster_ebenen() (siehe
 # dort fuer die aufwendigere Variante, die bei einem komplett gecachten
 # abgeschlossenen Jahr zusaetzlich auch dessen Rohraster gar nicht erst
 # laedt): liefert den gecachten Eintrag nur fuer ein abgeschlossenes Jahr,
 # sonst NULL (immer frisch berechnen).
-cache_eintrag_holen <- function(cache, jahr, woche) {
-  if (jahr >= aktuelles_kalenderjahr) return(NULL)
+cache_eintrag_holen <- function(cache, jahr, woche, name = NULL, art = "meteo") {
+  if (!jahr_aus_cache(name, jahr, art)) return(NULL)
   cache[[paste(jahr, woche)]]
 }
 
@@ -117,6 +152,7 @@ if (!exists("daten")) source("01_import_googlesheet.R")
 daten_korr <- daten %>%
   filter(!is.na(lon), !is.na(lat), !is.na(date), nchar(year) == 4, as.numeric(year) >= 2020) %>%
   mutate(afc = case_when(Ort == "Les Reusilles" ~ afc - 1500, TRUE ~ afc))
+daten_stand <- digest::digest(daten_korr, algo = "md5")
 
 alle_jahre <- sort(unique(daten_korr$year))
 neuestes_jahr <- max(alle_jahre)
@@ -997,7 +1033,7 @@ for (i in seq_len(nrow(map_wochen))) {
   fig_wachstum <- baue_kartenwerte_trace(fig_wachstum, snap, "growth", "kg TS/ha/Tag",
                                           paste("Wachstum", jr, "KW", w))
   map_point_orts[[i]] <- as.character(snap$Ort)
-  cached <- cache_eintrag_holen(graswachstum_afc_cache_alt, jr, w)
+  cached <- cache_eintrag_holen(graswachstum_afc_cache_alt, jr, w, "graswachstum_afc", "daten")
   if (!is.null(cached)) {
     graswachstum_bild_je_woche[[schluessel]] <- cached$graswachstum
     afc_ring_bild_je_woche[[schluessel]] <- cached$afc_bild
@@ -1016,7 +1052,7 @@ for (i in seq_len(nrow(map_wochen))) {
     afc_fenster = afc_fenster_je_woche[[schluessel]]
   )
 }
-speichere_ebenen_cache("graswachstum_afc", graswachstum_afc_cache_neu)
+speichere_ebenen_cache("graswachstum_afc", graswachstum_afc_cache_neu, art = "daten")
 cat("Graswachstums-Hintergrundbilder erzeugt:", sum(!vapply(graswachstum_bild_je_woche, is.null, logical(1))),
     "(aus Cache:", ga_aus_cache, "/ neu:", ga_neu, ")\n")
 cat("AFC-Ring-Hintergrundbilder erzeugt:", sum(!vapply(afc_ring_bild_je_woche, is.null, logical(1))), "\n")
@@ -1331,7 +1367,7 @@ baue_fenster_ebenen <- function(name, jahre, raster_holen, aggregat, farben, ber
       # Reprojizieren mehrerer Monats-Dateien) wird dafuer gar nicht erst
       # angefasst.
       alte_schluessel_jahr <- Filter(function(k) startsWith(k, paste0(jr, " ")), names(cache_alt))
-      if (jr < aktuelles_kalenderjahr && length(alte_schluessel_jahr) > 0) {
+      if (jahr_aus_cache(cache_name, jr) && length(alte_schluessel_jahr) > 0) {
         for (schluessel in alte_schluessel_jahr) {
           bild_je_woche[[schluessel]] <- cache_alt[[schluessel]]$bild
           werte_je_woche[[schluessel]] <- cache_alt[[schluessel]]$werte
@@ -1557,7 +1593,7 @@ for (jr in names(speicher_raster_je_jahr)) {
   speicher_r <- speicher_raster_je_jahr[[jr]]
   speicher_daten_tage <- as.Date(time(speicher_r))
   for (w in alle_wochen) {
-    cached <- cache_eintrag_holen(boden_cache_alt, jr, w)
+    cached <- cache_eintrag_holen(boden_cache_alt, jr, w, "boden")
     if (!is.null(cached)) {
       bodenwasser_bild_je_woche[[paste(jr, w)]] <- cached$bild
       bodenwasser_werte_je_woche[[paste(jr, w)]] <- cached$werte
@@ -2034,8 +2070,10 @@ for (art in c("rate", "kum")) for (stufe in erholung_stufen_tage) {
 }
 wsp_aus_cache <- 0L; wsp_neu <- 0L
 for (jr in if (wachstumspotenzial_freigeschaltet) jahre_mit_temperatur else character(0)) {
-  # Abgeschlossene Jahre aus dem Cache, wenn ALLE Stufen dort vorhanden sind.
-  if (jr < aktuelles_kalenderjahr) {
+  # Aus dem Cache, wenn ALLE Stufen dort vorhanden sind - abgeschlossene Jahre
+  # immer, das laufende Jahr nur im Schnellmodus bei unveraendertem Stand.
+  wsp_namen <- as.vector(outer(c("rate", "kum"), paste0("e", erholung_stufen_tage), function(a, s) paste0("wachstumspotenzial_", a, "_", s)))
+  if (all(vapply(wsp_namen, function(n) jahr_aus_cache(n, jr), logical(1)))) {
     alle_da <- all(unlist(lapply(wsp_cache_alt, function(je_stufe) vapply(je_stufe, function(c_alt)
       any(startsWith(as.character(names(c_alt)), paste0(jr, " "))), logical(1)))))
     if (alle_da) {
@@ -2131,7 +2169,7 @@ for (jr in names(gdd_kumuliert_je_jahr)) {
   # Stichtag aendern sich nie mehr) - das Rohraster wird dafuer gar nicht
   # erst angefasst.
   alte_schluessel_jahr <- Filter(function(k) startsWith(k, paste0(jr, " ")), names(gdd_cache_alt))
-  if (jr < aktuelles_kalenderjahr && length(alte_schluessel_jahr) > 0) {
+  if (jahr_aus_cache("gdd", jr) && length(alte_schluessel_jahr) > 0) {
     for (schluessel in alte_schluessel_jahr) {
       gdd_bild_je_woche[[schluessel]] <- gdd_cache_alt[[schluessel]]$bild
       gdd_werte_je_woche[[schluessel]] <- gdd_cache_alt[[schluessel]]$werte
@@ -4633,3 +4671,14 @@ vorschau_html <- '
 '
 writeLines(vorschau_html, file.path(out_dir, "Datenexplorer.html"))
 cat("Datenexplorer-Vorschau gespeichert in:", file.path(out_dir, "Datenexplorer.html"), "\n")
+
+## Stand der Ebenen-Caches festhalten (nur nach einem vollstaendigen Lauf) -
+## erst hier am Ende, damit alle im Lauf heruntergeladenen MeteoSchweiz-Dateien
+## schon im Fingerabdruck stecken. Grundlage fuer den Schnellmodus.
+if (!schnellmodus) {
+  geodata_stand_jetzt <- geodata_stand()
+  staende_neu <- staende_alt
+  for (n in names(gespeicherte_caches)) staende_neu[[n]] <- eingangsstand(gespeicherte_caches[[n]])
+  saveRDS(staende_neu, staende_datei)
+  cat("Cache-Staende festgehalten:", length(gespeicherte_caches), "Ebenen\n")
+}

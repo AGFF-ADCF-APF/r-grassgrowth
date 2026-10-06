@@ -11,20 +11,16 @@ COPY deploy/install_packages.R /tmp/install_packages.R
 RUN Rscript /tmp/install_packages.R
 
 WORKDIR /app
-COPY app/ /app/
-COPY deploy/automate.R /app/automate.R
-COPY deploy/upload_svgs.R /app/upload_svgs.R
-
-# Persistente Verzeichnisse - werden im Betrieb per docker-compose.yml als
-# Volumes ueberlagert (siehe dort), hier nur als Fallback/fuer den
-# allerersten Start ohne Volume.
-RUN mkdir -p /app/outputs /app/ebenen_cache /geodata/meteoschweiz
+# Code (../app) und Deploy-Skripte (automate.R, upload_svgs.R, lauf.sh,
+# entrypoint.sh, nginx.conf) werden per docker-compose.yml eingebunden, nicht
+# ins Image kopiert - ein Code-Deploy braucht so keinen Image-Neubau. Neu
+# bauen nur noch bei neuen R-/System-Paketen.
+# Persistente Verzeichnisse - im Betrieb per docker-compose.yml als Volumes
+# ueberlagert, hier nur als Fallback fuer den allerersten Start.
+RUN mkdir -p /app/outputs /app/ebenen_cache /geodata/meteoschweiz /opt/deploy
 ENV GRASSGROWTH_GEODATA_DIR=/geodata/meteoschweiz
 ENV GRASSGROWTH_ELEVATION_CACHE_FILE=/app/ebenen_cache/standorte_elevation.csv
-
-COPY deploy/nginx.conf /etc/nginx/nginx.conf
-COPY deploy/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+ENV GRASSGROWTH_DEPLOY_DIR=/opt/deploy
 
 EXPOSE 80
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/bin/bash", "/opt/deploy/entrypoint.sh"]

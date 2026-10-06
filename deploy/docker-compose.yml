@@ -27,6 +27,16 @@ services:
       - FTP_USER=${FTP_USER:-}
       - FTP_PASSWORD=${FTP_PASSWORD:-}
     volumes:
+      # Code und Deploy-Skripte als Volume statt im Image: ein Code-Deploy ist
+      # "Dateien kopieren + lauf.sh seite" (siehe deploy.sh), ohne Neubau und
+      # ohne Neustart. Neustart nur bei Aenderungen an entrypoint.sh, nginx
+      # neu laden bei nginx.conf (docker exec ... nginx -s reload).
+      - ../app:/app
+      - ./automate.R:/opt/deploy/automate.R:ro
+      - ./upload_svgs.R:/opt/deploy/upload_svgs.R:ro
+      - ./lauf.sh:/opt/deploy/lauf.sh:ro
+      - ./entrypoint.sh:/opt/deploy/entrypoint.sh:ro
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - outputs:/app/outputs
       - ebenen_cache:/app/ebenen_cache
       - geodata:/geodata
