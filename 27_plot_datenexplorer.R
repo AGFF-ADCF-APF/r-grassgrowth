@@ -958,6 +958,10 @@ baue_kartenwerte_trace <- function(fig, snap, wertspalte, einheit, titel) {
   # angeklickten/gehoverten Standort statt Plotlys Standardfarbe zu zeigen.
   # Schrift bleibt konstant schwarz (bei weiss bis gray46 immer lesbar).
   snap$daysold_col <- tage_farbe(snap$daysold)
+  # Kennzahlen fuer das Standortblatt (JS: zeigeStandortBlatt()), mit | getrennt
+  snap$blatt <- paste(snap$place, if ("masl" %in% names(snap)) round(snap$masl) else "",
+                      round(snap$wert, 0), ifelse(is.na(snap$afc), "", round(snap$afc, 0)),
+                      format(snap$date, "%d.%m.%Y"), snap$daysold, sep = "|")
   fig %>% add_trace(
     data = snap, x = ~lon, y = ~lat, type = "scatter", mode = "markers",
     # showscale = FALSE: die "Tage seit Messung"-Legende ist jetzt eine
@@ -966,7 +970,7 @@ baue_kartenwerte_trace <- function(fig, snap, wertspalte, einheit, titel) {
     # Karte mit dem (nur bei Hover sichtbaren) Modebar-Bereich oben rechts.
     marker = list(size = 30, color = ~daysold, colorscale = list(list(0, "white"), list(1, "#757575")),
                   cmin = 0, cmax = 14, showscale = FALSE, opacity = 0),
-    hovertext = ~hover, hoverinfo = "text",
+    hovertext = ~hover, hoverinfo = "text", customdata = ~blatt,
     hoverlabel = list(bgcolor = ~daysold_col, font = list(color = "black")),
     showlegend = FALSE, visible = FALSE, name = titel
   )
@@ -1151,7 +1155,8 @@ function(el, x) {
   // Knopf gebraucht - deshalb als eigene Funktion statt nur inline fuer
   // den Mobile-Fall (wie zuvor).
   function vollAnsichtBerechnen(breite, hoehe) {
-    var plotBreite = breite - 20, plotHoehe = hoehe - 50;
+    // Mobile: kein Plotly-Titel (Kopfzeile ist HTML), Rand oben nur 6px.
+    var plotBreite = breite - 20, plotHoehe = hoehe - (breite < 700 ? 16 : 50);
     var ySpan = xSpan * plotHoehe / (scaleratio * plotBreite);
     return { x: [xMin, xMax], y: [yMitte - ySpan / 2, yMitte + ySpan / 2] };
   }
@@ -1164,7 +1169,7 @@ function(el, x) {
     // Desktop-Hoehe (560px) - der y-Achsenbereich wird fuer BEIDE Faelle
     // ueber vollAnsichtBerechnen() explizit gesetzt (nicht Plotlys eigene,
     // s.o. instabile Bereichsanpassung).
-    var hoehe = mobil ? Math.round(Math.max(200, (breite - 20) * 0.65 + 50)) : 560;
+    var hoehe = mobil ? Math.round(Math.max(200, (breite - 20) * 0.65 + 16)) : 560;
     var voll = vollAnsichtBerechnen(breite, hoehe);
     vollX = voll.x; vollY = voll.y;
     Plotly.relayout(el, { width: breite, height: hoehe, 'xaxis.range': voll.x, 'yaxis.range': voll.y });
@@ -2285,6 +2290,7 @@ function(el, x) {
   var groupPrecipMeta = __GROUP_PRECIP_META__;
   var groupLabels = __GROUP_LABELS__;
   var siteNames = __SITE_NAMES__;
+  var standortVerlaeufe = __STANDORT_VERLAEUFE__;
   var siteVisible = __SITE_VISIBLE__;
   var wochenTickvals = __WOCHEN_TICKVALS__;
   var wochenTicktext = wochenTickvals.map(String);
@@ -2603,11 +2609,20 @@ function(el, x) {
         if (!data.points || data.points.length === 0) return;
         var p = data.points[0];
         var orte = mapPointOrts[p.curveNumber];
-        if (!orte) return;
-        var ort = orte[p.pointNumber];
-        var siteIdx = siteNames.indexOf(ort);
-        if (siteIdx === -1) return;
-        waehleSiteViaKlick(siteIdx);
+        var ort = orte ? orte[p.pointNumber] : null;
+        var siteIdx = ort ? siteNames.indexOf(ort) : -1;
+        if (siteIdx !== -1) {
+          waehleSite(siteIdx);
+          zeigeStandortBlatt(ort, siteIdx, p.customdata);
+          return;
+        }
+        // Andere Punkte (MeteoSchweiz-Station, Suchmarker): auf Mobile gibt es
+        // kein Hover - deren Text deshalb im Blatt zeigen.
+        var text = p.text || p.hovertext;
+        if (istMobil() && text) {
+          var d = document.createElement('div'); d.className = 'gw-blatt-text'; d.innerHTML = text;
+          zeigeBlatt('', '', d);
+        }
       });
       growthMapKlickGebunden = true;
     }
@@ -2618,6 +2633,7 @@ function(el, x) {
     // hovertext in einem fixen, garantiert vollstaendig sichtbaren Modal.
     if (growthMapGd && !growthMapHoverGebunden) {
       growthMapGd.on('plotly_hover', function(data) {
+        if (istMobil()) return;
         if (!data.points || data.points.length === 0) return;
         var text = data.points[0].text || data.points[0].hovertext;
         if (!text) return;
@@ -2932,7 +2948,7 @@ function(el, x) {
     '.gw-edge-btn { width: 26px; height: 26px; border: 1px solid #bbb; border-radius: 4px; background: white; cursor: pointer; font-size: 15px; display: flex; align-items: center; justify-content: center; color: #333; padding: 0; }',
     '.gw-edge-btn:hover { background: #f2f2f2; }',
     '.gw-edge-btn.active { background: #eaf2fb; border-color: #4a90d9; color: #2a6fbf; }',
-    '.gw-slider-row { font-family: sans-serif; font-size: 14px; display: flex; align-items: center; margin: 20px 0; padding: 12px 16px; background: #f7f7f7; border-radius: 6px; }',
+    '.gw-slider-row { font-family: sans-serif; font-size: 14px; display: flex; align-items: center; margin: 10px 0; padding: 10px 16px; background: #f7f7f7; border-radius: 6px; }',
     '.gw-slider-aligned { flex: 0 0 auto; box-sizing: border-box; min-width: 0; }',
     '.gw-slider-label-row { display: flex; align-items: center; gap: 10px; width: 100%; margin-bottom: 8px; }',
     '.gw-slider-track-row { display: flex; align-items: center; width: 100%; }',
@@ -2971,6 +2987,185 @@ function(el, x) {
     '}'
   ].join(' ');
   document.head.appendChild(style);
+
+  // Blatt: gemeinsames Panel fuer Standort-Kennzahlen und (auf Mobile) die
+  // Erklaerungstexte der i-Knoepfe. Auf dem Handy ein Bottom Sheet (immer
+  // bildschirmbreit, kann nicht am Rand abgeschnitten werden, die Karte
+  // bleibt oben sichtbar), auf dem Desktop eine Karte unten rechts.
+  // Mobile-Layout (<= 700px): Kopfzeile statt Plotly-Titel, randlose Karte,
+  // Legende/Wert in einer Leiste unter der Karte, Ebenen und Kurve hinter
+  // Knoepfen - Karte, Wert und Wochenumschalter passen ohne Scrollen.
+  var stilMobil = document.createElement('style');
+  stilMobil.textContent = [
+    '.gw-blatt { position: fixed; z-index: 3000; background: white; box-shadow: 0 4px 24px rgba(0,0,0,0.25); font-family: sans-serif; font-size: 13px; color: #222; overflow-y: auto; right: 20px; bottom: 20px; width: 340px; max-height: 70vh; border-radius: 10px; padding: 12px 16px; box-sizing: border-box; }',
+    '.gw-blatt-griff { display: none; width: 36px; height: 4px; border-radius: 2px; background: #ccc; margin: 0 auto 8px; }',
+    '.gw-blatt-kopf { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 4px; }',
+    '.gw-blatt-titel { flex: 1; font-weight: 600; font-size: 15px; }',
+    '.gw-blatt-zu { border: none; background: none; font-size: 22px; line-height: 1; cursor: pointer; color: #555; padding: 0 2px; }',
+    '.gw-blatt-unter { color: #666; font-size: 12px; margin-bottom: 8px; }',
+    '.gw-blatt-zeile { display: flex; justify-content: space-between; gap: 8px; padding: 5px 0; border-bottom: 1px solid #eee; }',
+    '.gw-blatt-zeile b { font-weight: 600; text-align: right; }',
+    '.gw-blatt-knopf { display: block; width: 100%; margin-top: 10px; padding: 9px; border: 1px solid #bbb; border-radius: 6px; background: white; font-size: 13px; cursor: pointer; }',
+    '.gw-blatt-text { font-size: 13px; line-height: 1.5; }',
+    '.gw-mobil-only { display: none; }',
+    '.gw-mobil-kopf-titel { font-weight: 600; font-size: 17px; }',
+    '.gw-mobil-kopf-unter { font-size: 12px; color: #555; margin-top: 1px; }',
+    '.gw-kartenleiste { padding: 6px 10px; border-bottom: 1px solid #eee; font-size: 12px; }',
+    '.gw-kartenleiste-legende { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }',
+    '.gw-kartenleiste-balken { flex: 1; height: 8px; border-radius: 2px; min-width: 40px; }',
+    '.gw-kartenleiste-wert { font-weight: 600; }',
+    '.gw-mobil-knoepfe { gap: 8px; padding: 4px 10px 10px; }',
+    '.gw-mobil-knoepfe button { flex: 1; padding: 9px; border: 1px solid #bbb; border-radius: 6px; background: white; font-size: 14px; cursor: pointer; }',
+    '.gw-ebenen-zu-zeile { justify-content: space-between; align-items: center; margin-bottom: 4px; }',
+    '@media (max-width: 700px) {' +
+    '  .gw-blatt { left: 0; right: 0; bottom: 0; width: auto; max-height: 65vh; border-radius: 14px 14px 0 0; padding: 8px 16px calc(14px + env(safe-area-inset-bottom)); }' +
+    '  .gw-blatt-griff { display: block; }' +
+    '  .gw-desktop-only { display: none !important; }' +
+    '  .gw-mobil-only { display: block; }' +
+    '  .gw-mobil-knoepfe, .gw-ebenen-zu-zeile { display: flex; }' +
+    '  #gw-seite { padding: 0 !important; }' +
+    '  #gw-kartenzeile { gap: 0 !important; }' +
+    '  .gw-mobil-kopf { padding: 8px 10px 2px; }' +
+    '  .gw-map-controls-panel { display: none; }' +
+    '  body.gw-ebenen-offen .gw-map-controls-panel { display: block; position: fixed; left: 0; right: 0; bottom: 0; z-index: 2900; max-height: 70vh; overflow-y: auto; border-radius: 14px 14px 0 0; box-shadow: 0 -4px 24px rgba(0,0,0,0.25); padding-bottom: env(safe-area-inset-bottom); background: #f7f7f7; }' +
+    '  .gw-afc-legende-box { display: none !important; }' +
+    '  .gw-kurvenbereich { display: none; }' +
+    '  body.gw-kurve-offen .gw-kurvenbereich { display: block; }' +
+    '  .gw-slider-row { margin: 4px 10px; padding: 6px 8px; }' +
+    '  .gw-slider-aligned { margin-left: 0 !important; width: auto !important; flex: 1 1 auto !important; }' +
+    '  .gw-slider-label-row { gap: 6px; margin-bottom: 4px; }' +
+    '  .gw-today-btn { width: auto !important; min-width: 56px; padding: 0 8px; margin-left: 8px; }' +
+    '}'
+  ].join(' ');
+  document.head.appendChild(stilMobil);
+
+  function istMobil() { return window.matchMedia('(max-width: 700px)').matches; }
+  var blattEl = document.createElement('div');
+  blattEl.className = 'gw-blatt';
+  blattEl.style.display = 'none';
+  document.body.appendChild(blattEl);
+  var blattGeoeffnetUm = 0;
+  blattEl.addEventListener('click', function(evt) { evt.stopPropagation(); });
+  function schliesseBlatt() { blattEl.style.display = 'none'; }
+  function zeigeBlatt(titel, unter, inhalt) {
+    blattEl.innerHTML = '';
+    var griff = document.createElement('div'); griff.className = 'gw-blatt-griff'; blattEl.appendChild(griff);
+    var kopf = document.createElement('div'); kopf.className = 'gw-blatt-kopf';
+    var t = document.createElement('div'); t.className = 'gw-blatt-titel'; t.textContent = titel || '';
+    var zu = document.createElement('button'); zu.type = 'button'; zu.className = 'gw-blatt-zu'; zu.textContent = '×';
+    zu.setAttribute('aria-label', 'Schliessen');
+    zu.addEventListener('click', schliesseBlatt);
+    kopf.appendChild(t); kopf.appendChild(zu); blattEl.appendChild(kopf);
+    if (unter) { var u = document.createElement('div'); u.className = 'gw-blatt-unter'; u.textContent = unter; blattEl.appendChild(u); }
+    if (inhalt) blattEl.appendChild(inhalt);
+    blattEl.style.display = 'block';
+    blattEl.scrollTop = 0;
+    blattGeoeffnetUm = Date.now();
+  }
+  document.addEventListener('keydown', function(evt) { if (evt.key === 'Escape') { schliesseBlatt(); document.body.classList.remove('gw-ebenen-offen'); } });
+  // Klick/Tipp ausserhalb schliesst Blatt und Ebenen-Blatt - kurz nach dem
+  // Oeffnen ignoriert, weil der oeffnende Klick (z.B. auf einen Kartenpunkt)
+  // selbst noch bis zum document hochblubbert.
+  document.addEventListener('click', function(evt) {
+    if (Date.now() - blattGeoeffnetUm < 400) return;
+    schliesseBlatt();
+    var panel = document.getElementById('datenexplorer-map-controls');
+    if (document.body.classList.contains('gw-ebenen-offen') && panel && !panel.contains(evt.target)) {
+      document.body.classList.remove('gw-ebenen-offen');
+    }
+  });
+
+  // Mobile-Elemente rund um die Karte (auf dem Desktop per CSS ausgeblendet)
+  var kartenzeileEl = document.getElementById('gw-kartenzeile');
+  var mobilKopfUnterEl = null, kartenleisteLegendeEl = null, kartenleisteWertEl = null, kurveKnopfEl = null;
+  if (kartenzeileEl) {
+    var mobilKopf = document.createElement('div');
+    mobilKopf.className = 'gw-mobil-only gw-mobil-kopf';
+    var mkTitel = document.createElement('div'); mkTitel.className = 'gw-mobil-kopf-titel'; mkTitel.textContent = 'Graswachstum';
+    mobilKopfUnterEl = document.createElement('div'); mobilKopfUnterEl.className = 'gw-mobil-kopf-unter';
+    mobilKopf.appendChild(mkTitel); mobilKopf.appendChild(mobilKopfUnterEl);
+    kartenzeileEl.parentNode.insertBefore(mobilKopf, kartenzeileEl);
+    var kartenleiste = document.createElement('div');
+    kartenleiste.className = 'gw-mobil-only gw-kartenleiste';
+    kartenleisteLegendeEl = document.createElement('div');
+    kartenleisteLegendeEl.className = 'gw-kartenleiste-legende';
+    kartenleisteLegendeEl.style.display = 'none';
+    kartenleisteWertEl = document.createElement('div');
+    kartenleisteWertEl.className = 'gw-kartenleiste-wert';
+    kartenleisteWertEl.style.display = 'none';
+    kartenleiste.appendChild(kartenleisteLegendeEl); kartenleiste.appendChild(kartenleisteWertEl);
+    kartenzeileEl.parentNode.insertBefore(kartenleiste, kartenzeileEl.nextSibling);
+    var knoepfe = document.createElement('div');
+    knoepfe.className = 'gw-mobil-knoepfe gw-mobil-only';
+    var ebenenKnopf = document.createElement('button'); ebenenKnopf.type = 'button'; ebenenKnopf.textContent = 'Ebenen';
+    ebenenKnopf.addEventListener('click', function(evt) {
+      evt.stopPropagation();
+      schliesseBlatt();
+      document.body.classList.toggle('gw-ebenen-offen');
+      blattGeoeffnetUm = Date.now();
+    });
+    kurveKnopfEl = document.createElement('button'); kurveKnopfEl.type = 'button'; kurveKnopfEl.textContent = 'Kurve';
+    kurveKnopfEl.addEventListener('click', function(evt) {
+      evt.stopPropagation();
+      schliesseBlatt();
+      if (document.body.classList.contains('gw-kurve-offen')) {
+        document.body.classList.remove('gw-kurve-offen');
+        kurveKnopfEl.textContent = 'Kurve';
+      } else {
+        zeigeKurve();
+      }
+    });
+    knoepfe.appendChild(ebenenKnopf); knoepfe.appendChild(kurveKnopfEl);
+    var sliderHost = document.getElementById('datenexplorer-slider');
+    if (sliderHost) sliderHost.parentNode.insertBefore(knoepfe, sliderHost.nextSibling);
+  }
+  function setzeWertText(text) {
+    if (wertAnzeigeEl) wertAnzeigeEl.textContent = text;
+    if (kartenleisteWertEl) kartenleisteWertEl.textContent = text.replace('Wert am Cursor: ', '').replace('–', 'Auf die Karte tippen für den Wert');
+  }
+  // Legende der aktiven Hintergrund-Ebene als schmale Leiste unter der Karte
+  // (Mobile), i-Knopf zeigt Bezeichnung und Quelle im Blatt.
+  function aktualisiereKartenleiste(info) {
+    if (!kartenleisteLegendeEl) return;
+    kartenleisteLegendeEl.innerHTML = '';
+    // Wertzeile nur mit aktiver Ebene - ohne gibt es am Cursor nichts abzufragen
+    if (kartenleisteWertEl) kartenleisteWertEl.style.display = info ? 'block' : 'none';
+    if (!info) { kartenleisteLegendeEl.style.display = 'none'; return; }
+    kartenleisteLegendeEl.style.display = 'flex';
+    var min = document.createElement('span'); min.textContent = info.bereich[0];
+    var balken = document.createElement('span'); balken.className = 'gw-kartenleiste-balken';
+    balken.style.background = 'linear-gradient(to right,' + info.farben.join(',') + ')';
+    var max = document.createElement('span'); max.textContent = info.bereich[1] + ' ' + info.einheit;
+    kartenleisteLegendeEl.appendChild(min); kartenleisteLegendeEl.appendChild(balken); kartenleisteLegendeEl.appendChild(max);
+    if (typeof macheInfoKnopf === 'function') kartenleisteLegendeEl.appendChild(macheInfoKnopf(info.quelle, null, info.label));
+  }
+  window.addEventListener('resize', function() { aktualisiereKartentitel(); });
+
+  // Mini-Saisonkurve (SVG) fuer das Standortblatt: gemessener Zuwachs des
+  // gewaehlten Jahres, senkrechter Strich = gewaehlte Woche.
+  function miniKurve(punkte, markDoy) {
+    var NS = 'http://www.w3.org/2000/svg';
+    var b = 300, h = 70, x0 = 60, x1 = 330, yMax = 150;
+    var svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 ' + b + ' ' + h); svg.setAttribute('width', '100%'); svg.setAttribute('height', h);
+    var px = function(d) { return Math.max(0, Math.min(b, (d - x0) / (x1 - x0) * b)); };
+    var py = function(g) { return h - 4 - Math.min(g, yMax) / yMax * (h - 12); };
+    var basis = document.createElementNS(NS, 'line');
+    basis.setAttribute('x1', 0); basis.setAttribute('x2', b); basis.setAttribute('y1', h - 4); basis.setAttribute('y2', h - 4);
+    basis.setAttribute('stroke', '#ccc'); svg.appendChild(basis);
+    if (markDoy) {
+      var m = document.createElementNS(NS, 'line');
+      m.setAttribute('x1', px(markDoy)); m.setAttribute('x2', px(markDoy)); m.setAttribute('y1', 0); m.setAttribute('y2', h - 4);
+      m.setAttribute('stroke', '#999'); m.setAttribute('stroke-dasharray', '3,3'); svg.appendChild(m);
+    }
+    if (punkte && punkte.length) {
+      var pl = document.createElementNS(NS, 'polyline');
+      pl.setAttribute('points', punkte.map(function(p) { return px(p[0]) + ',' + py(p[1]); }).join(' '));
+      pl.setAttribute('fill', 'none'); pl.setAttribute('stroke', '#3B6D11'); pl.setAttribute('stroke-width', 2);
+      svg.appendChild(pl);
+    }
+    return svg;
+  }
 
   // Eigenes Tooltip-Modal STATT Plotlys nativer Hover-Box (siehe unten,
   // .hoverlayer wird per CSS ausgeblendet): die native Box wird von
@@ -3058,6 +3253,61 @@ function(el, x) {
     }
     input.value = selection.type === 'group' ? groupLabels[selection.idx] : siteNames[selection.idx];
     applyState();
+  }
+
+  // Kartenklick: Standort waehlen OHNE Umschalten (ein zweiter Klick auf
+  // denselben Standort oeffnet nur wieder das Blatt).
+  function waehleSite(siteIdx) {
+    if (selection.type === 'site' && selection.idx === siteIdx) return;
+    vorherigeSelection = { type: selection.type, idx: selection.idx };
+    selection = { type: 'site', idx: siteIdx };
+    aktiviereVorjahrFuerEinzelstandort();
+    input.value = siteNames[siteIdx];
+    applyState();
+  }
+  function zeigeKurve() {
+    if (istMobil()) {
+      document.body.classList.add('gw-kurve-offen');
+      if (kurveKnopfEl) kurveKnopfEl.textContent = 'Kurve ausblenden';
+      Plotly.Plots.resize(el);
+    }
+    var bereich = document.querySelector('.gw-kurvenbereich');
+    if (bereich) bereich.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  function zeigeStandortBlatt(ort, siteIdx, kennzahlen) {
+    var t = (kennzahlen || '').split('|');
+    var inhalt = document.createElement('div');
+    var zeile = function(l, w) {
+      var z = document.createElement('div'); z.className = 'gw-blatt-zeile';
+      var a = document.createElement('span'); a.textContent = l;
+      var b = document.createElement('b'); b.textContent = w;
+      z.appendChild(a); z.appendChild(b); inhalt.appendChild(z);
+    };
+    zeile('Graswachstum', (t[2] || '–') + ' kg TS/ha/Tag');
+    zeile('DGV', t[3] ? t[3] + ' kg TS/ha' : 'keine Angabe');
+    var fi = afcFensterJeWoche[selectedYear + ' ' + selectedWeek];
+    var v = fi ? afcVerlaeufe[fi - 1] : null;
+    if (v) zeile('Ziel-DGV dieser Woche', v.low + '–' + v.high + ' kg TS/ha');
+    var verlauf = standortVerlaeufe[ort] && standortVerlaeufe[ort][selectedYear];
+    if (verlauf && verlauf.length > 1) {
+      var titelKurve = document.createElement('div');
+      titelKurve.className = 'gw-blatt-unter';
+      titelKurve.style.marginTop = '8px';
+      titelKurve.textContent = 'Graswachstum ' + selectedYear + ' (Strich = gewaehlte Woche)';
+      inhalt.appendChild(titelKurve);
+      var montag = new Date(Date.UTC(selectedYear, 0, 4));
+      montag.setUTCDate(montag.getUTCDate() - ((montag.getUTCDay() + 6) % 7) + (selectedWeek - 1) * 7);
+      var doy = Math.round((montag - Date.UTC(selectedYear, 0, 1)) / 86400000) + 1;
+      inhalt.appendChild(miniKurve(verlauf, doy));
+    }
+    var knopf = document.createElement('button');
+    knopf.type = 'button'; knopf.className = 'gw-blatt-knopf';
+    knopf.textContent = 'Ganze Graswachstumskurve anzeigen';
+    knopf.addEventListener('click', function() { schliesseBlatt(); zeigeKurve(); });
+    inhalt.appendChild(knopf);
+    var alter = t[5] === '0' ? 'heute' : (t[5] === '1' ? 'gestern' : 'vor ' + t[5] + ' Tagen');
+    var unter = (t[1] ? t[1] + ' m ü. M. · ' : '') + (t[4] ? 'gemessen am ' + t[4] + ' (' + alter + ')' : '');
+    zeigeBlatt(t[0] || ort, unter, inhalt);
   }
 
   // Bei Auswahl eines EINZELNEN Standorts (statt einer Gruppe) ist der
@@ -3229,7 +3479,9 @@ function(el, x) {
     if (!growthMapGd) return;
     // Kurz (auch fuer Mobile): fester Titel, darunter Woche und Grafikdatum,
     // bei aktiver Meteo-Ebene eine dritte Zeile mit Ebene und Datenstand.
-    var titel = '<b>Graswachstum</b><br><span style=\"font-size:12px\">KW ' + selectedWeek + ' ' + selectedYear + ' · Grafik vom ' + grafikDatum + '</span>';
+    var unterzeile = 'KW ' + selectedWeek + ' ' + selectedYear + ' · Grafik vom ' + grafikDatum;
+    var ebenenZeile = '';
+    var titel = '<b>Graswachstum</b><br><span style=\"font-size:12px\">' + unterzeile + '</span>';
     var zeilen = 2;
     if (hintergrundEbene !== 'keine') {
       // Bodenwasserbilanz traegt ihr \"(berechnet) <Datum>\" bereits im
@@ -3247,10 +3499,13 @@ function(el, x) {
       var cacheEintrag = ebenenCache[ebeneDateiSchluessel(hintergrundEbene)];
       var werteEintrag = cacheEintrag && cacheEintrag.werte && cacheEintrag.werte[selectedYear + ' ' + selectedWeek];
       var stand = (werteEintrag && werteEintrag.bis) ? ('Stand ' + werteEintrag.bis) : 'lädt…';
-      titel += '<br><span style=\"font-size:11px\">' + label + ', ' + stand + '</span>';
+      ebenenZeile = label + ', ' + stand;
+      titel += '<br><span style=\"font-size:11px\">' + ebenenZeile + '</span>';
       zeilen = 3;
     }
-    Plotly.relayout(growthMapGd, { 'title.text': titel, 'margin.t': zeilen === 3 ? 74 : 58 });
+    if (mobilKopfUnterEl) mobilKopfUnterEl.textContent = unterzeile + (ebenenZeile ? ' · ' + ebenenZeile : '');
+    if (istMobil()) Plotly.relayout(growthMapGd, { 'title.text': '', 'margin.t': 6 });
+    else Plotly.relayout(growthMapGd, { 'title.text': titel, 'margin.t': zeilen === 3 ? 74 : 58 });
   }
 
   function aktualisiereLayerLegende() {
@@ -3258,6 +3513,7 @@ function(el, x) {
     aktualisiereKartentitel();
     if (!layerLegendeBox) return;
     var info = layerLegenden[hintergrundEbene];
+    aktualisiereKartenleiste(info);
     if (!info) { layerLegendeBox.style.display = 'none'; wertAnzeigeEl = null; koordinatenEl = null; ortschaftEl = null; legendePfeilEl = null; legendeBereich = null; return; }
     layerLegendeBox.style.display = 'block';
     layerLegendeBox.innerHTML = '';
@@ -3290,7 +3546,7 @@ function(el, x) {
     quelle.textContent = 'Quelle: ' + info.quelle;
     wertAnzeigeEl = document.createElement('div');
     wertAnzeigeEl.className = 'gw-layer-wert-anzeige';
-    wertAnzeigeEl.textContent = 'Wert am Cursor: –';
+    setzeWertText('Wert am Cursor: –');
     koordinatenEl = document.createElement('div');
     koordinatenEl.className = 'gw-layer-wert-anzeige gw-layer-wert-zusatz';
     koordinatenEl.textContent = 'Koordinaten: –';
@@ -3423,17 +3679,17 @@ function(el, x) {
     var col = Math.floor((lon - gitter.x0) / (gitter.x1 - gitter.x0) * gitter.ncol);
     var row = Math.floor((gitter.y1 - lat) / (gitter.y1 - gitter.y0) * gitter.nrow);
     if (col < 0 || col >= gitter.ncol || row < 0 || row >= gitter.nrow) {
-      wertAnzeigeEl.textContent = 'Wert am Cursor: ' + (info.ausserhalb || 'ausserhalb der Schweiz');
+      setzeWertText('Wert am Cursor: ' + (info.ausserhalb || 'ausserhalb der Schweiz'));
       aktualisierePfeilPosition(null);
       return;
     }
     var wert = gitter.m[row][col];
-    wertAnzeigeEl.textContent = (wert === null || wert === undefined) ?
-      'Wert am Cursor: keine Daten' : 'Wert am Cursor: ' + wert + ' ' + info.einheit;
+    setzeWertText((wert === null || wert === undefined) ?
+      'Wert am Cursor: keine Daten' : 'Wert am Cursor: ' + wert + ' ' + info.einheit);
     aktualisierePfeilPosition(wert);
   }
   function versteckeWertAnzeige() {
-    if (wertAnzeigeEl) wertAnzeigeEl.textContent = 'Wert am Cursor: –';
+    setzeWertText('Wert am Cursor: –');
     if (koordinatenEl) koordinatenEl.textContent = 'Koordinaten: –';
     if (ortschaftEl) ortschaftEl.textContent = 'Ort: –';
     aktualisierePfeilPosition(null);
@@ -3459,7 +3715,16 @@ function(el, x) {
     var layerHeading = document.createElement('div');
     layerHeading.className = 'gw-layer-heading';
     layerHeading.textContent = 'Ebenen';
-    layerPanel.appendChild(layerHeading);
+    var ebenenZuZeile = document.createElement('div');
+    ebenenZuZeile.className = 'gw-ebenen-zu-zeile gw-mobil-only';
+    var ebenenZu = document.createElement('button'); ebenenZu.type = 'button'; ebenenZu.className = 'gw-blatt-zu'; ebenenZu.textContent = '×';
+    ebenenZu.setAttribute('aria-label', 'Ebenen schliessen');
+    ebenenZu.addEventListener('click', function(evt) { evt.stopPropagation(); document.body.classList.remove('gw-ebenen-offen'); });
+    ebenenZuZeile.appendChild(layerHeading); ebenenZuZeile.appendChild(ebenenZu);
+    layerPanel.appendChild(ebenenZuZeile);
+    var layerHeadingDesktop = layerHeading.cloneNode(true);
+    layerHeadingDesktop.classList.add('gw-desktop-only');
+    layerPanel.insertBefore(layerHeadingDesktop, ebenenZuZeile);
 
     // PLZ/Ort-Suche: swisstopo-SearchServer (dieselbe oeffentliche API wie
     // fuer die Cursor-Ortsabfrage) liefert Vorschlaege waehrend des Tippens
@@ -3572,7 +3837,7 @@ function(el, x) {
     // Absatz-Erklaerung nicht) - per Klick statt nur Hover, damit es auch
     // auf Touch-Geraeten funktioniert; ein Klick ausserhalb schliesst das
     // Popup wieder.
-    function macheInfoKnopf(text) {
+    function macheInfoKnopf(text, zusatz, titel) {
       var wrap = document.createElement('span');
       wrap.className = 'gw-info-wrap';
       var btn = document.createElement('button');
@@ -3587,6 +3852,14 @@ function(el, x) {
       btn.addEventListener('click', function(evt) {
         evt.preventDefault();
         evt.stopPropagation();
+        if (istMobil()) {
+          var inhalt = document.createElement('div');
+          if (zusatz) { var z = zusatz(); if (z) inhalt.appendChild(z); }
+          var p = document.createElement('div'); p.className = 'gw-blatt-text'; p.textContent = text;
+          inhalt.appendChild(p);
+          zeigeBlatt(titel || 'Erklaerung', '', inhalt);
+          return;
+        }
         var offen = popup.style.display === 'block';
         document.querySelectorAll('.gw-info-popup').forEach(function(p) { p.style.display = 'none'; });
         popup.style.display = offen ? 'none' : 'block';
@@ -3612,12 +3885,12 @@ function(el, x) {
     // eines Radiobuttons - fuer Graswachstum/DGV/MeteoSchweiz-Stationen, die
     // (anders als die Hintergrund-Raster-Ebenen) unabhaengig VONEINANDER
     // ein-/ausblendbar sein sollen, nicht als Radiogruppe.
-    function macheLayerToggle(labelText, checked, onChange, erklaerung, zusatzKlasse) {
+    function macheLayerToggle(labelText, checked, onChange, erklaerung, zusatzKlasse, zusatzInfo) {
       var zeile = document.createElement('div');
       zeile.className = 'gw-layer-option-zeile' + (zusatzKlasse ? ' ' + zusatzKlasse : '');
       var toggleWrap = schalterLinksbuendig(makeToggle(labelText, checked, onChange));
       zeile.appendChild(toggleWrap);
-      if (erklaerung) zeile.appendChild(macheInfoKnopf(erklaerung));
+      if (erklaerung) zeile.appendChild(macheInfoKnopf(erklaerung, zusatzInfo, labelText));
       layerPanel.appendChild(zeile);
       return toggleWrap;
     }
@@ -3630,13 +3903,14 @@ function(el, x) {
     macheLayerToggle('Graswachstum (kg TS/ha/Tag)', true, function(checked) { graswachstumOn = checked; applyState(); },
       'Die Zahl im Kreis zeigt das zuletzt gemessene Graswachstum in kg TS/ha/Tag (Trockensubstanz-Zuwachs pro Hektare und Tag). Die Graufaerbung des Kreises zeigt, wie lange die Messung zurueckliegt: weiss = frisch gemessen (0 Tage), dunkelgrau = bis zu 14 Tage alt. Standorte ohne Messung in den letzten 14 Tagen werden nicht mehr angezeigt.');
     macheLayerToggle('DGV (kg TS/ha)', true, function(checked) { afcOn = checked; applyState(); },
-      'DGV (Durchschnittlicher GrasVorrat, international AFC = Average Farm Cover) schaetzt den aktuellen Grasvorrat des Betriebs in kg Trockensubstanz pro Hektare (kg TS/ha). Der Ring zeigt diesen Vorrat als Fortschrittsbalken auf einer Skala von 0 bis 1500 kg TS/ha und faerbt ihn nach dem jahreszeitlichen Zielbereich: rot = deutlich zu wenig (unter 200 kg praktisch leer), gruen = im Zielbereich, blaugruen = deutlich mehr als noetig. Der Zielbereich verschiebt sich uebers Jahr, z.B. Fruehling ca. 500-700, Sommer ca. 700-800, Herbst ca. 900-1200 kg TS/ha.');
+      'DGV (Durchschnittlicher GrasVorrat, international AFC = Average Farm Cover) schaetzt den aktuellen Grasvorrat des Betriebs in kg Trockensubstanz pro Hektare (kg TS/ha). Der Ring zeigt diesen Vorrat als Fortschrittsbalken auf einer Skala von 0 bis 1500 kg TS/ha und faerbt ihn nach dem jahreszeitlichen Zielbereich: rot = deutlich zu wenig (unter 200 kg praktisch leer), gruen = im Zielbereich, blaugruen = deutlich mehr als noetig. Der Zielbereich verschiebt sich uebers Jahr, z.B. Fruehling ca. 500-700, Sommer ca. 700-800, Herbst ca. 900-1200 kg TS/ha.', null,
+      function() { if (!afcLegendeBox || afcLegendeBox.style.display === 'none') return null; var c = afcLegendeBox.cloneNode(true); c.className = 'gw-layer-legende'; c.style.display = 'block'; c.style.marginBottom = '10px'; return c; });
 
     // Kompakte DGV-Legende (Ring) DIREKT nach dem DGV-Schalter - gehoert
     // inhaltlich dazu. aktualisiereAfcLegende() (siehe unten) blendet die
     // Box aus, sobald DGV ausgeschaltet ist.
     afcLegendeBox = document.createElement('div');
-    afcLegendeBox.className = 'gw-layer-legende';
+    afcLegendeBox.className = 'gw-layer-legende gw-afc-legende-box';
     afcLegendeBox.style.display = 'none';
     layerPanel.appendChild(afcLegendeBox);
 
@@ -3768,7 +4042,7 @@ function(el, x) {
       wrap.appendChild(radio);
       wrap.appendChild(text);
       zeile.appendChild(wrap);
-      if (erklaerung) zeile.appendChild(macheInfoKnopf(erklaerung));
+      if (erklaerung) zeile.appendChild(macheInfoKnopf(erklaerung, null, labelText));
       layerPanel.appendChild(zeile);
       return radio;
     }
@@ -3881,6 +4155,7 @@ function(el, x) {
   titleEl.textContent = 'Graswachstumskurve';
 
   var fillHost = document.createElement('div');
+  fillHost.className = 'gw-kurvenbereich';
   fillHost.style.width = '100%';
   el.parentNode.insertBefore(fillHost, el);
   fillHost.appendChild(titleEl);
@@ -4207,6 +4482,10 @@ js_ersetzungen <- list(
   "__GROUP_PRECIP_META__" = jsonlite::toJSON(group_precip_meta, auto_unbox = TRUE),
   "__GROUP_LABELS__" = jsonlite::toJSON(gruppen_labels),
   "__SITE_NAMES__" = jsonlite::toJSON(alle_orte),
+  # Saisonverlauf je Standort und Jahr fuer die Mini-Kurve im Standortblatt
+  "__STANDORT_VERLAEUFE__" = jsonlite::toJSON(lapply(split(daten_korr, as.character(daten_korr$Ort)), function(d)
+    lapply(split(d, d$year), function(dj) unname(lapply(order(dj$date), function(k)
+      c(as.integer(format(dj$date[k], "%j")), round(dj$growth[k])))))), auto_unbox = FALSE),
   "__SITE_VISIBLE__" = jsonlite::toJSON(site_sichtbar_je_gruppe),
   "__WOCHEN_TICKVALS__" = jsonlite::toJSON(wochen_tickvals),
   "__DATUM_TICKTEXT_JE_JAHR__" = jsonlite::toJSON(datum_ticktext_je_jahr, auto_unbox = TRUE),
@@ -4254,8 +4533,8 @@ seite <- htmltools::tagList(
     htmltools::tags$title(paste0("Datenexplorer Graswachstum")),
     htmltools::tags$meta(name = "viewport", content = "width=device-width, initial-scale=1")
   ),
-  htmltools::div(style = "font-family: sans-serif; max-width: 1400px; margin: 0 auto; padding: 20px;",
-    htmltools::div(style = "display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start;",
+  htmltools::div(id = "gw-seite", style = "font-family: sans-serif; max-width: 1400px; margin: 0 auto; padding: 20px;",
+    htmltools::div(id = "gw-kartenzeile", style = "display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start;",
       htmltools::div(id = "datenexplorer-growthmap", style = "flex: 1 1 700px; min-width: 320px; height: 560px; overflow: hidden;", fig_wachstum),
       # class statt nur inline-style: flex-grow:1 auf BEIDEN Geschwistern
       # (Karte UND Ebenen-Box) verteilte uebrigen Platz 50/50 statt der Karte
