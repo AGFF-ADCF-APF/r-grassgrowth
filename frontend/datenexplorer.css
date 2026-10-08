@@ -10,6 +10,24 @@
 .gw-combo-item { padding: 6px 9px; cursor: pointer; }
 .gw-combo-item:hover, .gw-combo-item.active { background: var(--gw-akzent-hell, #eaf2fb); }
 .gw-combo-sep { padding: 4px 9px; font-size: 11px; color: #888; border-top: 1px solid #eee; margin-top: 2px; user-select: none; }
+.gw-combo-kopf { border-top: none; margin-top: 0; }
+.gw-multi { width: 340px; max-width: 100%; }
+.gw-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-height: 32px; padding: 3px 4px; border: 1px solid #bbb; border-radius: 6px; background: white; cursor: text; box-sizing: border-box; }
+.gw-chips:focus-within { border-color: var(--gw-akzent, #4a90d9); box-shadow: 0 0 0 2px var(--gw-akzent-hell, #eaf2fb); }
+.gw-multi .gw-chips input { flex: 1 1 90px; min-width: 90px; width: auto; border: none; padding: 4px; font-size: 14px; outline: none; background: transparent; }
+.gw-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 2px 3px 2px 8px; border-radius: 12px; background: #f0f2f0; border: 1px solid #dde2dd; font-size: 13px; line-height: 1.3; white-space: nowrap; }
+.gw-chip-gruppe { background: #f5f5f5; font-style: italic; }
+.gw-chip-punkt { flex: none; display: inline-block; width: 10px; height: 10px; border-radius: 50%; box-sizing: border-box; }
+.gw-chip-gruppe .gw-chip-punkt { border-radius: 2px; }
+.gw-chip-x { border: none; background: none; padding: 0 4px; font-size: 15px; line-height: 1; color: #777; cursor: pointer; border-radius: 50%; }
+.gw-chip-x:hover { color: #000; background: #e2e6e2; }
+.gw-multi .gw-combo-list { width: 100%; max-height: 320px; }
+.gw-combo-item { display: flex; align-items: center; gap: 7px; }
+.gw-combo-item.gewaehlt { font-weight: 600; }
+.gw-combo-haken { flex: none; width: 14px; color: var(--gw-akzent-dunkel, #2a6fbf); font-weight: 700; text-align: center; }
+.gw-combo-item .gw-chip-punkt { width: 9px; height: 9px; }
+.gw-combo-zurueck { padding: 7px 9px; border-top: 1px solid #eee; font-size: 12.5px; color: var(--gw-akzent-dunkel, #2a6fbf); cursor: pointer; }
+.gw-combo-zurueck:hover { background: var(--gw-akzent-hell, #eaf2fb); }
 .gw-year-select { padding: 5px 8px; font-size: 14px; border: 1px solid #bbb; border-radius: 4px; }
 .gw-layer-panel { font-family: var(--gw-schrift, sans-serif); font-size: 13px; background: #f7f7f7; border-radius: 6px; padding: 12px 14px; }
 #datenexplorer-growthmap .hoverlayer { display: none !important; }

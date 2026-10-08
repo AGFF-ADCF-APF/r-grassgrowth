@@ -299,7 +299,47 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   // regelmaessig_je_jahr), die uebrigen per Legende zuschaltbar. Hat ein
   // Jahr (noch) keinen solchen Standort, erscheinen alle.
   function regelListe() { return regelmaessig[selectedYear] || []; }
+  // Auswahl: eine Gruppe ('group'), ein Standort ('site') oder beliebig viele
+  // Standorte und Gruppen kombiniert ('multi', mit Listen sites/groups).
+  function auswahlListen() {
+    if (selection.type === 'group') return { groups: [selection.idx], sites: [] };
+    if (selection.type === 'site') return { groups: [], sites: [selection.idx] };
+    return { groups: selection.groups.slice(), sites: selection.sites.slice() };
+  }
+  function kopiereAuswahl(a) { return a.type === 'multi' ? { type: 'multi', groups: a.groups.slice(), sites: a.sites.slice() } : { type: a.type, idx: a.idx }; }
+  function setzeAuswahl(groups, sites) {
+    var vorher = selection;
+    if (!groups.length && !sites.length) groups = [0];
+    if (groups.length === 1 && !sites.length) selection = { type: 'group', idx: groups[0] };
+    else if (sites.length === 1 && !groups.length) selection = { type: 'site', idx: sites[0] };
+    else selection = { type: 'multi', groups: groups.slice(), sites: sites.slice() };
+    if (selection.type === 'site' && vorher.type !== 'site') aktiviereVorjahrFuerEinzelstandort();
+    // Kombinationen: automatisch eingeschaltetes Vorjahr wieder aus (zu unruhig)
+    if (selection.type === 'multi' && vorjahrAutomatisch && vorjahrOn) {
+      vorjahrOn = false; vorjahrAutomatisch = false;
+      if (vorjahrToggleWrap && vorjahrToggleWrap.checkbox) vorjahrToggleWrap.checkbox.checked = false;
+    }
+  }
+  function gruppeGewaehlt(gIdx) {
+    return selection.type === 'group' ? selection.idx === gIdx : (selection.type === 'multi' && selection.groups.indexOf(gIdx) !== -1);
+  }
+  // Farben der Gruppenmittel, wenn mehrere Gruppen kombiniert sind
+  var GRUPPEN_FARBEN = ['black', '#7b3294', '#e66101', '#1b7837', '#2166ac', '#b2182b', '#8c510a', '#01665e'];
+  function gruppenFarbe(gIdx) {
+    if (selection.type !== 'multi' || selection.groups.length < 2) return 'black';
+    return GRUPPEN_FARBEN[selection.groups.indexOf(gIdx) % GRUPPEN_FARBEN.length];
+  }
+  function gruppenName(gIdx) { return groupLabels[gIdx].replace(/^Region: /, '').replace(/^Hoehenlage: /, 'Höhenlage '); }
+  function auswahlText() {
+    var a = auswahlListen();
+    if (selection.type === 'group') return groupLabels[selection.idx].replace('Hoehenlage', 'Höhenlage');
+    if (selection.type === 'site') return siteNames[selection.idx];
+    var namen = a.groups.map(gruppenName).concat(a.sites.map(function(i) { return siteNames[i]; }));
+    if (namen.length <= 3) return namen.join(', ');
+    return namen.slice(0, 2).join(', ') + ' und ' + (namen.length - 2) + ' weitere';
+  }
   function siteInAuswahl(siteIdx) {
+    if (selection.type === 'multi') return selection.sites.indexOf(siteIdx) !== -1;
     if (selection.type !== 'group') return selection.type === 'site' && siteIdx === selection.idx;
     if (!siteVisible[selection.idx][siteIdx]) return false;
     var liste = regelListe();
@@ -332,8 +372,16 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       vis[m.traceIdx] = m.year === selectedYear && siteInAuswahl(m.siteIdx);
     });
     groupGrowthMeta.forEach(function(m) {
-      vis[m.traceIdx] = m.year === selectedYear && selection.type === 'group' && m.groupIdx === selection.idx;
+      vis[m.traceIdx] = m.year === selectedYear && gruppeGewaehlt(m.groupIdx);
     });
+    // Gruppenmittel einfaerben (mehrere Gruppen) bzw. zurueck auf schwarz
+    var gIdxListe = [], gFarben = [];
+    groupGrowthMeta.forEach(function(m) {
+      if (m.year !== selectedYear || !el.data[m.traceIdx]) return;
+      var f = gruppenFarbe(m.groupIdx), d = el.data[m.traceIdx];
+      if ((d.line && d.line.color) !== f) { gIdxListe.push(m.traceIdx); gFarben.push(f); }
+    });
+    if (gIdxListe.length) Plotly.restyle(el, { 'line.color': gFarben, 'marker.color': gFarben }, gIdxListe);
     sitePrecipMeta.forEach(function(m) {
       var match = selection.type === 'site' && m.siteIdx === selection.idx;
       vis[m.traceIdx] = precipOn && m.year === selectedYear && match;
@@ -391,9 +439,9 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       vorjahrStyledTraceIdx.push({ traceIdx: m.traceIdx, color: siteColors[m.siteIdx] });
     });
     groupGrowthMeta.forEach(function(m) {
-      if (m.year !== vorjahr || selection.type !== 'group' || m.groupIdx !== selection.idx) return;
+      if (m.year !== vorjahr || !gruppeGewaehlt(m.groupIdx)) return;
       traceIdxListe.push(m.traceIdx);
-      vorjahrStyledTraceIdx.push({ traceIdx: m.traceIdx, color: 'black' });
+      vorjahrStyledTraceIdx.push({ traceIdx: m.traceIdx, color: gruppenFarbe(m.groupIdx) });
     });
     if (traceIdxListe.length > 0) Plotly.restyle(el, { visible: true, 'line.color': grau, 'marker.color': grau }, traceIdxListe);
 
@@ -448,7 +496,8 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     var orts = mapPointOrts[idx];
     return orts.map(function(o) {
       var oi = siteNames.indexOf(o);
-      var inSel = selection.type === 'group' ? (oi >= 0 && siteVisible[selection.idx][oi]) : (selection.type === 'site' && siteNames[selection.idx] === o);
+      var a = auswahlListen();
+      var inSel = oi >= 0 && (a.sites.indexOf(oi) !== -1 || a.groups.some(function(g) { return siteVisible[g][oi]; }));
       return inSel ? 4 : 1;
     });
   }
@@ -895,9 +944,10 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       'Der Abspielen-Knopf zeigt Woche für Woche bis zur letzten verfügbaren Woche. Steht der Regler schon am Ende, beginnt er bei der ersten Woche mit Messungen. Jede andere Bedienung der Zeitleiste hält das Abspielen an.',
       'In der Wachstumskurve wählt auch ein Klick auf die Achse unter der Grafik die Woche.'] });
   dokuEintrag({ id: 'kurve', gruppe: 'Erste Schritte', titel: 'Wachstumskurve',
-    alias: ['Wachstumskurve', 'Graswachstumskurve'], stichworte: 'kurve linie mittel durchschnitt mittelland vorjahr niederschlag balken gruppe region hoehenlage jahr legende',
+    alias: ['Wachstumskurve', 'Graswachstumskurve'], stichworte: 'kurve linie mittel durchschnitt mittelland vorjahr niederschlag balken gruppe region hoehenlage jahr legende vergleichen kombinieren mehrere auswahl mehrfachauswahl',
     legende: function() { return dokuLinien([['Standort (je eigene Farbe)', '#1D9E75', 'solid'], ['Mittleres Wachstum der Auswahl', 'black', 'dashed'], ['Durchschnitt Mittelland, langjährig', 'red', 'dotted'], ['Vorjahr zum Vergleich', 'rgba(140,140,140,0.9)', 'solid'], ['Niederschlag pro Woche', 'steelblue', 'balken']]); },
-    text: ['Die Kurve zeigt das gemessene Graswachstum in kg TS/ha/Tag über die Saison. Oben links wählen Sie eine Gruppe (alle Standorte, eine Region West/Mitte/Ost oder eine Höhenlage) oder tippen einen Standort ins Suchfeld, daneben das Jahr.',
+    text: ['Die Kurve zeigt das gemessene Graswachstum in kg TS/ha/Tag über die Saison. Im Auswahlfeld oben links lassen sich Standorte und Gruppen (alle Standorte, Region West/Mitte/Ost, Höhenlagen) suchen und beliebig kombinieren: Antippen setzt oder entfernt ein Häkchen, gewählte Einträge stehen als Kärtchen im Feld und lassen sich mit × entfernen. Daneben wählen Sie das Jahr.',
+      'Eine einzelne Gruppe zeigt ihre Standorte und das Gruppenmittel, ein einzelner Standort seine Kurve mit Niederschlag. Bei Kombinationen erscheint je gewählter Standort eine Kurve und je Gruppe das Mittel (gestrichelt, bei mehreren Gruppen in eigenen Farben); Niederschlag wird dann nicht gezeigt. «Auswahl zurücksetzen» am Ende der Liste führt zurück zu allen Standorten.',
       'Rechts steht die Legende. Ein Klick auf einen Standort zeigt nur noch diesen. Die Schalter darüber blenden Niederschlag (Balken, mm pro Woche) und die Kurven des Vorjahres ein, oder stellen die Achse von Kalenderwochen auf Datum um.',
       'Beim Start erscheinen nur Standorte, die regelmässig messen (siehe dort). Die übrigen lassen sich in der Legende dazuschalten.'] });
   dokuEintrag({ id: 'regelmaessig', gruppe: 'Erste Schritte', titel: 'Regelmässig messende Standorte',
@@ -1629,27 +1679,77 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   tooltipModalEl.style.display = 'none';
   document.body.appendChild(tooltipModalEl);
 
-  var options = groupLabels.map(function(label, i) { return { type: 'group', idx: i, label: label }; });
+  var options = groupLabels.map(function(label, i) { return { type: 'group', idx: i, label: label.replace('Hoehenlage', 'Höhenlage') }; });
   var siteOptions = siteNames.map(function(name, i) { return { type: 'site', idx: i, label: name }; });
 
   var controls = document.createElement('div');
   controls.className = 'gw-controls';
 
+  // Durchsuchbare Mehrfachauswahl: gewaehlte Gruppen und Standorte als Chips
+  // im Feld, Liste mit Haekchen; Antippen schaltet einen Eintrag um, die Liste
+  // bleibt offen. Ohne Auswahl gilt wieder 'Alle Standorte'.
   var comboWrap = document.createElement('div');
-  comboWrap.className = 'gw-combo';
+  comboWrap.className = 'gw-combo gw-multi';
+  var chipsEl = document.createElement('div');
+  chipsEl.className = 'gw-chips';
   var input = document.createElement('input');
   input.type = 'text';
-  input.placeholder = 'Gruppe oder Standort…';
-  input.value = groupLabels[0];
+  input.placeholder = 'Standort oder Gruppe hinzufügen …';
+  input.setAttribute('aria-label', 'Kurven wählen: Standorte und Gruppen suchen und kombinieren');
   var list = document.createElement('div');
   list.className = 'gw-combo-list';
+  list.setAttribute('role', 'listbox');
+  list.setAttribute('aria-multiselectable', 'true');
   list.style.display = 'none';
+  chipsEl.appendChild(input);
+  chipsEl.addEventListener('mousedown', function(e) { if (e.target === chipsEl) { e.preventDefault(); input.focus(); } });
+
+  function istGewaehlt(o) {
+    var a = auswahlListen();
+    return o.type === 'group' ? a.groups.indexOf(o.idx) !== -1 : a.sites.indexOf(o.idx) !== -1;
+  }
+  function umschalten(o) {
+    var a = auswahlListen();
+    var liste = o.type === 'group' ? a.groups : a.sites;
+    var pos = liste.indexOf(o.idx);
+    if (pos === -1) liste.push(o.idx); else liste.splice(pos, 1);
+    // 'Alle Standorte' als Start wird ersetzt, sobald etwas anderes dazukommt
+    if (pos === -1 && !(o.type === 'group' && o.idx === 0) && selection.type === 'group' && selection.idx === 0) a.groups = a.groups.filter(function(g) { return g !== 0; });
+    vorherigeSelection = null;
+    setzeAuswahl(a.groups, a.sites);
+    aktualisiereAuswahlChips();
+    applyState();
+  }
+  function aktualisiereAuswahlChips() {
+    Array.prototype.slice.call(chipsEl.querySelectorAll('.gw-chip')).forEach(function(c) { c.remove(); });
+    var a = auswahlListen();
+    var eintraege = a.groups.map(function(g) { return { type: 'group', idx: g, label: gruppenName(g), farbe: gruppenFarbe(g) }; })
+      .concat(a.sites.map(function(i) { return { type: 'site', idx: i, label: siteNames[i], farbe: siteColors[i] }; }));
+    eintraege.forEach(function(o) {
+      var chip = document.createElement('span');
+      chip.className = 'gw-chip' + (o.type === 'group' ? ' gw-chip-gruppe' : '');
+      var punkt = document.createElement('span'); punkt.className = 'gw-chip-punkt'; punkt.style.background = o.farbe;
+      chip.appendChild(punkt); chip.appendChild(document.createTextNode(o.label));
+      var x = document.createElement('button');
+      x.type = 'button'; x.className = 'gw-chip-x'; x.textContent = String.fromCharCode(215);
+      x.setAttribute('aria-label', o.label + ' entfernen');
+      x.addEventListener('mousedown', function(e) { e.preventDefault(); e.stopPropagation(); umschalten(o); });
+      chip.appendChild(x);
+      chipsEl.insertBefore(chip, input);
+    });
+    input.placeholder = eintraege.length > 1 || selection.type !== 'group' || selection.idx !== 0 ? 'hinzufügen …' : 'Standort oder Gruppe hinzufügen …';
+    if (list.style.display === 'block') renderList(input.value);
+  }
 
   function renderList(query) {
     query = (query || '').toLowerCase();
     list.innerHTML = '';
     var matchedGroups = options.filter(function(o) { return o.label.toLowerCase().indexOf(query) !== -1; });
     var matchedSites = siteOptions.filter(function(o) { return o.label.toLowerCase().indexOf(query) !== -1; });
+    var kopf = document.createElement('div');
+    kopf.className = 'gw-combo-sep gw-combo-kopf';
+    kopf.textContent = 'Gruppen (Mittelwert)';
+    if (matchedGroups.length) list.appendChild(kopf);
     matchedGroups.forEach(function(o) { list.appendChild(makeItem(o)); });
     if (matchedSites.length > 0) {
       var sep = document.createElement('div');
@@ -1658,29 +1758,54 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       list.appendChild(sep);
       matchedSites.forEach(function(o) { list.appendChild(makeItem(o)); });
     }
+    var a = auswahlListen();
+    if (a.groups.length + a.sites.length > 1 || selection.type !== 'group' || selection.idx !== 0) {
+      var zurueck = document.createElement('div');
+      zurueck.className = 'gw-combo-zurueck';
+      zurueck.textContent = 'Auswahl zurücksetzen (Alle Standorte)';
+      zurueck.addEventListener('mousedown', function(e) { e.preventDefault(); setzeAuswahl([0], []); aktualisiereAuswahlChips(); applyState(); });
+      list.appendChild(zurueck);
+    }
     list.style.display = (matchedGroups.length + matchedSites.length > 0) ? 'block' : 'none';
   }
 
   function makeItem(o) {
     var item = document.createElement('div');
     item.className = 'gw-combo-item';
-    item.textContent = o.label;
+    item.setAttribute('role', 'option');
+    var an = istGewaehlt(o);
+    item.setAttribute('aria-selected', an ? 'true' : 'false');
+    if (an) item.classList.add('gewaehlt');
+    var haken = document.createElement('span'); haken.className = 'gw-combo-haken'; haken.textContent = an ? String.fromCharCode(10003) : '';
+    var punkt = document.createElement('span'); punkt.className = 'gw-chip-punkt';
+    punkt.style.background = o.type === 'site' ? siteColors[o.idx] : 'transparent';
+    if (o.type === 'group') punkt.style.borderTop = '2px dashed #555';
+    item.appendChild(haken); item.appendChild(punkt); item.appendChild(document.createTextNode(o.label));
     item.addEventListener('mousedown', function(e) {
       e.preventDefault();
-      selection = { type: o.type, idx: o.idx };
-      if (o.type === 'site') aktiviereVorjahrFuerEinzelstandort();
-      input.value = o.label;
-      list.style.display = 'none';
-      applyState();
+      umschalten(o);
+      input.value = '';
+      renderList('');
     });
     return item;
   }
 
-  input.addEventListener('focus', function() { renderList(''); });
+  input.addEventListener('focus', function() { renderList(input.value); });
   input.addEventListener('input', function() { renderList(input.value); });
-  input.addEventListener('blur', function() { setTimeout(function() { list.style.display = 'none'; }, 150); });
-  comboWrap.appendChild(input);
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Backspace' && input.value === '') {
+      var a = auswahlListen();
+      if (a.sites.length) a.sites.pop(); else if (a.groups.length) a.groups.pop();
+      setzeAuswahl(a.groups, a.sites); aktualisiereAuswahlChips(); applyState();
+    } else if (e.key === 'Enter') {
+      var erstes = list.querySelector('.gw-combo-item');
+      if (erstes) { e.preventDefault(); erstes.dispatchEvent(new MouseEvent('mousedown')); }
+    } else if (e.key === 'Escape') { list.style.display = 'none'; input.blur(); }
+  });
+  input.addEventListener('blur', function() { setTimeout(function() { list.style.display = 'none'; input.value = ''; }, 150); });
+  comboWrap.appendChild(chipsEl);
   comboWrap.appendChild(list);
+  aktualisiereAuswahlChips();
 
   // Standort-Filter per Klick auf einen Legenden- oder Karteneintrag (statt
   // nur ueber die Combobox oben): ein Klick auf einen Standort, der NICHT
@@ -1696,11 +1821,11 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       selection = vorherigeSelection;
       vorherigeSelection = null;
     } else {
-      vorherigeSelection = { type: selection.type, idx: selection.idx };
+      vorherigeSelection = kopiereAuswahl(selection);
       selection = { type: 'site', idx: siteIdx };
       aktiviereVorjahrFuerEinzelstandort();
     }
-    input.value = selection.type === 'group' ? groupLabels[selection.idx] : siteNames[selection.idx];
+    aktualisiereAuswahlChips();
     applyState();
   }
 
@@ -1708,10 +1833,10 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   // denselben Standort oeffnet nur wieder das Blatt).
   function waehleSite(siteIdx) {
     if (selection.type === 'site' && selection.idx === siteIdx) return;
-    vorherigeSelection = { type: selection.type, idx: selection.idx };
+    vorherigeSelection = kopiereAuswahl(selection);
     selection = { type: 'site', idx: siteIdx };
     aktiviereVorjahrFuerEinzelstandort();
-    input.value = siteNames[siteIdx];
+    aktualisiereAuswahlChips();
     applyState();
   }
   function zeigeKurve() {
@@ -1774,7 +1899,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     detailOffen = true;
     document.body.classList.add('gw-kurve-detail');
     document.documentElement.classList.add('gw-detail-offen');
-    if (detailTitelEl) detailTitelEl.textContent = (input.value || 'Alle Standorte') + ' · ' + selectedYear;
+    if (detailTitelEl) detailTitelEl.textContent = auswahlText() + ' · ' + selectedYear;
     try { history.pushState({ gwDetail: true }, ''); } catch (e) {}
     passeKurvenHoeheAn();
   }
@@ -1839,9 +1964,11 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   // falls er noch aus war. Manuelles Wiederausschalten durch die Nutzerin
   // bleibt danach erhalten (wird NICHT bei jedem applyState() erneut erzwungen,
   // nur genau bei diesem Auswahlwechsel).
+  var vorjahrAutomatisch = false;
   function aktiviereVorjahrFuerEinzelstandort() {
     if (vorjahrOn) return;
     vorjahrOn = true;
+    vorjahrAutomatisch = true;
     if (vorjahrToggleWrap && vorjahrToggleWrap.checkbox) vorjahrToggleWrap.checkbox.checked = true;
   }
 
@@ -2653,7 +2780,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   var precipToggleWrap = makeToggle('Niederschlag', true, function(checked) { precipOn = checked; applyState(); });
   var precipCheckbox = precipToggleWrap.checkbox;
   var xAxisToggleWrap = makeToggle('Kalenderwochen', true, function(checked) { datumOn = !checked; applyXAxis(); });
-  var vorjahrToggleWrap = makeToggle('Vorjahresdaten', false, function(checked) { vorjahrOn = checked; applyState(); });
+  var vorjahrToggleWrap = makeToggle('Vorjahresdaten', false, function(checked) { vorjahrOn = checked; vorjahrAutomatisch = false; applyState(); });
   vorjahrToggleWrap.title = 'Kurve(n) des Vorjahres zum Vergleich in Grau einblenden';
 
   controls.appendChild(comboWrap);
@@ -2818,6 +2945,9 @@ GWDatenexplorer.kurve = function(el, x, daten) {
         legendList.appendChild(mehr);
       }
       addLegendItem('Mittleres Wachstum', 'black', 'dashed');
+    } else if (selection.type === 'multi') {
+      selection.sites.forEach(function(i) { addLegendItem(siteNames[i], siteColors[i], 'solid', i); });
+      selection.groups.forEach(function(g) { addLegendItem('Mittel ' + gruppenName(g), gruppenFarbe(g), 'dashed'); });
     } else {
       addLegendItem(siteNames[selection.idx], siteColors[selection.idx], 'solid', selection.idx);
     }
@@ -2833,7 +2963,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
 
   function aktualisiereKurvenGriff() {
     if (!kurveGriffInfo) return;
-    kurveGriffInfo.textContent = (input.value || 'Alle Standorte') + ' · ' + selectedYear;
+    kurveGriffInfo.textContent = auswahlText() + ' · ' + selectedYear;
   }
   // Hoehe des Kurvenbereichs im App-Layout (px); Rest bekommt die Karte.
   var kurveHoehe = null, kurveAnteil = null;
@@ -2871,13 +3001,14 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   }
   function aktualisiereKurvenGriff() {
     if (!kurveGriffInfo) return;
-    var text = (input.value || 'Alle Standorte') + ' · ' + selectedYear;
+    var text = auswahlText() + ' · ' + selectedYear;
     if (selection.type === 'group' && !alleStandorteZeigen && regelListe().length > 0) {
       var n = 0;
       for (var i = 0; i < siteNames.length; i++) if (siteInAuswahl(i)) n++;
       text += ' · ' + n + ' regelmässig messende Standorte';
     }
     kurveGriffInfo.textContent = text;
+    if (detailOffen && detailTitelEl) detailTitelEl.textContent = auswahlText() + ' · ' + selectedYear;
   }
   // Ziehen (Maus, Finger, Stift); ohne Bewegung = Klick: aus einem Extrem
   // zurueck zur Standardhoehe. Doppelklick: Standardhoehe.
@@ -3336,16 +3467,19 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   }
   // Kurve als Figur: mit Titel, Achsenbeschriftung und Plotly-Legende
   function kurvenFigur(opt) {
-    var daten = el.data.map(function(t) {
+    var gruppeJeTrace = {};
+    groupGrowthMeta.forEach(function(m) { gruppeJeTrace[m.traceIdx] = m.groupIdx; });
+    var daten = el.data.map(function(t, i) {
       var sichtbar = t.visible === true || t.visible === undefined;
-      return Object.assign({}, t, { showlegend: sichtbar && !!t.name });
+      var name = (gruppeJeTrace[i] !== undefined && selection.type === 'multi') ? 'Mittel ' + gruppenName(gruppeJeTrace[i]) : t.name;
+      return Object.assign({}, t, { name: name, showlegend: sichtbar && !!t.name });
     });
     var shapes = (el.layout.shapes || []).map(function(sh, i) {
       return (i === 0 && opt.woche) ? Object.assign({}, sh, { x0: opt.woche, x1: opt.woche }) : sh;
     });
     var layout = Object.assign({}, el.layout, {
       width: opt.breite || 1400, height: opt.hoehe || 760, shapes: shapes,
-      title: { text: 'Graswachstumskurve – ' + (input.value || 'Alle Standorte') + ' ' + selectedYear + (opt.woche ? ' (KW ' + opt.woche + ')' : ''), x: 0.01, xanchor: 'left', font: { size: 18 } },
+      title: { text: 'Graswachstumskurve – ' + auswahlText() + ' ' + selectedYear + (opt.woche ? ' (KW ' + opt.woche + ')' : ''), x: 0.01, xanchor: 'left', font: { size: 18 } },
       margin: { l: 64, r: 64, t: 56, b: 120 }, paper_bgcolor: 'white', font: { family: exportSchrift() },
       showlegend: true, legend: { orientation: 'h', x: 0, y: -0.2, font: { size: 11 } },
       xaxis: Object.assign({}, el.layout.xaxis, { title: { text: datumOn ? 'Datum (Montag der Woche)' : 'Kalenderwoche' } })
