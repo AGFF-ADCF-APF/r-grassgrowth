@@ -3219,7 +3219,8 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   // beim ersten Gebrauch von cdnjs geladen.
   var EXPORT_BIBLIOTHEKEN = {
     jspdf: 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
-    jszip: 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js'
+    jszip: 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
+    qrcode: 'https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js'
   };
   var exportBibliotheken = {};
   function ladeBibliothek(name) {
@@ -3462,6 +3463,44 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     }
     return bh + (klein ? 4.5 : 6);
   }
+  // QR-Code zur ausfuehrlichen Hilfe (Legenden) auf graswachstum.ch
+  var HILFE_URL = 'https://graswachstum.ch/de/growth/help';
+  function pdfQr(doc, x, y, groesse, text) {
+    var qr = window.qrcode(0, 'M');
+    qr.addData(HILFE_URL);
+    qr.make();
+    var n = qr.getModuleCount(), px = 8, rand = 2, c = document.createElement('canvas');
+    c.width = c.height = (n + 2 * rand) * px;
+    var ctx = c.getContext('2d');
+    ctx.fillStyle = 'white'; ctx.fillRect(0, 0, c.width, c.height);
+    ctx.fillStyle = 'black';
+    for (var r = 0; r < n; r++) for (var k = 0; k < n; k++) if (qr.isDark(r, k)) ctx.fillRect((k + rand) * px, (r + rand) * px, px, px);
+    doc.addImage(c.toDataURL('image/png'), 'PNG', x, y, groesse, groesse);
+    doc.setFontSize(6.5); doc.setTextColor(90);
+    var z = doc.splitTextToSize(text, 40);
+    doc.text(z, x + groesse + 2.5, y + 3);
+    doc.setTextColor(40, 100, 90);
+    doc.textWithLink('graswachstum.ch/de/growth/help', x + groesse + 2.5, y + 3 + z.length * 2.8 + 1, { url: HILFE_URL });
+  }
+  // Mini-Legende Messstandorte (Ebenen-PDF): kleiner Ring mit Zielwerten,
+  // Grau-Balken und eine Zeile Text - Details per QR-Code in der Hilfe
+  function pdfMiniMessLegende(doc, x, y, breite, woche) {
+    var verlauf = afcVerlaufFuer(woche), d = 9;
+    doc.setFontSize(6.3); doc.setTextColor(70);
+    if (afcOn && verlauf) {
+      doc.addImage(afcRingPng(verlauf), 'PNG', x, y, d, d);
+      doc.text('Ring: DGV kg TS/ha, Ziel ' + verlauf.low + '–' + verlauf.high, x + d + 1.5, y + 3.2);
+    }
+    if (graswachstumOn || afcOn) {
+      var xb = x + d + 1.5;
+      doc.text(graswachstumOn ? 'Kreis: Graswachstum kg TS/ha/Tag' : '', xb, y + 6.4);
+      doc.text('Tage seit Messung', x + breite - 11, y + 2.2, { align: 'center' });
+      doc.addImage(farbBalkenPng(['#ffffff', '#757575'], 200, 8), 'PNG', x + breite - 22, y + 3.2, 22, 2.2);
+      doc.setDrawColor(190); doc.rect(x + breite - 22, y + 3.2, 22, 2.2);
+      doc.text('0', x + breite - 22, y + 7.8);
+      doc.text('14', x + breite, y + 7.8, { align: 'right' });
+    }
+  }
   function farbBalkenPng(farben, breite, hoehe) {
     var c = document.createElement('canvas');
     c.width = breite; c.height = hoehe;
@@ -3534,7 +3573,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   }
   function heuteText() { var d = new Date(); return zweistellig(d.getDate()) + '.' + zweistellig(d.getMonth() + 1) + '.' + d.getFullYear(); }
   function exportPdfBericht(fortschritt) {
-    return Promise.all([ladeBibliothek('jspdf'), aktuelleEbeneBild(selectedWeek)]).then(function(r) {
+    return Promise.all([ladeBibliothek('jspdf'), aktuelleEbeneBild(selectedWeek), ladeBibliothek('qrcode')]).then(function(r) {
       var doc = new window.jspdf.jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
       pdfKopf(doc, 'Graswachstum ' + wocheText(selectedWeek), 'Bericht aus dem Datenexplorer · erstellt am ' + heuteText() + ' · graswachstum.ch');
       var kf = kartenFigur({ ansicht: 'aktuell', bilder: kartenBilderFuer(selectedWeek, r[1], true), breite: 1500, mitSpuren: true });
@@ -3551,13 +3590,14 @@ GWDatenexplorer.kurve = function(el, x, daten) {
           y += pdfEbenenLegende(doc, hintergrundEbene, meteoFenster, 12, y, 110, false) + 2;
         }
         y += pdfMessLegende(doc, 12, y + 3, 186, selectedWeek) + 3;
-        var cf = kurvenFigur({ breite: 1500, hoehe: Math.max(520, Math.round(1500 * (297 - 22 - y) / 186)) });
+        var cf = kurvenFigur({ breite: 1500, hoehe: Math.max(520, Math.round(1500 * (297 - 40 - y) / 186)) });
         return figurBild(cf, 'png', 1).then(alsJpeg).then(function(cUrl) {
           fortschritt(2, 3);
           y += 3;
           if (y > 297 - 80) { doc.addPage(); y = 14; }
-          var cH = Math.min(297 - 16 - y, b * cf.layout.height / cf.layout.width), cB = cH * cf.layout.width / cf.layout.height;
+          var cH = Math.min(297 - 36 - y, b * cf.layout.height / cf.layout.width), cB = cH * cf.layout.width / cf.layout.height;
           doc.addImage(cUrl, 'JPEG', 12 + (b - cB) / 2, y, cB, cH);
+          pdfQr(doc, 12, 297 - 32, 16, 'Mehr Erklärungen zu Karte, Kurve und Ebenen in der Hilfe des Datenexplorers:');
           pdfFuss(doc, 'Quellen: Messnetz Graswachstum der AGFF (graswachstum.ch)' + (info ? '; ' + info.quelle : '') + '. Erstellt mit dem Datenexplorer Graswachstum.');
           doc.save(exportName('bericht') + '.pdf');
           fortschritt(3, 3);
@@ -3571,10 +3611,10 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       var fenster = istFensterEbene(n) ? meteoFensterStandard[n] : null;
       return { name: n, fenster: fenster, schluessel: fenster ? n + '_' + fenster : n, titel: ebenenTitelPdf(n, fenster) };
     }));
-    return ladeBibliothek('jspdf').then(function() {
+    return Promise.all([ladeBibliothek('jspdf'), ladeBibliothek('qrcode')]).then(function() {
       var doc = new window.jspdf.jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
       pdfKopf(doc, 'Wetter-Ebenen ' + wocheText(selectedWeek), 'Stichtag jeweils Montag der Woche · erstellt am ' + heuteText() + ' · graswachstum.ch');
-      var spalten = 2, zellB = 91, zellH = 50, x0 = 12, y0 = 29, abstand = 4;
+      var spalten = 2, zellB = 91, zellH = 56, x0 = 12, y0 = 29, abstand = 4;
       var kette = Promise.resolve(), schritt = 0;
       zellen.forEach(function(z, i) {
         kette = kette.then(function() {
@@ -3599,8 +3639,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
                 doc.setFontSize(7); doc.setTextColor(150);
                 doc.text('keine Daten für diese Woche', x + zellB / 2, y + mH + 10, { align: 'center' });
               } else {
-                doc.setFontSize(6.5); doc.setTextColor(80);
-                doc.text('Kreis: Graswachstum kg TS/ha/Tag · Ring: DGV kg TS/ha (Legende unten)', x + zellB / 2, y + mH + 10, { align: 'center' });
+                pdfMiniMessLegende(doc, x + 6, y + mH + 5.5, zellB - 12, selectedWeek);
               }
               fortschritt(++schritt, zellen.length);
             });
@@ -3608,12 +3647,8 @@ GWDatenexplorer.kurve = function(el, x, daten) {
         });
       });
       return kette.then(function() {
-        var yL = y0 + Math.ceil(zellen.length / spalten) * zellH + 6;
-        if (yL > 297 - 58) { doc.addPage(); yL = 16; }
-        doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(30);
-        doc.text('Legende Messstandorte', 12, yL);
-        doc.setFont('helvetica', 'normal');
-        pdfMessLegende(doc, 12, yL + 5, 186, selectedWeek);
+        var yQ = Math.min(297 - 36, y0 + Math.ceil(zellen.length / spalten) * zellH + 4);
+        pdfQr(doc, 12, yQ, 18, 'Ausführliche Legenden und Erklärungen zu allen Ebenen in der Hilfe des Datenexplorers:');
         pdfFuss(doc, 'Quellen: Messnetz Graswachstum der AGFF (graswachstum.ch); MeteoSchweiz Open Data, 1-km-Gitterdaten (RhiresD/RprelimD Niederschlag, TabsD Temperatur, SrelD Sonnenschein). Bodentemperatur (Schätzung), Verdunstung ET0 (Hargreaves), Wachstumsgradtage (Basis 5 °C) und Bodenwasserbilanz sind daraus berechnet.');
         doc.save(exportName('wetter-ebenen') + '.pdf');
       });
@@ -3749,6 +3784,19 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     if (exportOpener && exportOpener.focus) exportOpener.focus();
   }
   function istExportOffen() { return !!(exportEl && exportEl.classList.contains('offen')); }
+
+  // Hilfe direkt per Adresse oeffnen (QR-Code im PDF): .../growth/help,
+  // .../hilfe oder #hilfe bzw. #hilfe-<thema>, z.B. #hilfe-dgv
+  (function() {
+    var h = (window.location.hash || '').match(/^#hilfe(?:-([a-z0-9-]+))?$/);
+    if (h || /\/(help|hilfe)\/?$/.test(window.location.pathname)) {
+      var thema = h && h[1] && doku.some(function(e) { return e.id === h[1]; }) ? h[1] : null;
+      setTimeout(function() {
+        if (seiteEl && eingebettet) seiteEl.scrollIntoView({ block: 'start' });
+        oeffneDoku(thema);
+      }, 400);
+    }
+  })();
 
   bestimmeAppModus();
   applyState();
