@@ -10,6 +10,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY deploy/install_packages.R /tmp/install_packages.R
 RUN Rscript /tmp/install_packages.R
 
+# cwebp: Kartenbilder als WebP statt PNG (27_plot_datenexplorer.R) - eigene
+# Schicht nach den R-Paketen, damit deren Installation im Cache bleibt.
+RUN apt-get update && apt-get install -y --no-install-recommends webp \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 # Code (../app) und Deploy-Skripte (automate.R, upload_svgs.R, lauf.sh,
 # entrypoint.sh, nginx.conf) werden per docker-compose.yml eingebunden, nicht

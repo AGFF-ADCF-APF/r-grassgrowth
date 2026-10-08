@@ -2135,8 +2135,47 @@ dir.create(ebenen_dir, recursive = TRUE, showWarnings = FALSE)
 # zurueck - diese Schluessel-Liste allein (winzig gegenueber den Bildern)
 # wird weiterhin eingebettet, damit z.B. "Jahr X hat keine Daten fuer Ebene Y"
 # (Radiobutton ausgrauen) OHNE die grosse JSON-Datei geladen werden muss.
+## Bilder als WebP statt PNG (deutlich kleiner): Rasterebenen verlustbehaftet
+## (Qualitaet 85, visuell gleich), Standort-Kreise/Ringe/Basiskarte verlustfrei
+## (Ziffern und Linien bleiben exakt). Per cwebp; fehlt es, bleibt PNG. Ein
+## Gedaechtnis (ebenen_cache/_webp_memo.rds) verhindert, dass dasselbe Bild in
+## jedem Lauf neu umgewandelt wird - auch Bilder aus dem Ebenen-Cache.
+cwebp_bin <- unname(Sys.which("cwebp"))
+webp_memo_datei <- file.path(ebenen_cache_dir, "_webp_memo.rds")
+webp_memo <- list2env(if (file.exists(webp_memo_datei)) tryCatch(readRDS(webp_memo_datei), error = function(e) list()) else list())
+webp_genutzt <- new.env()
+png_als_webp <- function(src, verlustfrei) {
+  praefix <- "data:image/png;base64,"
+  if (!nzchar(cwebp_bin) || !is.character(src) || length(src) != 1 || !startsWith(src, praefix)) return(src)
+  schluessel <- digest::digest(paste(verlustfrei, src), algo = "md5")
+  treffer <- webp_memo[[schluessel]]
+  if (is.null(treffer)) {
+    ein <- tempfile(fileext = ".png"); aus <- tempfile(fileext = ".webp")
+    writeBin(base64enc::base64decode(substring(src, nchar(praefix) + 1)), ein)
+    args <- if (verlustfrei) c("-lossless", "-z", "6") else c("-q", "85", "-alpha_q", "100", "-m", "6")
+    rc <- suppressWarnings(system2(cwebp_bin, c("-quiet", args, shQuote(ein), "-o", shQuote(aus)), stdout = FALSE, stderr = FALSE))
+    treffer <- if (identical(as.integer(rc), 0L) && file.exists(aus) && file.size(aus) < file.size(ein)) {
+      paste0("data:image/webp;base64,", base64enc::base64encode(aus))
+    } else src
+    unlink(c(ein, aus))
+    assign(schluessel, treffer, envir = webp_memo)
+  }
+  assign(schluessel, TRUE, envir = webp_genutzt)
+  treffer
+}
+webp_bild <- function(b, verlustfrei) {
+  if (is.list(b) && is.character(b$source)) b$source <- png_als_webp(b$source, verlustfrei)
+  b
+}
+webp_bilder <- function(bilder, verlustfrei) {
+  if (!length(bilder)) return(bilder)
+  out <- lapply(bilder, webp_bild, verlustfrei = verlustfrei)
+  names(out) <- names(bilder)
+  out
+}
+
 schreibe_ebene_datei <- function(name, bilder, werte, datum = NULL) {
-  inhalt <- list(bilder = bilder, werte = werte)
+  inhalt <- list(bilder = webp_bilder(bilder, verlustfrei = FALSE), werte = werte)
   if (!is.null(datum)) inhalt$datum <- datum
   jsonlite::write_json(inhalt, file.path(ebenen_dir, paste0(name, ".json")), auto_unbox = TRUE, na = "null")
   names(bilder)
@@ -2288,11 +2327,11 @@ js_ersetzungen <- list(
   "__SMN_STATIONEN_META__" = jsonlite::toJSON(smn_stationen_meta_liste, auto_unbox = TRUE),
   "__SMN_BASIS_URL__" = jsonlite::toJSON(smn_basis_url, auto_unbox = TRUE),
   "__LAYER_LEGENDEN__" = jsonlite::toJSON(layer_legenden, auto_unbox = TRUE),
-  "__GRASWACHSTUM_BILDER__" = jsonlite::toJSON(graswachstum_bild_je_woche, auto_unbox = TRUE),
-  "__AFC_RING_BILDER__" = jsonlite::toJSON(afc_ring_bild_je_woche, auto_unbox = TRUE),
+  "__GRASWACHSTUM_BILDER__" = jsonlite::toJSON(webp_bilder(graswachstum_bild_je_woche, verlustfrei = TRUE), auto_unbox = TRUE),
+  "__AFC_RING_BILDER__" = jsonlite::toJSON(webp_bilder(afc_ring_bild_je_woche, verlustfrei = TRUE), auto_unbox = TRUE),
   "__AFC_FENSTER_JE_WOCHE__" = jsonlite::toJSON(afc_fenster_je_woche, auto_unbox = TRUE),
   "__AFC_VERLAEUFE__" = jsonlite::toJSON(afc_verlaeufe_je_fenster, auto_unbox = TRUE),
-  "__KARTENBILD_HINTERGRUND__" = jsonlite::toJSON(kartenbild_hintergrund, auto_unbox = TRUE),
+  "__KARTENBILD_HINTERGRUND__" = jsonlite::toJSON(webp_bild(kartenbild_hintergrund, verlustfrei = TRUE), auto_unbox = TRUE),
   "__HEUTIGE_WOCHE__" = as.character(heutige_woche),
   "__GRAFIK_DATUM__" = format(Sys.Date(), "%d.%m.%Y"),
   "__START_WOCHE__" = as.character(start_woche)
@@ -2460,6 +2499,13 @@ vorschau_html <- '
 '
 writeLines(vorschau_html, file.path(out_dir, "Datenexplorer.html"))
 cat("Datenexplorer-Vorschau gespeichert in:", file.path(out_dir, "Datenexplorer.html"), "\n")
+
+## WebP-Gedaechtnis: nur die in diesem Lauf genutzten Bilder behalten
+if (nzchar(cwebp_bin)) {
+  genutzt <- ls(webp_genutzt)
+  saveRDS(mget(intersect(genutzt, ls(webp_memo)), envir = webp_memo), webp_memo_datei)
+  cat("WebP-Bilder:", length(genutzt), "\n")
+}
 
 ## Stand der Ebenen-Caches festhalten (nur nach einem vollstaendigen Lauf) -
 ## erst hier am Ende, damit alle im Lauf heruntergeladenen MeteoSchweiz-Dateien

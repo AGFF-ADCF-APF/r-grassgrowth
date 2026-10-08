@@ -3352,8 +3352,31 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     });
     return { data: daten, layout: layout, config: { staticPlot: true } };
   }
+  // SVG: eingebettete WebP-Bilder als PNG, damit auch Programme ohne
+  // WebP-Unterstuetzung (aeltere Grafikprogramme) die Datei richtig zeigen
+  function webpAlsPng(src) {
+    if (typeof src !== 'string' || src.indexOf('data:image/webp') !== 0) return Promise.resolve(src);
+    return new Promise(function(ok) {
+      var img = new Image();
+      img.onload = function() {
+        var c = document.createElement('canvas');
+        c.width = img.naturalWidth; c.height = img.naturalHeight;
+        c.getContext('2d').drawImage(img, 0, 0);
+        ok(c.toDataURL('image/png'));
+      };
+      img.onerror = function() { ok(src); };
+      img.src = src;
+    });
+  }
   function figurBild(fig, format, faktor) {
-    return Plotly.toImage(fig, { format: format, width: fig.layout.width, height: fig.layout.height, scale: format === 'png' ? (faktor || 1) : 1 });
+    var bilder = (fig.layout && fig.layout.images) || [];
+    var vorbereitet = format === 'svg'
+      ? Promise.all(bilder.map(function(b) { return webpAlsPng(b.source).then(function(q) { return Object.assign({}, b, { source: q }); }); }))
+          .then(function(neu) { fig.layout.images = neu; })
+      : Promise.resolve();
+    return vorbereitet.then(function() {
+      return Plotly.toImage(fig, { format: format, width: fig.layout.width, height: fig.layout.height, scale: format === 'png' ? (faktor || 1) : 1 });
+    });
   }
   // Fuer PDFs: PNG auf weissem Grund als JPEG (ein Bruchteil der Groesse)
   function alsJpeg(pngUrl) {
