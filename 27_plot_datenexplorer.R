@@ -1203,7 +1203,7 @@ function(el, x) {
   function vollAnsichtBerechnen(breite, hoehe) {
     // Mobile und App-Layout: kein Plotly-Titel (Kopfzeile ist HTML), Rand
     // oben nur 6px.
-    var mobil = breite < 700;
+    var mobil = breite < 700 || window.matchMedia('(max-height: 500px) and (pointer: coarse)').matches;
     var xHi = mobil ? xMaxSchweiz : xMax, span = xHi - xMin;
     var plotBreite = breite - 20, plotHoehe = hoehe - ((mobil || istAppLayout()) ? 16 : 50);
     var ySpan = span * plotHoehe / (scaleratio * plotBreite);
@@ -2374,6 +2374,8 @@ function(el, x) {
   var siteNames = __SITE_NAMES__;
   var standortVerlaeufe = __STANDORT_VERLAEUFE__;
   var siteVisible = __SITE_VISIBLE__;
+  var regelmaessig = __REGELMAESSIG__;
+  var alleStandorteZeigen = false;
   var wochenTickvals = __WOCHEN_TICKVALS__;
   var wochenTicktext = wochenTickvals.map(String);
   var datumTicktextJeJahr = __DATUM_TICKTEXT_JE_JAHR__;
@@ -2523,8 +2525,29 @@ function(el, x) {
     return jahr === neuestesJahr ? heutigeWoche : 52;
   }
 
+  // Gruppenansicht: zuerst nur regelmaessig messende Standorte (siehe R
+  // regelmaessig_je_jahr), die uebrigen per Legende zuschaltbar. Hat ein
+  // Jahr (noch) keinen solchen Standort, erscheinen alle.
+  function regelListe() { return regelmaessig[selectedYear] || []; }
+  function siteInAuswahl(siteIdx) {
+    if (selection.type !== 'group') return selection.type === 'site' && siteIdx === selection.idx;
+    if (!siteVisible[selection.idx][siteIdx]) return false;
+    var liste = regelListe();
+    return alleStandorteZeigen || liste.length === 0 || liste.indexOf(siteIdx) !== -1;
+  }
+  // Nur Standorte mit einer Kurve im gewaehlten Jahr zaehlen
+  var sitesMitDaten = {};
+  siteGrowthMeta.forEach(function(m) { (sitesMitDaten[m.year] = sitesMitDaten[m.year] || {})[m.siteIdx] = true; });
+  function weitereStandorte() {
+    if (selection.type !== 'group') return 0;
+    var mitDaten = sitesMitDaten[selectedYear] || {}, n = 0;
+    for (var i = 0; i < siteNames.length; i++) if (mitDaten[i] && siteVisible[selection.idx][i] && !siteInAuswahl(i)) n++;
+    return n;
+  }
+
   function applyState() {
     setTimeout(aktualisiereKurvenGriff, 0);
+    setTimeout(aktualisiereTeaser, 0);
     // vis wird ueber den in R mitgelieferten traceIdx (echte Plotly-Trace-
     // Position) befuellt, NICHT durch positionsweises Anhaengen (push) je
     // Meta-Liste - die Traces wurden auf R-Seite pro Jahr VERSCHACHTELT
@@ -2536,8 +2559,7 @@ function(el, x) {
     // gewaehlte).
     var vis = new Array(standardKurveTraceIdx + 1).fill(false);
     siteGrowthMeta.forEach(function(m) {
-      var match = selection.type === 'group' ? siteVisible[selection.idx][m.siteIdx] : (selection.type === 'site' && m.siteIdx === selection.idx);
-      vis[m.traceIdx] = m.year === selectedYear && match;
+      vis[m.traceIdx] = m.year === selectedYear && siteInAuswahl(m.siteIdx);
     });
     groupGrowthMeta.forEach(function(m) {
       vis[m.traceIdx] = m.year === selectedYear && selection.type === 'group' && m.groupIdx === selection.idx;
@@ -2594,8 +2616,7 @@ function(el, x) {
     var traceIdxListe = [];
     siteGrowthMeta.forEach(function(m) {
       if (m.year !== vorjahr) return;
-      var match = selection.type === 'group' ? siteVisible[selection.idx][m.siteIdx] : (selection.type === 'site' && m.siteIdx === selection.idx);
-      if (!match) return;
+      if (!siteInAuswahl(m.siteIdx)) return;
       traceIdxListe.push(m.traceIdx);
       vorjahrStyledTraceIdx.push({ traceIdx: m.traceIdx, color: siteColors[m.siteIdx] });
     });
@@ -2642,7 +2663,7 @@ function(el, x) {
       'xaxis.tickmode': 'array',
       'xaxis.tickvals': wochenTickvals,
       'xaxis.ticktext': ticktext,
-      'xaxis.title.text': datumOn ? 'Datum (Montag der Woche)' : 'Kalenderwoche'
+      'xaxis.title.text': istAppModus() ? '' : (datumOn ? 'Datum (Montag der Woche)' : 'Kalenderwoche')
     });
   }
 
@@ -3059,7 +3080,7 @@ function(el, x) {
     // basis:0 - im Spaltenlayout die HORIZONTALE Ausdehnung) und kappt hier
     // zusaetzlich die Hoehe (max-height/padding/overflow), damit die
     // Legende beim Einklappen in beiden Layouts vollstaendig verschwindet.
-    '@media (max-width: 700px) {' +
+    '@media (max-width: 700px), (max-height: 500px) and (pointer: coarse) {' +
     '  .gw-chart-row { flex-direction: column; }' +
     '  .gw-legend-panel { flex: 1 1 auto; width: 100%; border-left: none; border-top: 1px solid #ddd; max-height: 260px; }' +
     '  .gw-legend-panel.collapsed { max-height: 0; overflow: hidden; padding-top: 0; padding-bottom: 0; border-top-color: transparent; }' +
@@ -3133,15 +3154,44 @@ function(el, x) {
     '.gw-leiste-knopf:hover { border-color: var(--gw-akzent, #4a90d9); }',
     '.gw-kurve-griff { display: none; }',
     '#gw-seite.gw-app > .gw-kurvenbereich { grid-row: 3; grid-column: 1; border-top: 1px solid #ddd; background: white; min-width: 0; }',
-    '#gw-seite.gw-app .gw-kurve-griff { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 16px; border: none; background: white; font: inherit; font-size: 14px; color: #222; cursor: pointer; text-align: left; position: relative; }',
     '#gw-seite.gw-app .gw-kurve-griff:before { content: \"\"; position: absolute; top: 3px; left: 50%; width: 36px; height: 3px; margin-left: -18px; border-radius: 2px; background: #ccc; }',
     '.gw-kurve-griff-titel { font-weight: 600; }',
     '.gw-kurve-griff-info { color: #666; font-size: 13px; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
-    '.gw-kurve-griff-pfeil { flex: none; transition: transform .15s; color: #666; }',
-    '#gw-seite.gw-app.gw-kurve-auf .gw-kurve-griff-pfeil { transform: rotate(180deg); }',
-    '#gw-seite.gw-app .gw-kurve-inhalt { display: none; }',
-    '#gw-seite.gw-app.gw-kurve-auf .gw-kurve-inhalt { display: block; height: clamp(280px, 46dvh, 560px); overflow: hidden; padding: 0 16px 6px; box-sizing: border-box; }',
     '#gw-seite.gw-app .gw-kurve-inhalt > .gw-title { display: none; }',
+    '#gw-seite.gw-app .gw-kurve-griff { display: flex; align-items: center; gap: 8px; padding: 9px 12px 5px 16px; background: #fafafa; border-bottom: 1px solid #eee; font-size: 14px; color: #222; cursor: row-resize; touch-action: none; user-select: none; position: relative; }',
+    '#gw-seite.gw-app .gw-kurve-griff:focus-visible { outline: 2px solid var(--gw-akzent, #4a90d9); outline-offset: -2px; }',
+    '.gw-griff-pfeil { flex: none; width: 30px; height: 26px; padding: 0; border: 1px solid #c8c8c8; border-radius: 6px; background: white; color: #333; display: flex; align-items: center; justify-content: center; cursor: pointer; }',
+    '.gw-griff-pfeil .gw-icon { width: 16px; height: 16px; color: inherit; }',
+    '.gw-griff-pfeil:hover { border-color: var(--gw-akzent, #4a90d9); color: var(--gw-akzent-dunkel, #2a6fbf); }',
+    '#gw-seite.gw-kurve-voll .gw-griff-pfeil:first-of-type, #gw-seite.gw-kurve-zu .gw-griff-pfeil:last-of-type { opacity: .35; }',
+    '#gw-seite.gw-app .gw-kurve-inhalt { display: block; overflow: hidden; padding: 0 16px; box-sizing: border-box; }',
+    '#gw-seite.gw-app > #gw-kartenzeile { overflow: hidden; }',
+    '#gw-seite.gw-griff-zieht, #gw-seite.gw-griff-zieht * { cursor: row-resize !important; user-select: none; }',
+    '.gw-legend-mehr { display: block; width: 100%; margin: 4px 0 6px; padding: 4px 6px; border: 1px dashed #bbb; border-radius: 4px; background: white; color: #555; font: inherit; font-size: 12px; text-align: left; cursor: pointer; }',
+    '.gw-legend-mehr:hover { border-color: var(--gw-akzent, #4a90d9); color: var(--gw-akzent-dunkel, #2a6fbf); }',
+    '.gw-teaser { padding: 6px 10px 0; }',
+    '.gw-teaser-kopf { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }',
+    '.gw-teaser-titel { font-weight: 600; font-size: 14px; flex: 1 1 auto; }',
+    '.gw-teaser-wahl { flex: 0 1 auto; max-width: 55%; font: inherit; font-size: 13px; padding: 5px 6px; border: 1px solid #c8c8c8; border-radius: 6px; background: white; }',
+    '.gw-teaser-plot { height: 140px; cursor: pointer; }',
+    '.gw-teaser-legende { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 12px; color: #555; margin-top: 2px; }',
+    '.gw-teaser-legende .gw-legend-swatch { width: 16px; border-top-width: 2px; margin-right: 4px; vertical-align: middle; }',
+    '.gw-detail-kopf, .gw-dreh-hinweis { display: none; }',
+    'body.gw-kurve-detail .gw-kurvenbereich { display: flex !important; flex-direction: column; position: fixed; inset: 0; z-index: 2600; background: white; overflow-y: auto; overscroll-behavior: contain; }',
+    'html.gw-detail-offen, html.gw-detail-offen body { overflow: hidden !important; }',
+    'body.gw-kurve-detail .gw-detail-kopf { display: flex; align-items: center; gap: 8px; padding: 8px 10px; padding-top: calc(8px + env(safe-area-inset-top)); border-bottom: 1px solid #e6e6e6; position: sticky; top: 0; background: white; z-index: 3; }',
+    '.gw-detail-zurueck { flex: none; width: 36px; height: 36px; padding: 0; border: 1px solid #c8c8c8; border-radius: 8px; background: white; display: flex; align-items: center; justify-content: center; cursor: pointer; }',
+    '.gw-detail-titel { flex: 1 1 auto; min-width: 0; font-weight: 600; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
+    '.gw-quer-knopf { animation: gw-blinken 1.4s ease-in-out infinite; border-color: var(--gw-akzent, #4a90d9); color: var(--gw-akzent-dunkel, #2a6fbf); }',
+    '@keyframes gw-blinken { 50% { opacity: .4; } }',
+    'body.gw-kurve-detail .gw-quer-knopf span { display: inline !important; }',
+    'body.gw-kurve-detail .gw-quer-knopf { padding: 6px 10px !important; }',
+    'body.gw-kurve-detail .gw-chart-row .modebar-container { display: none !important; }',
+    '@media (prefers-reduced-motion: reduce) { .gw-quer-knopf { animation: none; } }',
+    'body.gw-kurve-detail .gw-dreh-hinweis.sichtbar { display: block; margin: 8px 10px 0; padding: 8px 10px; border-radius: 8px; background: var(--gw-akzent-hell, #eaf2fb); font-size: 13px; }',
+    'body.gw-kurve-detail .gw-kurve-inhalt { padding: 6px 8px 12px; }',
+    'body.gw-kurve-detail .gw-kurve-inhalt > .gw-title { display: none; }',
+    '@media (orientation: landscape) and (max-height: 500px) { body.gw-kurve-detail .gw-quer-knopf, body.gw-kurve-detail .gw-controls, body.gw-kurve-detail .gw-legend-panel, body.gw-kurve-detail .gw-legend-edge { display: none !important; } body.gw-kurve-detail .gw-detail-kopf { padding-top: 4px; padding-bottom: 4px; } body.gw-kurve-detail .gw-kurve-inhalt { padding: 0 4px; } }',
     '#gw-seite.gw-app .gw-kurve-inhalt .gw-controls { margin-bottom: 6px; }',
     '#gw-seite.gw-app > #datenexplorer-slider { grid-row: 4; grid-column: 1; border-top: 1px solid #ddd; }',
     '#gw-seite.gw-app .gw-slider-row { margin: 0; border-radius: 0; padding: 8px 16px calc(8px + env(safe-area-inset-bottom)); }',
@@ -3158,7 +3208,7 @@ function(el, x) {
     '#gw-seite.gw-eingebettet:not(.gw-app) > #datenexplorer-slider { position: sticky; bottom: 0; z-index: 30; }',
     '#gw-seite.gw-eingebettet:not(.gw-app) > #datenexplorer-slider .gw-slider-row { box-shadow: 0 -3px 12px rgba(0,0,0,0.08); }',
     '.gw-ebenen-zu-zeile { justify-content: space-between; align-items: center; margin-bottom: 4px; }',
-    '@media (max-width: 700px) {' +
+    '@media (max-width: 700px), (max-height: 500px) and (pointer: coarse) {' +
     '  .gw-blatt { left: 0; right: 0; bottom: 0; width: auto; max-height: 65vh; max-height: 65dvh; border-radius: 14px 14px 0 0; padding: 8px 16px calc(14px + env(safe-area-inset-bottom)); }' +
     '  .gw-blatt-griff { display: block; }' +
     '  .gw-desktop-only { display: none !important; }' +
@@ -3177,7 +3227,6 @@ function(el, x) {
     '  .gw-ebenen-zu-zeile { position: sticky; top: -12px; z-index: 2; background: #f7f7f7; margin: -12px -14px 6px; padding: 10px 14px 6px; border-bottom: 1px solid #e4e4e4; }' +
     '  .gw-afc-legende-box { display: none !important; }' +
     '  .gw-kurvenbereich { display: none; }' +
-    '  body.gw-kurve-offen .gw-kurvenbereich { display: block; }' +
     '  .gw-slider-row { margin: 4px 10px; padding: 6px 8px; }' +
     '  .gw-slider-aligned { margin-left: 0 !important; width: auto !important; flex: 1 1 auto !important; }' +
     '  .gw-slider-label-row { gap: 6px; margin-bottom: 4px; }' +
@@ -3187,7 +3236,8 @@ function(el, x) {
   ].join(' ');
   document.head.appendChild(stilMobil);
 
-  function istMobil() { return window.matchMedia('(max-width: 700px)').matches; }
+  // Handy: schmal oder (Querformat) niedrig mit Touch
+  function istMobil() { return window.matchMedia('(max-width: 700px), (max-height: 500px) and (pointer: coarse)').matches; }
   // Touch ohne Maus (auch Tablets ueber 700px): kein Hover - Erklaerungen und
   // Punkttexte deshalb im Blatt statt als Tooltip.
   function istTouch() { return istMobil() || window.matchMedia('(hover: none)').matches; }
@@ -3217,6 +3267,7 @@ function(el, x) {
   document.addEventListener('keydown', function(evt) {
     if (evt.key !== 'Escape') return;
     schliesseBlatt();
+    schliesseDetail();
     document.body.classList.remove('gw-ebenen-offen');
     if (istAppModus() && seiteEl.classList.contains('gw-app-schmal')) setzeEbenenOffen(false);
   });
@@ -3243,6 +3294,9 @@ function(el, x) {
     vollbild: ['M16 4l4 0l0 4', 'M14 10l6 -6', 'M8 20l-4 0l0 -4', 'M4 20l6 -6', 'M16 20l4 0l0 -4', 'M14 14l6 6', 'M8 4l-4 0l0 4', 'M4 4l6 6'],
     verkleinern: ['M5 9l4 0l0 -4', 'M3 3l6 6', 'M5 15l4 0l0 4', 'M3 21l6 -6', 'M19 9l-4 0l0 -4', 'M15 9l6 -6', 'M19 15l-4 0l0 4', 'M15 15l6 6'],
     hoch: ['M6 15l6 -6l6 6'],
+    runter: ['M6 9l6 6l6 -6'],
+    zurueck: ['M5 12l14 0', 'M5 12l6 6', 'M5 12l6 -6'],
+    drehen: ['M10 3h4a1 1 0 0 1 1 1v16a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1v-16a1 1 0 0 1 1 -1z', 'M17 7a4 4 0 0 1 4 4', 'M19 9l2 2l2 -2'],
     play: ['M7 4v16l13 -8z'],
     pause: ['M6 5m0 1a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1z', 'M14 5m0 1a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1z']
   };
@@ -3290,6 +3344,8 @@ function(el, x) {
     document.documentElement.classList.toggle('gw-vollbild-aktiv', an);
     if (vollbildKnopfEl) setzeKnopfInhalt(vollbildKnopfEl, an ? 'verkleinern' : 'vollbild', an ? 'Vollbild beenden' : 'Vollbild');
     bestimmeAppModus();
+    setzeBlockHoehe();
+    if (kurveAnteil !== null) setTimeout(function() { setzeKurvenHoehe(kurveAnteil * kurveMax()); }, 0);
     if (!an) seiteEl.scrollIntoView({ block: 'start' });
     window.dispatchEvent(new Event('resize'));
   }
@@ -3313,6 +3369,7 @@ function(el, x) {
   // Mobile-Elemente rund um die Karte (auf dem Desktop per CSS ausgeblendet)
   var kartenzeileEl = document.getElementById('gw-kartenzeile');
   var mobilKopfUnterEl = null, kartenleisteLegendeEl = null, kartenleisteWertEl = null, kurveKnopfEl = null;
+  var teaserEl = null, teaserTitelEl = null, teaserJahr = null;
   if (kartenzeileEl) {
     var mobilKopf = document.createElement('div');
     mobilKopf.className = 'gw-mobil-only gw-mobil-kopf';
@@ -3339,21 +3396,56 @@ function(el, x) {
       document.body.classList.toggle('gw-ebenen-offen');
       blattGeoeffnetUm = Date.now();
     });
-    kurveKnopfEl = document.createElement('button'); kurveKnopfEl.type = 'button'; setzeKnopfInhalt(kurveKnopfEl, 'kurve', 'Kurve');
+    kurveKnopfEl = document.createElement('button'); kurveKnopfEl.type = 'button'; setzeKnopfInhalt(kurveKnopfEl, 'kurve', 'Alle Kurven');
     kurveKnopfEl.addEventListener('click', function(evt) {
       evt.stopPropagation();
       schliesseBlatt();
-      if (document.body.classList.contains('gw-kurve-offen')) {
-        document.body.classList.remove('gw-kurve-offen');
-        setzeKnopfInhalt(kurveKnopfEl, 'kurve', 'Kurve');
-        kurveKnopfEl.classList.remove('aktiv');
-      } else {
-        zeigeKurve();
-      }
+      oeffneDetail();
     });
     knoepfe.appendChild(ebenenKnopf); knoepfe.appendChild(kurveKnopfEl);
     var sliderHost = document.getElementById('datenexplorer-slider');
     if (sliderHost) sliderHost.parentNode.insertBefore(knoepfe, sliderHost.nextSibling);
+
+    // Handy: flache Kurve als Teaser unter der Zeitleiste - drei Regionen
+    // und das langjaehrige Mittel; Antippen oder Standortwahl oeffnet die
+    // Detailansicht.
+    teaserEl = document.createElement('div');
+    teaserEl.className = 'gw-teaser gw-mobil-only';
+    var teaserKopf = document.createElement('div');
+    teaserKopf.className = 'gw-teaser-kopf';
+    teaserTitelEl = document.createElement('span');
+    teaserTitelEl.className = 'gw-teaser-titel';
+    var teaserWahl = document.createElement('select');
+    teaserWahl.className = 'gw-teaser-wahl';
+    teaserWahl.setAttribute('aria-label', 'Standort wählen und Kurve anzeigen');
+    var leer = document.createElement('option'); leer.value = ''; leer.textContent = 'Standort wählen …';
+    teaserWahl.appendChild(leer);
+    siteNames.map(function(n, i) { return [n, i]; }).sort(function(a, b) { return a[0].localeCompare(b[0], 'de'); }).forEach(function(e) {
+      var o = document.createElement('option'); o.value = String(e[1]); o.textContent = e[0]; teaserWahl.appendChild(o);
+    });
+    teaserWahl.addEventListener('change', function() {
+      if (teaserWahl.value === '') return;
+      waehleSite(parseInt(teaserWahl.value, 10));
+      teaserWahl.value = '';
+      oeffneDetail();
+    });
+    teaserKopf.appendChild(teaserTitelEl); teaserKopf.appendChild(teaserWahl);
+    var teaserPlot = document.createElement('div');
+    teaserPlot.className = 'gw-teaser-plot';
+    teaserPlot.setAttribute('role', 'button');
+    teaserPlot.setAttribute('aria-label', 'Alle Kurven anzeigen');
+    teaserPlot.tabIndex = 0;
+    teaserPlot.addEventListener('click', function(evt) { evt.stopPropagation(); oeffneDetail(); });
+    teaserPlot.addEventListener('keydown', function(evt) { if (evt.key === 'Enter' || evt.key === ' ') { evt.preventDefault(); oeffneDetail(); } });
+    var teaserLegende = document.createElement('div');
+    teaserLegende.className = 'gw-teaser-legende';
+    [['West', '#378ADD', 'solid'], ['Mitte', '#1D9E75', 'solid'], ['Ost', '#BA7517', 'solid'], ['langjähriges Mittel', '#E24B4A', 'dotted']].forEach(function(e) {
+      var sp = document.createElement('span');
+      var sw = document.createElement('span'); sw.className = 'gw-legend-swatch'; sw.style.borderTopColor = e[1]; sw.style.borderTopStyle = e[2];
+      sp.appendChild(sw); sp.appendChild(document.createTextNode(e[0])); teaserLegende.appendChild(sp);
+    });
+    teaserEl.appendChild(teaserKopf); teaserEl.appendChild(teaserPlot); teaserEl.appendChild(teaserLegende);
+    knoepfe.parentNode.insertBefore(teaserEl, knoepfe);
   }
   // App-Layout (eigene Seite oder Vollbild, ab 700px): Icon-Leiste links mit
   // Ebenen und Kurve. Ab 1100px stehen die Ebenen fest neben der Karte
@@ -3376,7 +3468,7 @@ function(el, x) {
     appLeisteKurveEl.appendChild(gwIcon('kurve'));
     appLeisteKurveEl.addEventListener('click', function(evt) {
       evt.stopPropagation();
-      setzeKurveAuf(!seiteEl.classList.contains('gw-kurve-auf'));
+      setzeKurveAuf(!(kurveHoehe > 0));
     });
     appLeiste.appendChild(appLeisteEbenenEl); appLeiste.appendChild(appLeisteKurveEl);
     kartenzeileEl.insertBefore(appLeiste, kartenzeileEl.firstChild);
@@ -3388,20 +3480,37 @@ function(el, x) {
     blattGeoeffnetUm = Date.now();
   }
   var appModusVorher = null, appSchmalVorher = null;
+  // App-Layout ab 700px - eigene Seite, Vollbild und auch eingebettet in
+  // eine Website: dort als Block in Bildschirmhoehe unter dem Seitenkopf.
+  function setzeBlockHoehe() {
+    if (istAppModus() && eingebettet && !istVollbild()) {
+      var oben = seiteEl.getBoundingClientRect().top + window.scrollY;
+      seiteEl.style.height = Math.max(520, Math.round(window.innerHeight - oben)) + 'px';
+    } else {
+      seiteEl.style.height = '';
+    }
+  }
   function bestimmeAppModus() {
     if (!seiteEl) return;
-    var an = !istMobil() && (!eingebettet || istVollbild());
+    var an = !istMobil();
     var schmal = an && window.innerWidth < 1100;
     seiteEl.classList.toggle('gw-app', an);
     seiteEl.classList.toggle('gw-app-schmal', schmal);
     document.documentElement.classList.toggle('gw-app-aktiv', an);
     document.documentElement.classList.toggle('gw-app-seite', an && !eingebettet);
+    setzeBlockHoehe();
+    if (an) schliesseDetail();
     if (an === appModusVorher && schmal === appSchmalVorher) return;
     appModusVorher = an; appSchmalVorher = schmal;
     setzeEbenenOffen(!schmal);
-    // Hochformat (Tablet): die breite Schweiz liesse oben und unten viel
-    // Leerraum - die Kurve nutzt ihn, ihr Blatt ist dort von Anfang an offen.
-    setzeKurveAuf(an && window.innerHeight > window.innerWidth * 1.1);
+    if (an) {
+      setTimeout(function() { setzeKurvenHoehe(kurveStandard()); }, 0);
+    } else if (kurveInhalt) {
+      kurveInhalt.style.height = '';
+      kurveHoehe = null;
+      seiteEl.classList.remove('gw-kurve-zu', 'gw-kurve-voll');
+      passeKurvenHoeheAn();
+    }
     aktualisiereKartentitel();
     setTimeout(function() { window.dispatchEvent(new Event('resize')); }, 0);
   }
@@ -3554,14 +3663,88 @@ function(el, x) {
     applyState();
   }
   function zeigeKurve() {
-    if (istMobil()) {
-      document.body.classList.add('gw-kurve-offen');
-      if (kurveKnopfEl) { setzeKnopfInhalt(kurveKnopfEl, 'kurve', 'Kurve ausblenden'); kurveKnopfEl.classList.add('aktiv'); }
-      Plotly.Plots.resize(el);
+    if (istMobil()) { oeffneDetail(); return; }
+    if (istAppModus()) {
+      if (!(kurveHoehe >= 80)) setzeKurvenHoehe(kurveStandard());
+      return;
     }
     var bereich = document.querySelector('.gw-kurvenbereich');
     if (bereich) bereich.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
+
+  // Teaser (Handy): eigene kleine Plotly-Grafik aus den Daten der
+  // Regionen-Mittel und des langjaehrigen Mittels der grossen Kurve.
+  // Gleitendes Mittel ueber 3 Wochen (Teaser: Verlauf statt Wochenrauschen)
+  function glaetten(y) {
+    var a = Array.prototype.slice.call(y || []);
+    return a.map(function(v, i) {
+      if (v === null || v === undefined || isNaN(v)) return v;
+      var sum = 0, n = 0;
+      for (var k = i - 1; k <= i + 1; k++) { var w = a[k]; if (w !== null && w !== undefined && !isNaN(w)) { sum += w; n++; } }
+      return n ? sum / n : v;
+    });
+  }
+  function aktualisiereTeaser() {
+    if (!teaserEl || typeof Plotly === 'undefined') return;
+    var plotEl = teaserEl.querySelector('.gw-teaser-plot');
+    if (teaserTitelEl) teaserTitelEl.textContent = 'Wachstumskurve ' + selectedYear;
+    var strich = [{ type: 'line', x0: selectedWeek, x1: selectedWeek, yref: 'paper', y0: 0, y1: 1, line: { color: '#999', width: 1, dash: 'dot' } }];
+    if (teaserJahr === selectedYear && plotEl.data) { Plotly.relayout(plotEl, { shapes: strich }); return; }
+    if (!istMobil() || !el.data) return;
+    teaserJahr = selectedYear;
+    var farben = { West: '#378ADD', Mitte: '#1D9E75', Ost: '#BA7517' };
+    var spuren = [];
+    Object.keys(farben).forEach(function(region) {
+      var gIdx = groupLabels.indexOf('Region: ' + region);
+      groupGrowthMeta.forEach(function(m) {
+        if (gIdx === -1 || m.year !== selectedYear || m.groupIdx !== gIdx || !el.data[m.traceIdx]) return;
+        var d = el.data[m.traceIdx];
+        spuren.push({ x: d.x, y: glaetten(d.y), type: 'scatter', mode: 'lines', connectgaps: true, line: { color: farben[region], width: 2, shape: 'spline', smoothing: 0.8 }, hoverinfo: 'skip' });
+      });
+    });
+    var std = el.data[standardKurveTraceIdx];
+    if (std) spuren.push({ x: std.x, y: std.y, type: 'scatter', mode: 'lines', line: { color: '#E24B4A', width: 1.5, dash: 'dot' }, hoverinfo: 'skip' });
+    var schrift = getComputedStyle(seiteEl || document.body).fontFamily;
+    Plotly.react(plotEl, spuren, {
+      height: 140, margin: { l: 30, r: 6, t: 4, b: 20 }, showlegend: false,
+      xaxis: { range: [1, 52], fixedrange: true, tickvals: [10, 20, 30, 40, 50], tickfont: { size: 10 }, zeroline: false, showgrid: false },
+      yaxis: { fixedrange: true, rangemode: 'tozero', tickfont: { size: 10 }, zeroline: false, gridcolor: '#eee', nticks: 4 },
+      shapes: strich, font: { family: schrift }, paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)'
+    }, { staticPlot: true, responsive: true, displayModeBar: false });
+  }
+
+  // Detailansicht (Handy): die grosse Kurve als Vollbild-Ebene, im
+  // Querformat ohne Bedienelemente. Zurueck-Geste des Browsers schliesst sie.
+  var detailOffen = false;
+  function oeffneDetail() {
+    if (!istMobil()) { zeigeKurve(); return; }
+    if (detailOffen) return;
+    detailOffen = true;
+    document.body.classList.add('gw-kurve-detail');
+    document.documentElement.classList.add('gw-detail-offen');
+    if (detailTitelEl) detailTitelEl.textContent = (input.value || 'Alle Standorte') + ' · ' + selectedYear;
+    try { history.pushState({ gwDetail: true }, ''); } catch (e) {}
+    passeKurvenHoeheAn();
+  }
+  function schliesseDetail(ausVerlauf) {
+    if (!detailOffen) return;
+    detailOffen = false;
+    document.body.classList.remove('gw-kurve-detail');
+    document.documentElement.classList.remove('gw-detail-offen');
+    if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(function() {});
+    try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) {}
+    if (!ausVerlauf && history.state && history.state.gwDetail) history.back();
+    passeKurvenHoeheAn();
+  }
+  window.addEventListener('popstate', function() { if (detailOffen) schliesseDetail(true); });
+  var detailResizeTimer = null;
+  function detailNachfuehren() {
+    if (!detailOffen) return;
+    clearTimeout(detailResizeTimer);
+    detailResizeTimer = setTimeout(passeKurvenHoeheAn, 200);
+  }
+  window.addEventListener('orientationchange', detailNachfuehren);
+  window.addEventListener('resize', detailNachfuehren);
   function zeigeStandortBlatt(ort, siteIdx, kennzahlen) {
     var t = (kennzahlen || '').split('|');
     var inhalt = document.createElement('div');
@@ -4447,26 +4630,66 @@ function(el, x) {
   fillHost.className = 'gw-kurvenbereich';
   fillHost.style.width = '100%';
   el.parentNode.insertBefore(fillHost, el);
-  // App-Layout: Kurve als aufziehbares Blatt ueber der Zeitleiste - der
-  // Griff ist nur dort sichtbar, sonst steht der Inhalt wie bisher da.
-  var kurveGriff = document.createElement('button');
-  kurveGriff.type = 'button';
+  // App-Layout: gemeinsamer Griff zwischen Karte und Kurve - ziehen
+  // verschiebt die Grenze, die Pfeile schieben sie ganz nach oben (Kurve
+  // voll) oder ganz nach unten (Karte voll). Ausserhalb des App-Layouts
+  // unsichtbar.
+  var kurveGriff = document.createElement('div');
   kurveGriff.className = 'gw-kurve-griff';
-  kurveGriff.setAttribute('aria-expanded', 'false');
+  kurveGriff.setAttribute('role', 'separator');
+  kurveGriff.setAttribute('aria-orientation', 'horizontal');
+  kurveGriff.setAttribute('aria-label', 'Grösse von Karte und Kurve verschieben');
+  kurveGriff.setAttribute('aria-valuemin', '0');
+  kurveGriff.setAttribute('aria-valuemax', '100');
+  kurveGriff.tabIndex = 0;
   kurveGriff.appendChild(gwIcon('kurve'));
   var kurveGriffTitel = document.createElement('span');
   kurveGriffTitel.className = 'gw-kurve-griff-titel';
-  kurveGriffTitel.textContent = 'Graswachstumskurve';
+  kurveGriffTitel.textContent = 'Wachstumskurve';
   var kurveGriffInfo = document.createElement('span');
   kurveGriffInfo.className = 'gw-kurve-griff-info';
-  var kurveGriffPfeil = gwIcon('hoch');
-  kurveGriffPfeil.setAttribute('class', 'gw-icon gw-kurve-griff-pfeil');
-  kurveGriff.appendChild(kurveGriffTitel); kurveGriff.appendChild(kurveGriffInfo); kurveGriff.appendChild(kurveGriffPfeil);
-  kurveGriff.addEventListener('click', function(evt) {
-    evt.stopPropagation();
-    setzeKurveAuf(!seiteEl.classList.contains('gw-kurve-auf'));
-  });
+  kurveGriff.appendChild(kurveGriffTitel); kurveGriff.appendChild(kurveGriffInfo);
+  function griffPfeil(icon, text, ziel) {
+    var b = document.createElement('button');
+    b.type = 'button'; b.className = 'gw-griff-pfeil';
+    b.title = text; b.setAttribute('aria-label', text);
+    b.appendChild(gwIcon(icon));
+    b.addEventListener('pointerdown', function(evt) { evt.stopPropagation(); });
+    b.addEventListener('click', function(evt) { evt.stopPropagation(); setzeKurvenHoehe(ziel() ); });
+    kurveGriff.appendChild(b);
+    return b;
+  }
+  griffPfeil('hoch', 'Kurve ganz nach oben', function() { return kurveMax(); });
+  griffPfeil('runter', 'Kurve ganz nach unten', function() { return 0; });
   fillHost.appendChild(kurveGriff);
+
+  var detailKopf = document.createElement('div');
+  detailKopf.className = 'gw-detail-kopf';
+  var detailZurueck = document.createElement('button');
+  detailZurueck.type = 'button'; detailZurueck.className = 'gw-detail-zurueck';
+  detailZurueck.setAttribute('aria-label', 'Zurück zur Karte');
+  detailZurueck.appendChild(gwIcon('zurueck'));
+  detailZurueck.addEventListener('click', function(evt) { evt.stopPropagation(); schliesseDetail(); });
+  var detailTitelEl = document.createElement('span');
+  detailTitelEl.className = 'gw-detail-titel';
+  var querKnopf = document.createElement('button');
+  querKnopf.type = 'button'; querKnopf.className = 'gw-werkzeug-knopf gw-quer-knopf';
+  setzeKnopfInhalt(querKnopf, 'drehen', 'Quer ansehen');
+  var drehHinweis = document.createElement('div');
+  drehHinweis.className = 'gw-dreh-hinweis';
+  drehHinweis.textContent = 'Bitte das Handy quer drehen – mit eingeschalteter automatischer Drehung passt sich die Grafik an.';
+  querKnopf.addEventListener('click', function(evt) {
+    evt.stopPropagation();
+    var ziel = document.documentElement;
+    var vb = ziel.requestFullscreen ? ziel.requestFullscreen({ navigationUI: 'hide' }) : Promise.reject(new Error('kein Vollbild'));
+    vb.then(function() { return screen.orientation.lock('landscape'); }).catch(function() {
+      drehHinweis.classList.add('sichtbar');
+      setTimeout(function() { drehHinweis.classList.remove('sichtbar'); }, 5000);
+    });
+  });
+  detailKopf.appendChild(detailZurueck); detailKopf.appendChild(detailTitelEl); detailKopf.appendChild(querKnopf);
+  fillHost.insertBefore(detailKopf, fillHost.firstChild);
+  fillHost.insertBefore(drehHinweis, detailKopf.nextSibling);
   var kurveInhalt = document.createElement('div');
   kurveInhalt.className = 'gw-kurve-inhalt';
   fillHost.appendChild(kurveInhalt);
@@ -4546,7 +4769,16 @@ function(el, x) {
     legendList.innerHTML = '';
     if (selection.type === 'group') {
       for (var i = 0; i < siteNames.length; i++) {
-        if (siteVisible[selection.idx][i]) addLegendItem(siteNames[i], siteColors[i], 'solid', i);
+        if (siteInAuswahl(i)) addLegendItem(siteNames[i], siteColors[i], 'solid', i);
+      }
+      var weitere = weitereStandorte();
+      if (weitere > 0 || alleStandorteZeigen) {
+        var mehr = document.createElement('button');
+        mehr.type = 'button';
+        mehr.className = 'gw-legend-mehr';
+        mehr.textContent = alleStandorteZeigen ? 'Nur regelmässig messende Standorte' : '+ ' + weitere + ' weitere (selten gemessen)';
+        mehr.addEventListener('click', function(evt) { evt.stopPropagation(); alleStandorteZeigen = !alleStandorteZeigen; applyState(); });
+        legendList.appendChild(mehr);
       }
       addLegendItem('Mittleres Wachstum', 'black', 'dashed');
     } else {
@@ -4566,27 +4798,131 @@ function(el, x) {
     if (!kurveGriffInfo) return;
     kurveGriffInfo.textContent = (input.value || 'Alle Standorte') + ' · ' + selectedYear;
   }
-  function setzeKurveAuf(auf) {
-    if (!seiteEl) return;
-    seiteEl.classList.toggle('gw-kurve-auf', !!auf);
-    if (kurveGriff) kurveGriff.setAttribute('aria-expanded', auf ? 'true' : 'false');
-    if (appLeisteKurveEl) appLeisteKurveEl.classList.toggle('aktiv', !!auf);
-    aktualisiereKurvenGriff();
-    passeKurvenHoeheAn();
+  // Hoehe des Kurvenbereichs im App-Layout (px); Rest bekommt die Karte.
+  var kurveHoehe = null, kurveAnteil = null;
+  function kurveMax() {
+    if (!seiteEl) return 0;
+    var belegt = kurveGriff.offsetHeight + 1;
+    var kopf = seiteEl.querySelector('.gw-mobil-kopf');
+    if (kopf) belegt += kopf.offsetHeight;
+    var zeit = document.getElementById('datenexplorer-slider');
+    if (zeit) belegt += zeit.offsetHeight;
+    return Math.max(0, seiteEl.clientHeight - belegt);
   }
-  // Im Blatt bekommt die Kurve die verfuegbare Hoehe, sonst die feste aus R.
+  // Start: flach (ein Drittel), im Hochformat die Haelfte
+  function kurveStandard() {
+    var max = kurveMax();
+    var anteil = window.innerHeight > window.innerWidth * 1.1 ? 0.5 : 0.34;
+    return Math.min(max, Math.max(210, Math.round(max * anteil)));
+  }
+  function setzeKurvenHoehe(h, ohnePlot) {
+    if (!kurveInhalt || !istAppModus()) return;
+    var max = kurveMax();
+    kurveHoehe = Math.max(0, Math.min(max, Math.round(h)));
+    if (max > 0) kurveAnteil = kurveHoehe / max;
+    kurveInhalt.style.height = kurveHoehe + 'px';
+    seiteEl.classList.toggle('gw-kurve-zu', kurveHoehe < 1);
+    seiteEl.classList.toggle('gw-kurve-voll', max > 0 && kurveHoehe >= max - 1);
+    kurveGriff.setAttribute('aria-valuenow', String(max ? Math.round(100 * kurveHoehe / max) : 0));
+    if (appLeisteKurveEl) appLeisteKurveEl.classList.toggle('aktiv', kurveHoehe > 0);
+    if (!ohnePlot) passeKurvenHoeheAn();
+  }
+  // Kompatibel zu Icon-Leiste und App-Moduswechsel
+  function setzeKurveAuf(auf) {
+    if (!istAppModus()) return;
+    setzeKurvenHoehe(auf ? kurveStandard() : 0);
+  }
+  function aktualisiereKurvenGriff() {
+    if (!kurveGriffInfo) return;
+    var text = (input.value || 'Alle Standorte') + ' · ' + selectedYear;
+    if (selection.type === 'group' && !alleStandorteZeigen && regelListe().length > 0) {
+      var n = 0;
+      for (var i = 0; i < siteNames.length; i++) if (siteInAuswahl(i)) n++;
+      text += ' · ' + n + ' regelmässig messende Standorte';
+    }
+    kurveGriffInfo.textContent = text;
+  }
+  // Ziehen (Maus, Finger, Stift); ohne Bewegung = Klick: aus einem Extrem
+  // zurueck zur Standardhoehe. Doppelklick: Standardhoehe.
+  (function() {
+    var startY = 0, startH = 0, bewegt = false, aktiv = false;
+    kurveGriff.addEventListener('pointerdown', function(evt) {
+      if (!istAppModus()) return;
+      aktiv = true; bewegt = false; startY = evt.clientY; startH = kurveHoehe || 0;
+      kurveGriff.setPointerCapture(evt.pointerId);
+      seiteEl.classList.add('gw-griff-zieht');
+    });
+    kurveGriff.addEventListener('pointermove', function(evt) {
+      if (!aktiv) return;
+      var d = startY - evt.clientY;
+      if (Math.abs(d) > 3) bewegt = true;
+      if (bewegt) setzeKurvenHoehe(startH + d, true);
+    });
+    function ende() {
+      if (!aktiv) return;
+      aktiv = false;
+      seiteEl.classList.remove('gw-griff-zieht');
+      var max = kurveMax();
+      if (!bewegt) {
+        if (kurveHoehe < 1 || kurveHoehe >= max - 1) setzeKurvenHoehe(kurveStandard());
+        return;
+      }
+      // In die Extreme einrasten
+      if (kurveHoehe < 70) setzeKurvenHoehe(0);
+      else if (kurveHoehe > max - 70) setzeKurvenHoehe(max);
+      else setzeKurvenHoehe(kurveHoehe);
+    }
+    kurveGriff.addEventListener('pointerup', ende);
+    kurveGriff.addEventListener('pointercancel', ende);
+    kurveGriff.addEventListener('dblclick', function() { setzeKurvenHoehe(kurveStandard()); });
+    kurveGriff.addEventListener('keydown', function(evt) {
+      var h = kurveHoehe || 0, max = kurveMax();
+      var neu = evt.key === 'ArrowUp' ? h + 40 : evt.key === 'ArrowDown' ? h - 40 : evt.key === 'Home' ? max : evt.key === 'End' ? 0 : null;
+      if (neu === null) return;
+      evt.preventDefault();
+      setzeKurvenHoehe(neu);
+    });
+  })();
+  window.addEventListener('resize', function() {
+    if (istAppModus() && kurveHoehe !== null && kurveAnteil !== null) setzeKurvenHoehe(kurveAnteil * kurveMax());
+  });
+  // Plot-Hoehe: im App-Layout aus dem Kurvenbereich, in der Detailansicht
+  // (Handy) aus dem Bildschirm, sonst die feste Hoehe aus R.
+  // Kompakt im App-Layout: Titel und x-Achsenbeschriftung stehen dort schon
+  // im Griff bzw. sind aus dem Zusammenhang klar - mehr Hoehe fuer die Kurve.
+  var kurveLayoutOriginal = null;
+  function kurveLayoutFuer(kompakt, mitAchsentitel) {
+    if (!kurveLayoutOriginal) {
+      kurveLayoutOriginal = { t: el.layout.margin.t, b: el.layout.margin.b, titel: el.layout.title ? el.layout.title.text : '' };
+    }
+    var achse = datumOn ? 'Datum (Montag der Woche)' : 'Kalenderwoche';
+    if (kompakt && mitAchsentitel) return { 'title.text': '', 'margin.t': 10, 'margin.b': kurveLayoutOriginal.b, 'xaxis.title.text': achse };
+    return kompakt
+      ? { 'title.text': '', 'margin.t': 10, 'margin.b': 28, 'xaxis.title.text': '' }
+      : { 'title.text': kurveLayoutOriginal.titel, 'margin.t': kurveLayoutOriginal.t, 'margin.b': kurveLayoutOriginal.b,
+          'xaxis.title.text': datumOn ? 'Datum (Montag der Woche)' : 'Kalenderwoche' };
+  }
   function passeKurvenHoeheAn() {
     if (!kurveInhalt || !chartRow) return;
-    if (istAppModus() && seiteEl.classList.contains('gw-kurve-auf')) {
-      var h = Math.max(180, Math.round(kurveInhalt.clientHeight - controls.offsetHeight - 14));
+    var h = null, kompakt = false;
+    if (detailOffen && istMobil()) {
+      var quer = window.matchMedia('(orientation: landscape)').matches;
+      h = quer ? Math.max(200, window.innerHeight - detailKopf.offsetHeight - 6) : Math.round(Math.max(260, window.innerHeight * 0.58));
+      chartRow.style.height = '';
+      kompakt = true;
+    } else if (istAppModus() && kurveHoehe !== null) {
+      if (kurveHoehe < 80) return;
+      h = Math.max(120, Math.round(kurveHoehe - controls.offsetHeight - 12));
       chartRow.style.height = h + 'px';
-      // Breite neu bestimmen: solange das Blatt zu war, hatte die Kurve
-      // keine Breite (display:none) - sonst drueckt sie die Legende hinaus.
-      Plotly.relayout(el, { height: h }).then(function() { Plotly.Plots.resize(el); });
+      kompakt = true;
     } else {
       chartRow.style.height = '';
-      if (el.layout && el.layout.height !== 520) Plotly.relayout(el, { height: 520 }).then(function() { Plotly.Plots.resize(el); });
+      h = 520;
+      if (el.layout && el.layout.height === 520 && !kurveLayoutOriginal) return;
     }
+    var aenderung = kurveLayoutFuer(kompakt, detailOffen);
+    aenderung.height = h;
+    Plotly.relayout(el, aenderung).then(function() { Plotly.Plots.resize(el); });
   }
   window.addEventListener('resize', passeKurvenHoeheAn);
 
@@ -4851,7 +5187,18 @@ function(el, x) {
 }
 "
 
+# Standorte mit regelmaessigen Messungen je Jahr (mindestens 8 Kalenderwochen
+# mit Wachstumswert): die Kurve zeigt beim Start nur diese, die uebrigen sind
+# zuschaltbar (JS: siteInAuswahl()). 0-basierte Indizes in alle_orte.
+regelmaessig_basis <- daten_korr[!is.na(daten_korr$growth) &
+  (is.na(daten_korr$ignore) | daten_korr$ignore %in% c(FALSE, 0, "", "FALSE")), ]
+regelmaessig_je_jahr <- lapply(split(regelmaessig_basis, as.character(regelmaessig_basis$year)), function(dj) {
+  wochen <- tapply(as.integer(strftime(dj$date, "%V")), as.character(dj$Ort), function(w) length(unique(w)))
+  I(sort(match(names(wochen)[wochen >= 8], alle_orte) - 1L))
+})
+
 js_ersetzungen <- list(
+  "__REGELMAESSIG__" = jsonlite::toJSON(regelmaessig_je_jahr),
   "__ALLE_JAHRE__" = jsonlite::toJSON(alle_jahre),
   "__NEUESTES_JAHR__" = jsonlite::toJSON(neuestes_jahr, auto_unbox = TRUE),
   "__JAHRE_MIT_NIEDERSCHLAG__" = jsonlite::toJSON(jahre_mit_niederschlag),
