@@ -393,6 +393,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     vis[standardKurveTraceIdx] = true;
     Plotly.restyle(el, { visible: vis });
     aktualisiereVorjahrOverlay();
+    aktualisiereSkala();
     renderLegendItems();
     applyMapState();
   }
@@ -474,6 +475,150 @@ GWDatenexplorer.kurve = function(el, x, daten) {
         vorjahrPrecipStyledTraceIdx = precipTraceIdxListe;
       }
     }
+  }
+
+  // Werte ausserhalb der Skala: die Achsen bleiben fest (150 kg TS/ha/Tag,
+  // 70 mm/Woche, aus R), damit Kurven vergleichbar bleiben. Was darueber
+  // liegt, schneidet Plotly am Rand ab; hier bekommt es ein Bruchzeichen
+  // (gezackter Riss am oberen Rand) und den echten Wert als Schild. Ein Knopf
+  // neben der Jahreswahl (Handy-Detail: im Kopf) passt die Skala an.
+  var skalaFest = { y: el.layout.yaxis.range.slice(), y2: el.layout.yaxis2 ? el.layout.yaxis2.range.slice() : null };
+  var skalaAuto = false;
+  var skalaKnopf = null;
+  function traceFarbe(t) {
+    var f = t.type === 'bar' ? (t.marker && t.marker.color) : ((t.line && t.line.color) || (t.marker && t.marker.color));
+    return typeof f === 'string' ? f : '#333';
+  }
+  function balkenBreite(t, k) {
+    var w = Array.isArray(t.width) ? t.width[k] : t.width;
+    return (typeof w === 'number' && isFinite(w)) ? w : 0.7;
+  }
+  // Sichtbare Punkte ueber der festen Skala: [{x, y, achse, farbe, balken}]
+  function werteUeberSkala() {
+    var liste = [];
+    (el.data || []).forEach(function(t) {
+      if (t.visible !== true || !t.y || !t.x) return;
+      var achse = t.yaxis === 'y2' ? 'y2' : 'y';
+      var grenze = skalaFest[achse] && skalaFest[achse][1];
+      if (!grenze) return;
+      for (var k = 0; k < t.y.length; k++) {
+        var v = t.y[k];
+        if (v !== null && isFinite(v) && v > grenze) liste.push({ x: t.x[k], y: v, achse: achse, farbe: traceFarbe(t), balken: t.type === 'bar', breite: balkenBreite(t, k) });
+      }
+    });
+    return liste;
+  }
+  function maxSichtbar(achse) {
+    var m = 0;
+    (el.data || []).forEach(function(t) {
+      if (t.visible !== true || !t.y || (t.yaxis === 'y2' ? 'y2' : 'y') !== achse) return;
+      // nur die Werte selbst (Balken/Punkte), nicht die Spanne der
+      // Fehlerbalken - sonst werden die Balken sehr flach
+      for (var k = 0; k < t.y.length; k++) {
+        var v = t.y[k];
+        if (v !== null && isFinite(v) && v > m) m = v;
+      }
+    });
+    return m;
+  }
+  function schoeneGrenze(v) {
+    var schritt = v > 300 ? 50 : (v > 100 ? 20 : 10);
+    return Math.ceil(v * 1.06 / schritt) * schritt;
+  }
+  // Bruchzeichen und Wertschilder fuer eine Plotflaeche von hPx x wPx
+  // (Pixel) - auch fuer den Export (andere Groesse als am Bildschirm).
+  function skalaMarkierungen(punkte, hPx, wPx, xBereich) {
+    var shapes = [], annotations = [];
+    if (!punkte.length || hPx < 40) return { shapes: shapes, annotations: annotations };
+    var p = function(px) { return 1 - px / hPx; };
+    var proWoche = wPx / Math.max(1, xBereich[1] - xBereich[0]);
+    punkte.forEach(function(pt) {
+      // halbe Breite in Wochen: Balken etwas breiter als der Balken, Linie
+      // mind. 11 px; Riss 2-13 px unter dem Rand (zwei Zacken-Linien)
+      var hw = Math.max(pt.balken ? pt.breite / 2 + 3 / proWoche : 0, 11 / proWoche), n = 4, oben = [], unten = [];
+      for (var i = 0; i <= n; i++) {
+        var xi = pt.x - hw + i * 2 * hw / n;
+        oben.push(xi + ',' + p(i % 2 ? 7 : 2));
+        unten.unshift(xi + ',' + p(i % 2 ? 13 : 8));
+      }
+      shapes.push({ type: 'path', xref: 'x', yref: 'paper', path: 'M' + oben.join('L') + 'L' + unten.join('L') + 'Z',
+        fillcolor: 'white', line: { color: pt.farbe, width: 1.5 }, layer: 'above' });
+    });
+    // Schilder: je Folge benachbarter Wochen derselben Kurve nur der hoechste
+    // Wert; ueberlappende Schilder weichen in bis zu drei Zeilen aus.
+    var gruppen = [];
+    punkte.slice().sort(function(a, b) { return a.farbe < b.farbe ? -1 : a.farbe > b.farbe ? 1 : (a.achse < b.achse ? -1 : a.achse > b.achse ? 1 : a.x - b.x); })
+      .forEach(function(pt) {
+        var g = gruppen[gruppen.length - 1];
+        if (g && g.farbe === pt.farbe && g.achse === pt.achse && pt.x - g.letztesX <= 1) {
+          g.letztesX = pt.x;
+          if (pt.y > g.y) { g.y = pt.y; g.x = pt.x; }
+        } else gruppen.push({ farbe: pt.farbe, achse: pt.achse, x: pt.x, y: pt.y, letztesX: pt.x });
+      });
+    var zeilen = [[], [], []];
+    gruppen.sort(function(a, b) { return b.y - a.y; }).forEach(function(g) {
+      var text = Math.round(g.y) + (g.achse === 'y2' ? ' mm' : '');
+      var halb = (text.length * 6.5 + 22) / 2 / proWoche;
+      for (var z = 0; z < zeilen.length; z++) {
+        var frei = zeilen[z].every(function(b) { return g.x + halb < b[0] || g.x - halb > b[1]; });
+        if (!frei) continue;
+        zeilen[z].push([g.x - halb, g.x + halb]);
+        annotations.push({ x: g.x, xref: 'x', y: 1, yref: 'paper', yanchor: 'top', yshift: -16 - z * 21, showarrow: false,
+          text: '<span style="color:' + g.farbe + '">▲</span> <b>' + text + '</b>', font: { size: 11, color: '#222' },
+          bgcolor: 'rgba(255,255,255,0.92)', bordercolor: g.farbe, borderwidth: 1.2, borderpad: 2,
+          hovertext: 'Wert über der Skala: ' + text + (g.achse === 'y2' ? '' : ' kg TS/ha/Tag'), name: 'gw-skala' });
+        return;
+      }
+    });
+    return { shapes: shapes, annotations: annotations };
+  }
+  function aktualisiereSkala() {
+    if (!el.layout || !el._fullLayout || !el._fullLayout._size) return;
+    var punkte = werteUeberSkala();
+    var neu = {};
+    if (skalaAuto) {
+      neu['yaxis.range'] = [0, Math.max(skalaFest.y[1], schoeneGrenze(maxSichtbar('y')))];
+      if (skalaFest.y2) neu['yaxis2.range'] = [0, Math.max(skalaFest.y2[1], schoeneGrenze(maxSichtbar('y2')))];
+    } else {
+      neu['yaxis.range'] = skalaFest.y.slice();
+      if (skalaFest.y2) neu['yaxis2.range'] = skalaFest.y2.slice();
+    }
+    var groesse = el._fullLayout._size;
+    var m = skalaAuto ? { shapes: [], annotations: [] } : skalaMarkierungen(punkte, groesse.h, groesse.w, el.layout.xaxis.range || [0, 52]);
+    neu.shapes = [(el.layout.shapes || [])[0]].filter(Boolean).concat(m.shapes);
+    neu.annotations = (el.layout.annotations || []).filter(function(a) { return a.name !== 'gw-skala'; }).concat(m.annotations);
+    Plotly.relayout(el, neu);
+    zeigeSkalaKnopf(punkte.length);
+  }
+  function zeigeSkalaKnopf(anzahl) {
+    if (!controls) return;
+    if (!skalaKnopf) {
+      skalaKnopf = document.createElement('button');
+      skalaKnopf.type = 'button';
+      skalaKnopf.className = 'gw-skala-knopf';
+      skalaKnopf.addEventListener('click', function(evt) {
+        evt.stopPropagation();
+        skalaAuto = !skalaAuto;
+        aktualisiereSkala();
+        if (GWDatenexplorer.schreibeUrlBald) GWDatenexplorer.schreibeUrlBald();
+      });
+    }
+    // Handy-Detail quer: Bedienelemente ausgeblendet, Knopf in den Kopf
+    var quer = detailOffen && istMobil() && window.matchMedia('(orientation: landscape) and (max-height: 500px)').matches;
+    var ort = quer ? detailKopf : controls;
+    if (ort && skalaKnopf.parentNode !== ort) {
+      if (ort === detailKopf && querKnopf) ort.insertBefore(skalaKnopf, querKnopf); else ort.appendChild(skalaKnopf);
+    }
+    var sichtbar = anzahl > 0;
+    skalaKnopf.hidden = !sichtbar;
+    if (!sichtbar) return;
+    skalaKnopf.textContent = skalaAuto
+      ? '↧ Feste Skala'
+      : (istMobil() ? '↥ Skala anpassen (' + anzahl + ')' : '↥ ' + (anzahl === 1 ? '1 Wert' : anzahl + ' Werte') + ' über der Skala · anpassen');
+    skalaKnopf.title = skalaAuto
+      ? 'Zurück zur festen Skala (' + skalaFest.y[1] + ' kg TS/ha/Tag' + (skalaFest.y2 ? ', ' + skalaFest.y2[1] + ' mm' : '') + '), damit Kurven vergleichbar bleiben'
+      : 'Skala so erweitern, dass alle Werte ganz sichtbar sind';
+    skalaKnopf.classList.toggle('an', skalaAuto);
   }
 
   function applyXAxis() {
@@ -949,12 +1094,13 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       'Der Abspielen-Knopf zeigt Woche für Woche bis zur letzten verfügbaren Woche. Steht der Regler schon am Ende, beginnt er bei der ersten Woche mit Messungen. Jede andere Bedienung der Zeitleiste hält das Abspielen an.',
       'In der Wachstumskurve wählt auch ein Klick auf die Achse unter der Grafik die Woche.'] });
   dokuEintrag({ id: 'kurve', gruppe: 'Erste Schritte', titel: 'Wachstumskurve',
-    alias: ['Wachstumskurve', 'Graswachstumskurve'], stichworte: 'kurve linie mittel durchschnitt mittelland vorjahr niederschlag balken gruppe region hoehenlage jahr legende vergleichen kombinieren mehrere auswahl mehrfachauswahl',
+    alias: ['Wachstumskurve', 'Graswachstumskurve'], stichworte: 'kurve linie mittel durchschnitt mittelland vorjahr niederschlag balken gruppe region hoehenlage jahr legende vergleichen kombinieren mehrere auswahl mehrfachauswahl skala achse ausreisser abgeschnitten ueber maximum anpassen',
     legende: function() { return dokuLinien([['Standort (je eigene Farbe)', '#1D9E75', 'solid'], ['Mittleres Wachstum der Auswahl', 'black', 'dashed'], ['Durchschnitt Mittelland, langjährig', 'red', 'dotted'], ['Vorjahr zum Vergleich', 'rgba(140,140,140,0.9)', 'solid'], ['Niederschlag pro Woche', 'steelblue', 'balken']]); },
     text: ['Die Kurve zeigt das gemessene Graswachstum in kg TS/ha/Tag über die Saison. Im Auswahlfeld oben links lassen sich Standorte und Gruppen (alle Standorte, Region West/Mitte/Ost, Höhenlagen) suchen und beliebig kombinieren: Antippen setzt oder entfernt ein Häkchen, gewählte Einträge stehen als Kärtchen im Feld und lassen sich mit × entfernen. Daneben wählen Sie das Jahr.',
       'Eine einzelne Gruppe zeigt ihre Standorte und das Gruppenmittel, ein einzelner Standort seine Kurve mit Niederschlag. Bei Kombinationen erscheint je gewählter Standort eine Kurve und je Gruppe das Mittel (gestrichelt, bei mehreren Gruppen in eigenen Farben); Niederschlag wird dann nicht gezeigt. «Auswahl zurücksetzen» am Ende der Liste führt zurück zu allen Standorten.',
       'Rechts steht die Legende. Ein Klick auf einen Standort zeigt nur noch diesen. Die Schalter darüber blenden Niederschlag (Balken, mm pro Woche) und die Kurven des Vorjahres ein, oder stellen die Achse von Kalenderwochen auf Datum um.',
-      'Beim Start erscheinen nur Standorte, die regelmässig messen (siehe dort). Die übrigen lassen sich in der Legende dazuschalten.'] });
+      'Beim Start erscheinen nur Standorte, die regelmässig messen (siehe dort). Die übrigen lassen sich in der Legende dazuschalten.',
+      'Die Skala ist fest (Wachstum bis 150 kg TS/ha/Tag, Niederschlag bis 70 mm pro Woche), damit Jahre und Standorte vergleichbar bleiben. Höhere Werte laufen oben aus der Grafik: ein gezackter Riss am oberen Rand und ein Schild mit dem echten Wert (▲ 312) markieren sie. «… über der Skala · anpassen» oben links erweitert die Skala, bis alle Werte ganz sichtbar sind; «Feste Skala» stellt sie zurück.'] });
   dokuEintrag({ id: 'regelmaessig', gruppe: 'Erste Schritte', titel: 'Regelmässig messende Standorte',
     stichworte: 'startansicht filter weitere selten gemessen standorte acht wochen',
     text: ['Damit die Kurve beim Start übersichtlich bleibt, zeigt sie in der Gruppenansicht nur Standorte mit mindestens 8 Kalenderwochen mit Messung im gewählten Jahr. Das Mittel der Gruppe (schwarz gestrichelt) wird weiterhin aus allen Standorten berechnet.',
@@ -3120,7 +3266,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     }
     var aenderung = kurveLayoutFuer(kompakt, detailOffen);
     aenderung.height = h;
-    Plotly.relayout(el, aenderung).then(function() { Plotly.Plots.resize(el); });
+    Plotly.relayout(el, aenderung).then(function() { return Plotly.Plots.resize(el); }).then(aktualisiereSkala);
   }
   window.addEventListener('resize', passeKurvenHoeheAn);
 
@@ -3504,13 +3650,16 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       var name = (gruppeJeTrace[i] !== undefined && selection.type === 'multi') ? 'Mittel ' + gruppenName(gruppeJeTrace[i]) : t.name;
       return Object.assign({}, t, { name: name, showlegend: sichtbar && !!t.name });
     });
-    var shapes = (el.layout.shapes || []).map(function(sh, i) {
-      return (i === 0 && opt.woche) ? Object.assign({}, sh, { x0: opt.woche, x1: opt.woche }) : sh;
-    });
+    var breite = opt.breite || 1400, hoehe = opt.hoehe || 760, rand = { l: 64, r: 64, t: 56, b: 120 };
+    var strich = (el.layout.shapes || [])[0];
+    if (strich && opt.woche) strich = Object.assign({}, strich, { x0: opt.woche, x1: opt.woche });
+    var m = skalaAuto ? { shapes: [], annotations: [] } : skalaMarkierungen(werteUeberSkala(), hoehe - rand.t - rand.b, breite - rand.l - rand.r, el.layout.xaxis.range || [0, 52]);
+    var shapes = [strich].filter(Boolean).concat(m.shapes);
+    var annotations = (el.layout.annotations || []).filter(function(a) { return a.name !== 'gw-skala'; }).concat(m.annotations);
     var layout = Object.assign({}, el.layout, {
-      width: opt.breite || 1400, height: opt.hoehe || 760, shapes: shapes,
+      width: breite, height: hoehe, shapes: shapes, annotations: annotations,
       title: { text: 'Graswachstumskurve – ' + auswahlText() + ' ' + selectedYear + (opt.woche ? ' (KW ' + opt.woche + ')' : ''), x: 0.01, xanchor: 'left', font: { size: 18 } },
-      margin: { l: 64, r: 64, t: 56, b: 120 }, paper_bgcolor: 'white', font: { family: exportSchrift() },
+      margin: rand, paper_bgcolor: 'white', font: { family: exportSchrift() },
       showlegend: true, legend: { orientation: 'h', x: 0, y: -0.2, font: { size: 11 } },
       xaxis: Object.assign({}, el.layout.xaxis, { title: { text: datumOn ? 'Datum (Montag der Woche)' : 'Kalenderwoche' } })
     });
@@ -4020,6 +4169,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     if (vorjahrOn && !vorjahrAutomatisch) an.push('vorjahr');
     if (!vorjahrOn && vorjahrAutomatisch === false && selection.type === 'site') aus.push('vorjahr');
     if (alleStandorteZeigen) an.push('alle-standorte');
+    if (skalaAuto) an.push('skala');
     if (an.length) setze('an', an.join(','));
     if (aus.length) setze('aus', aus.join(','));
     var gd = kartenGd(), info = GWDatenexplorer.kartenInfo;
@@ -4091,6 +4241,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       if (an.indexOf('vorjahr') !== -1) setzeSchalter(vorjahrToggleWrap, true);
       if (aus.indexOf('vorjahr') !== -1) setzeSchalter(vorjahrToggleWrap, false);
       if (an.indexOf('alle-standorte') !== -1) alleStandorteZeigen = true;
+      skalaAuto = an.indexOf('skala') !== -1;
       if (q.ebene) {
         var radio = document.querySelector('input[name=gw-layer][value="' + q.ebene.replace(/[^a-z0-9_]/gi, '') + '"]');
         if (radio && !radio.disabled) { radio.checked = true; radio.dispatchEvent(new Event('change')); }

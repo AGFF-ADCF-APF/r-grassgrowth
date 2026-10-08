@@ -75,6 +75,10 @@
 .gw-toggle input:checked + .gw-toggle-slider:before { transform: translateX(20px); }
 .gw-toggle input:disabled + .gw-toggle-slider { opacity: 0.4; cursor: not-allowed; }
 .gw-chart-row { display: flex; flex-direction: row; width: 100%; }
+.gw-skala-knopf { font: 600 12px var(--gw-schrift, sans-serif); color: #8a3b00; background: #fff4e5; border: 1px solid #e8a33d; border-radius: 12px; padding: 3px 10px; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.12); white-space: nowrap; }
+.gw-skala-knopf:hover { background: #ffe8c7; }
+.gw-skala-knopf.an { color: #333; background: #fff; border-color: #bbb; }
+.gw-skala-knopf[hidden] { display: none; }
 .gw-legend-panel { flex: 0 0 210px; width: 210px; overflow-y: auto; overflow-x: hidden; border-left: 1px solid #ddd; box-sizing: border-box; padding: 10px 14px; font-family: var(--gw-schrift, sans-serif); font-size: 13px; transition: flex-basis .15s ease, width .15s ease, padding .15s ease, border-color .15s ease; }
 .gw-legend-panel.collapsed { flex-basis: 0; width: 0; padding-left: 0; padding-right: 0; border-left-color: transparent; }
 .gw-legend-header { display: flex; align-items: center; justify-content: space-between; font-weight: 600; margin-bottom: 8px; white-space: nowrap; }

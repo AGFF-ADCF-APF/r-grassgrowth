@@ -461,10 +461,10 @@ wochen_tooltip <- function(jr, w) paste0("KW ", w, " (Woche ab ", format(montag_
 # wie bisher per Autorange bei jedem Filterwechsel neu zu skalieren (dadurch
 # waren Kurven zwischen zwei Auswahlen optisch kaum vergleichbar - derselbe
 # Kurvenverlauf sah je nach Skala mal steil, mal flach aus). Bewusst fest
-# gewaehlte (nicht vom Datenmaximum abgeleitete) Obergrenzen - einzelne
-# Ausreisser darueber werden an der Grenze gekappt und mit einem Dreieck-
-# Marker markiert (siehe kappe_und_markiere_ausreisser() weiter unten),
-# statt die ganze Skala fuer wenige Extremwerte zu strecken.
+# gewaehlte (nicht vom Datenmaximum abgeleitete) Obergrenzen. Die Traces
+# tragen die ECHTEN Werte; was darueber liegt, schneidet Plotly am Rand ab und
+# das Frontend markiert es (Bruchzeichen + Wert, wahlweise «Skala anpassen»,
+# siehe aktualisiereSkala() in frontend/datenexplorer.js).
 graswachstum_y_max <- 150
 niederschlag_y_max <- 70
 
@@ -487,27 +487,6 @@ group_precip_meta <- list()
 # GANZ ANDEREN Standorts an.
 next_trace_idx <- 0
 
-# Baut eine zusaetzliche Marker-Trace fuer Punkte oberhalb von 'cap' (Dreieck
-# an der Kappungsgrenze, echter Wert im Tooltip) - die Haupt-Trace selbst
-# wird an gleicher Stelle auf 'cap' gekappt (siehe pmin() in den Aufrufer-
-# Schleifen), statt die feste Y-Achse (graswachstum_y_max/niederschlag_y_max)
-# fuer wenige Ausreisser zu strecken. Gibt fig UND ob eine Trace angelegt
-# wurde zurueck (fuer den Meta-Eintrag/next_trace_idx beim Aufrufer - siehe
-# Kommentar oben zu next_trace_idx: dieselbe siteIdx/groupIdx/year wie die
-# Haupt-Trace, damit die Sichtbarkeit beim Filtern synchron bleibt).
-fuege_ausreisser_hinzu <- function(fig, d, wertespalte, cap, name, farbe, einheit, yaxis = "y") {
-  ausreisser <- d[!is.na(d[[wertespalte]]) & d[[wertespalte]] > cap, ]
-  if (nrow(ausreisser) == 0) return(list(fig = fig, hinzugefuegt = FALSE))
-  fig <- fig %>% add_trace(
-    data = ausreisser, x = ~weeknum, y = cap, type = "scatter", mode = "markers", yaxis = yaxis,
-    marker = list(symbol = "triangle-up", size = 11, color = farbe, line = list(color = "black", width = 1)),
-    customdata = ausreisser[[wertespalte]],
-    hovertemplate = paste0(name, ": %{customdata:.0f} ", einheit, " (ausserhalb der Skala)<extra></extra>"),
-    showlegend = FALSE, visible = FALSE, name = paste(name, "Ausreisser")
-  )
-  list(fig = fig, hinzugefuegt = TRUE)
-}
-
 for (jr in alle_jahre) {
   jd <- daten_korr %>% filter(year == jr) %>% arrange(Ort, date)
   orte_jahr <- sort(unique(as.character(jd$Ort)))
@@ -516,10 +495,9 @@ for (jr in alle_jahre) {
     d <- jd %>% filter(Ort == ort) %>% arrange(weeknum)
     if (nrow(d) == 0) next
     d$tooltip <- paste0("KW ", d$weeknum, " (erhoben am ", format(d$date, "%d.%m.%Y"), ")")
-    d$growth_gekappt <- pmin(d$growth, graswachstum_y_max)
     site_idx <- match(ort, alle_orte)
     fig_kurve <- fig_kurve %>% add_trace(
-      data = d, x = ~weeknum, y = ~growth_gekappt, type = "scatter", mode = "lines+markers",
+      data = d, x = ~weeknum, y = ~growth, type = "scatter", mode = "lines+markers",
       name = ort, line = list(color = site_farben[[ort]], width = 1.5),
       marker = list(color = site_farben[[ort]], size = 5),
       customdata = lapply(seq_len(nrow(d)), function(i) list(d$tooltip[i], d$growth[i])),
@@ -528,21 +506,14 @@ for (jr in alle_jahre) {
     )
     site_growth_meta[[length(site_growth_meta) + 1]] <- list(year = jr, siteIdx = site_idx - 1, traceIdx = next_trace_idx)
     next_trace_idx <- next_trace_idx + 1
-    a <- fuege_ausreisser_hinzu(fig_kurve, d, "growth", graswachstum_y_max, ort, site_farben[[ort]], "kg TS/ha/Tag")
-    fig_kurve <- a$fig
-    if (a$hinzugefuegt) {
-      site_growth_meta[[length(site_growth_meta) + 1]] <- list(year = jr, siteIdx = site_idx - 1, traceIdx = next_trace_idx)
-      next_trace_idx <- next_trace_idx + 1
-    }
   }
 
   for (g in gruppen) {
     d <- jd %>% filter(Ort %in% g$sites) %>% group_by(weeknum) %>%
       summarise(mean_growth = mean(growth, na.rm = TRUE), .groups = "drop")
     d$tooltip <- wochen_tooltip(jr, d$weeknum)
-    d$mean_growth_gekappt <- pmin(d$mean_growth, graswachstum_y_max)
     fig_kurve <- fig_kurve %>% add_trace(
-      data = d, x = ~weeknum, y = ~mean_growth_gekappt, type = "scatter", mode = "lines",
+      data = d, x = ~weeknum, y = ~mean_growth, type = "scatter", mode = "lines",
       name = "Mittleres Wachstum", line = list(color = "black", dash = "dash", width = 2.5),
       customdata = lapply(seq_len(nrow(d)), function(i) list(d$tooltip[i], d$mean_growth[i])),
       hovertemplate = paste0("Mittel ", g$label, ": %{customdata[1]:.0f} kg TS/ha/Tag<br>%{customdata[0]}<extra></extra>"),
@@ -551,12 +522,6 @@ for (jr in alle_jahre) {
     group_idx <- match(g$id, gruppen_ids) - 1
     group_growth_meta[[length(group_growth_meta) + 1]] <- list(year = jr, groupIdx = group_idx, traceIdx = next_trace_idx)
     next_trace_idx <- next_trace_idx + 1
-    a <- fuege_ausreisser_hinzu(fig_kurve, d, "mean_growth", graswachstum_y_max, paste("Mittel", g$label), "black", "kg TS/ha/Tag")
-    fig_kurve <- a$fig
-    if (a$hinzugefuegt) {
-      group_growth_meta[[length(group_growth_meta) + 1]] <- list(year = jr, groupIdx = group_idx, traceIdx = next_trace_idx)
-      next_trace_idx <- next_trace_idx + 1
-    }
   }
 
   if (jr %in% names(niederschlag_woche_je_jahr)) {
@@ -565,9 +530,8 @@ for (jr in alle_jahre) {
       d <- nw %>% filter(Ort == ort) %>% arrange(weeknum)
       if (nrow(d) == 0) next
       d$tooltip <- wochen_tooltip(jr, d$weeknum)
-      d$precip_week_gekappt <- pmin(d$precip_week, niederschlag_y_max)
       fig_kurve <- fig_kurve %>% add_trace(
-        data = d, x = ~weeknum, y = ~precip_week_gekappt, type = "bar", yaxis = "y2", width = 0.7,
+        data = d, x = ~weeknum, y = ~precip_week, type = "bar", yaxis = "y2", width = 0.7,
         name = paste("Niederschlag", ort), marker = list(color = "steelblue", opacity = 0.4),
         customdata = lapply(seq_len(nrow(d)), function(i) list(d$tooltip[i], d$precip_week[i])),
         hovertemplate = paste0("Niederschlag ", ort, ": %{customdata[1]:.0f} mm<br>%{customdata[0]}<extra></extra>"),
@@ -576,12 +540,6 @@ for (jr in alle_jahre) {
       site_idx <- match(ort, alle_orte) - 1
       site_precip_meta[[length(site_precip_meta) + 1]] <- list(year = jr, siteIdx = site_idx, traceIdx = next_trace_idx)
       next_trace_idx <- next_trace_idx + 1
-      a <- fuege_ausreisser_hinzu(fig_kurve, d, "precip_week", niederschlag_y_max, paste("Niederschlag", ort), "steelblue", "mm", yaxis = "y2")
-      fig_kurve <- a$fig
-      if (a$hinzugefuegt) {
-        site_precip_meta[[length(site_precip_meta) + 1]] <- list(year = jr, siteIdx = site_idx, traceIdx = next_trace_idx)
-        next_trace_idx <- next_trace_idx + 1
-      }
     }
     for (g in gruppen) {
       d <- nw %>% filter(Ort %in% g$sites) %>% group_by(weeknum) %>%
@@ -589,19 +547,14 @@ for (jr in alle_jahre) {
                   min_mm = min(precip_week, na.rm = TRUE),
                   max_mm = max(precip_week, na.rm = TRUE), .groups = "drop")
       d$tooltip <- wochen_tooltip(jr, d$weeknum)
-      # Balken UND Fehlerbalken-Obergrenze auf niederschlag_y_max gekappt -
-      # sonst wuerde der Whisker (bis max_mm) visuell ueber die feste Achse
-      # hinausragen, auch wenn der Mittelwert selbst darunter liegt.
-      d$mean_mm_gekappt <- pmin(d$mean_mm, niederschlag_y_max)
-      # Beide Whisker relativ zur GEKAPPTEN Balkenhoehe berechnet (nicht zum
-      # echten mean_mm) - sonst wuerde der untere Whisker im (seltenen) Fall
-      # eines gekappten Balkens zu tief unter min_mm hinausschiessen.
-      d$error_oben_gekappt <- pmin(d$max_mm, niederschlag_y_max) - d$mean_mm_gekappt
-      d$error_unten_gekappt <- pmax(d$mean_mm_gekappt - d$min_mm, 0)
+      # Spanne der Standorte als Fehlerbalken (echte Werte; am Achsenende
+      # schneidet Plotly ab).
+      d$error_oben <- d$max_mm - d$mean_mm
+      d$error_unten <- d$mean_mm - d$min_mm
       fig_kurve <- fig_kurve %>% add_trace(
-        data = d, x = ~weeknum, y = ~mean_mm_gekappt, type = "bar", yaxis = "y2", width = 0.7,
+        data = d, x = ~weeknum, y = ~mean_mm, type = "bar", yaxis = "y2", width = 0.7,
         name = paste("Niederschlag", g$label), marker = list(color = "steelblue", opacity = 0.4),
-        error_y = list(type = "data", symmetric = FALSE, array = ~error_oben_gekappt, arrayminus = ~error_unten_gekappt, color = "steelblue"),
+        error_y = list(type = "data", symmetric = FALSE, array = ~error_oben, arrayminus = ~error_unten, color = "steelblue"),
         customdata = lapply(seq_len(nrow(d)), function(i) list(d$tooltip[i], d$mean_mm[i])),
         hovertemplate = paste0("Niederschlag ", g$label, ": %{customdata[1]:.0f} mm im Mittel<br>%{customdata[0]}<extra></extra>"),
         showlegend = FALSE, visible = FALSE
@@ -609,12 +562,6 @@ for (jr in alle_jahre) {
       group_idx <- match(g$id, gruppen_ids) - 1
       group_precip_meta[[length(group_precip_meta) + 1]] <- list(year = jr, groupIdx = group_idx, traceIdx = next_trace_idx)
       next_trace_idx <- next_trace_idx + 1
-      a <- fuege_ausreisser_hinzu(fig_kurve, d, "mean_mm", niederschlag_y_max, paste("Niederschlag", g$label), "steelblue", "mm", yaxis = "y2")
-      fig_kurve <- a$fig
-      if (a$hinzugefuegt) {
-        group_precip_meta[[length(group_precip_meta) + 1]] <- list(year = jr, groupIdx = group_idx, traceIdx = next_trace_idx)
-        next_trace_idx <- next_trace_idx + 1
-      }
     }
   }
 }
