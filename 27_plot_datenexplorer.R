@@ -1193,24 +1193,47 @@ function(el, x) {
   // Resize-Ansicht als auch fuer die Zoom-Sperre und den 'Ganze Schweiz'-
   // Knopf gebraucht - deshalb als eigene Funktion statt nur inline fuer
   // den Mobile-Fall (wie zuvor).
+  // App-Layout (Vollbild bzw. eigene Seite ab 700px, Klasse gw-app auf
+  // #gw-seite, gesetzt vom Kurven-Skript): die Karte fuellt den Bereich,
+  // den ihr das Raster laesst, statt einer festen Hoehe.
+  function istAppLayout() {
+    var s = document.getElementById('gw-seite');
+    return !!(s && s.classList.contains('gw-app'));
+  }
   function vollAnsichtBerechnen(breite, hoehe) {
-    // Mobile: kein Plotly-Titel (Kopfzeile ist HTML), Rand oben nur 6px.
+    // Mobile und App-Layout: kein Plotly-Titel (Kopfzeile ist HTML), Rand
+    // oben nur 6px.
     var mobil = breite < 700;
     var xHi = mobil ? xMaxSchweiz : xMax, span = xHi - xMin;
-    var plotBreite = breite - 20, plotHoehe = hoehe - (mobil ? 16 : 50);
+    var plotBreite = breite - 20, plotHoehe = hoehe - ((mobil || istAppLayout()) ? 16 : 50);
     var ySpan = span * plotHoehe / (scaleratio * plotBreite);
+    // Breiter als die Schweiz hoch ist (z.B. Querformat im App-Layout): die
+    // ganze Schweiz bleibt sichtbar, links und rechts kommt Rand dazu.
+    var ySpanMin = ySpanSchweiz * 1.04;
+    if (ySpan < ySpanMin) {
+      var xSpanNeu = ySpanMin * scaleratio * plotBreite / plotHoehe, xMitte = (xMin + xHi) / 2;
+      return { x: [xMitte - xSpanNeu / 2, xMitte + xSpanNeu / 2], y: [yMitte - ySpanMin / 2, yMitte + ySpanMin / 2] };
+    }
     return { x: [xMin, xHi], y: [yMitte - ySpan / 2, yMitte + ySpan / 2] };
   }
   var vollX = null, vollY = null;
 
   function fixiereGroesse() {
-    var breite = el.parentElement.clientWidth;
+    var host = el.parentElement;
+    var breite = host.clientWidth;
     var mobil = breite < 700;
-    // Schmaler (Mobile-)Container: eigene, kleinere Hoehe statt der festen
-    // Desktop-Hoehe (560px) - der y-Achsenbereich wird fuer BEIDE Faelle
-    // ueber vollAnsichtBerechnen() explizit gesetzt (nicht Plotlys eigene,
-    // s.o. instabile Bereichsanpassung).
-    var hoehe = mobil ? Math.round(Math.max(200, (breite - 20) * ySpanSchweiz * scaleratio / (xMaxSchweiz - xMin) * 1.03 + 16)) : 560;
+    var app = istAppLayout();
+    // Schmaler (Mobile-)Container: Hoehe aus dem Seitenverhaeltnis der
+    // Schweiz. App-Layout: Hoehe des Rasterbereichs. Eingebettet in eine
+    // Website: Bildschirmhoehe abzueglich Kopf und Zeitleiste, sonst 560px.
+    // Der y-Achsenbereich wird in allen Faellen ueber vollAnsichtBerechnen()
+    // explizit gesetzt (nicht Plotlys eigene, s.o. instabile Anpassung).
+    var hoehe;
+    if (app) hoehe = Math.max(200, host.clientHeight);
+    else if (mobil) hoehe = Math.round(Math.max(200, (breite - 20) * ySpanSchweiz * scaleratio / (xMaxSchweiz - xMin) * 1.03 + 16));
+    else if (window.GW_DATENEXPLORER_EINGEBETTET) hoehe = Math.round(Math.min(640, Math.max(400, window.innerHeight - 190)));
+    else hoehe = 560;
+    if (breite < 50 || hoehe < 50) return;
     var voll = vollAnsichtBerechnen(breite, hoehe);
     vollX = voll.x; vollY = voll.y;
     Plotly.relayout(el, { width: breite, height: hoehe, 'xaxis.range': voll.x, 'yaxis.range': voll.y });
@@ -1219,10 +1242,21 @@ function(el, x) {
     // hoehe) darunter Leerraum im Container stehen, in dem die Zoom-
     // Steuerung (position:absolute, bottom:10px relativ zu diesem Container)
     // dann weit unterhalb der sichtbar gezeichneten Karte haengen wuerde.
-    el.parentElement.style.height = hoehe + 'px';
+    // Im App-Layout bestimmt das Raster die Hoehe (kein fester Wert).
+    host.style.height = app ? '' : hoehe + 'px';
   }
   fixiereGroesse();
   window.addEventListener('resize', fixiereGroesse);
+  // App-Layout: Ebenen ein-/ausklappen oder Kurve aufziehen aendert die
+  // Kartenflaeche ohne Fenster-Resize.
+  if (window.ResizeObserver) {
+    var groesseGeplant = false;
+    new ResizeObserver(function() {
+      if (!istAppLayout() || groesseGeplant) return;
+      groesseGeplant = true;
+      requestAnimationFrame(function() { groesseGeplant = false; fixiereGroesse(); });
+    }).observe(el.parentElement);
+  }
 
   // Weiteres Herauszoomen ueber die 'ganze Schweiz'-Ansicht hinaus sperren
   // und dabei automatisch zentrieren: sobald der sichtbare Bereich (per
@@ -2490,6 +2524,7 @@ function(el, x) {
   }
 
   function applyState() {
+    setTimeout(aktualisiereKurvenGriff, 0);
     // vis wird ueber den in R mitgelieferten traceIdx (echte Plotly-Trace-
     // Position) befuellt, NICHT durch positionsweises Anhaengen (push) je
     // Meta-Liste - die Traces wurden auf R-Seite pro Jahr VERSCHACHTELT
@@ -2667,7 +2702,7 @@ function(el, x) {
         // Andere Punkte (MeteoSchweiz-Station, Suchmarker): auf Mobile gibt es
         // kein Hover - deren Text deshalb im Blatt zeigen.
         var text = p.text || p.hovertext;
-        if (istMobil() && text) {
+        if (istTouch() && text) {
           var d = document.createElement('div'); d.className = 'gw-blatt-text'; d.innerHTML = text;
           zeigeBlatt('', '', d);
         }
@@ -2681,7 +2716,7 @@ function(el, x) {
     // hovertext in einem fixen, garantiert vollstaendig sichtbaren Modal.
     if (growthMapGd && !growthMapHoverGebunden) {
       growthMapGd.on('plotly_hover', function(data) {
-        if (istMobil()) return;
+        if (istTouch()) return;
         if (!data.points || data.points.length === 0) return;
         var text = data.points[0].text || data.points[0].hovertext;
         if (!text) return;
@@ -3078,6 +3113,50 @@ function(el, x) {
     'html.gw-vollbild-aktiv, html.gw-vollbild-aktiv body { overflow: hidden !important; }',
     '#gw-seite svg, #gw-seite img, #gw-seite canvas { max-width: none; }',
     '#gw-seite .main-svg { display: inline; }',
+    '#gw-seite.gw-app { display: grid !important; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto auto; height: 100vh; height: 100dvh; max-width: none !important; margin: 0 !important; padding: 0 !important; box-sizing: border-box; overflow: hidden; background: white; }',
+    'html.gw-app-seite, html.gw-app-seite body { margin: 0; height: 100%; overflow: hidden; }',
+    '#gw-seite.gw-app > .gw-mobil-kopf { grid-row: 1; grid-column: 1; display: block; padding: 10px 16px 9px; border-bottom: 1px solid #e6e6e6; }',
+    '#gw-seite.gw-app > .gw-werkzeugleiste { grid-row: 1; grid-column: 1; justify-self: end; align-self: center; margin: 0 14px 0 0; z-index: 2; }',
+    '#gw-seite.gw-app > .gw-kartenleiste, #gw-seite.gw-app > .gw-mobil-knoepfe { display: none !important; }',
+    '#gw-seite.gw-app > #gw-kartenzeile { grid-row: 2; grid-column: 1; display: flex !important; flex-wrap: nowrap !important; gap: 0 !important; align-items: stretch !important; min-height: 0; position: relative; }',
+    '#gw-seite.gw-app #datenexplorer-growthmap { flex: 1 1 auto !important; min-width: 0 !important; height: auto !important; position: relative; }',
+    '#gw-seite.gw-app #datenexplorer-growthmap > .html-widget { position: absolute !important; top: 0; left: 0; }',
+    '#gw-seite.gw-app .gw-map-controls-panel { order: -1; flex: 0 0 270px; max-width: 270px; min-width: 0; overflow-y: auto; overscroll-behavior: contain; border-right: 1px solid #e6e6e6; box-sizing: border-box; background: #f7f7f7; }',
+    '#gw-seite.gw-app .gw-layer-panel { border-radius: 0; min-height: 100%; box-sizing: border-box; }',
+    '#gw-seite.gw-app.gw-ebenen-zu .gw-map-controls-panel { display: none; }',
+    '#gw-seite.gw-app.gw-app-schmal .gw-map-controls-panel { position: absolute; left: 51px; top: 0; bottom: 0; z-index: 20; flex: none; width: 310px; max-width: calc(100% - 60px); box-shadow: 6px 0 20px rgba(0,0,0,0.18); }',
+    '.gw-app-leiste { display: none; }',
+    '#gw-seite.gw-app .gw-app-leiste { order: -2; display: flex; flex-direction: column; gap: 8px; padding: 10px 6px; border-right: 1px solid #e6e6e6; background: white; flex: 0 0 auto; }',
+    '.gw-leiste-knopf { width: 38px; height: 38px; padding: 0; border: 1px solid #c8c8c8; border-radius: 8px; background: white; color: #222; display: flex; align-items: center; justify-content: center; cursor: pointer; }',
+    '.gw-leiste-knopf .gw-icon { width: 20px; height: 20px; }',
+    '.gw-leiste-knopf.aktiv { background: var(--gw-akzent-hell, #eaf2fb); border-color: var(--gw-akzent, #4a90d9); }',
+    '.gw-leiste-knopf:hover { border-color: var(--gw-akzent, #4a90d9); }',
+    '.gw-kurve-griff { display: none; }',
+    '#gw-seite.gw-app > .gw-kurvenbereich { grid-row: 3; grid-column: 1; border-top: 1px solid #ddd; background: white; min-width: 0; }',
+    '#gw-seite.gw-app .gw-kurve-griff { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 16px; border: none; background: white; font: inherit; font-size: 14px; color: #222; cursor: pointer; text-align: left; position: relative; }',
+    '#gw-seite.gw-app .gw-kurve-griff:before { content: \"\"; position: absolute; top: 3px; left: 50%; width: 36px; height: 3px; margin-left: -18px; border-radius: 2px; background: #ccc; }',
+    '.gw-kurve-griff-titel { font-weight: 600; }',
+    '.gw-kurve-griff-info { color: #666; font-size: 13px; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
+    '.gw-kurve-griff-pfeil { flex: none; transition: transform .15s; color: #666; }',
+    '#gw-seite.gw-app.gw-kurve-auf .gw-kurve-griff-pfeil { transform: rotate(180deg); }',
+    '#gw-seite.gw-app .gw-kurve-inhalt { display: none; }',
+    '#gw-seite.gw-app.gw-kurve-auf .gw-kurve-inhalt { display: block; height: clamp(280px, 46dvh, 560px); overflow: hidden; padding: 0 16px 6px; box-sizing: border-box; }',
+    '#gw-seite.gw-app .gw-kurve-inhalt > .gw-title { display: none; }',
+    '#gw-seite.gw-app .gw-kurve-inhalt .gw-controls { margin-bottom: 6px; }',
+    '#gw-seite.gw-app > #datenexplorer-slider { grid-row: 4; grid-column: 1; border-top: 1px solid #ddd; }',
+    '#gw-seite.gw-app .gw-slider-row { margin: 0; border-radius: 0; padding: 8px 16px calc(8px + env(safe-area-inset-bottom)); }',
+    '#gw-seite.gw-app .gw-slider-aligned { display: flex; align-items: center; gap: 14px; margin-left: 0 !important; width: auto !important; flex: 1 1 auto !important; }',
+    '#gw-seite.gw-app .gw-slider-label-row { width: auto; flex: 0 0 auto; margin: 0; }',
+    '#gw-seite.gw-app .gw-slider-label { min-width: 130px; }',
+    '#gw-seite.gw-app .gw-slider-track-row { flex: 1 1 auto; }',
+    '.gw-play-btn { margin-left: auto; }',
+    '#gw-seite.gw-app .gw-play-btn { margin-left: 12px; }',
+    '.gw-play-btn .gw-icon { width: 16px; height: 16px; color: inherit; }',
+    '.gw-play-btn.aktiv { background: var(--gw-akzent-hell, #eaf2fb); border-color: var(--gw-akzent, #4a90d9); color: var(--gw-akzent-dunkel, #2a6fbf); }',
+    '.gw-play-btn + .gw-today-btn { margin-left: 8px; }',
+    'html.gw-app-aktiv .gw-blatt { bottom: 86px; }',
+    '#gw-seite.gw-eingebettet:not(.gw-app) > #datenexplorer-slider { position: sticky; bottom: 0; z-index: 30; }',
+    '#gw-seite.gw-eingebettet:not(.gw-app) > #datenexplorer-slider .gw-slider-row { box-shadow: 0 -3px 12px rgba(0,0,0,0.08); }',
     '.gw-ebenen-zu-zeile { justify-content: space-between; align-items: center; margin-bottom: 4px; }',
     '@media (max-width: 700px) {' +
     '  .gw-blatt { left: 0; right: 0; bottom: 0; width: auto; max-height: 65vh; max-height: 65dvh; border-radius: 14px 14px 0 0; padding: 8px 16px calc(14px + env(safe-area-inset-bottom)); }' +
@@ -3103,11 +3182,16 @@ function(el, x) {
     '  .gw-slider-aligned { margin-left: 0 !important; width: auto !important; flex: 1 1 auto !important; }' +
     '  .gw-slider-label-row { gap: 6px; margin-bottom: 4px; }' +
     '  .gw-today-btn { width: auto !important; min-width: 56px; padding: 0 8px; margin-left: 8px; }' +
+    '  .gw-play-btn { margin-left: 8px; }' +
     '}'
   ].join(' ');
   document.head.appendChild(stilMobil);
 
   function istMobil() { return window.matchMedia('(max-width: 700px)').matches; }
+  // Touch ohne Maus (auch Tablets ueber 700px): kein Hover - Erklaerungen und
+  // Punkttexte deshalb im Blatt statt als Tooltip.
+  function istTouch() { return istMobil() || window.matchMedia('(hover: none)').matches; }
+  function istAppModus() { return !!(seiteEl && seiteEl.classList.contains('gw-app')); }
   var blattEl = document.createElement('div');
   blattEl.className = 'gw-blatt';
   blattEl.style.display = 'none';
@@ -3130,7 +3214,12 @@ function(el, x) {
     blattEl.scrollTop = 0;
     blattGeoeffnetUm = Date.now();
   }
-  document.addEventListener('keydown', function(evt) { if (evt.key === 'Escape') { schliesseBlatt(); document.body.classList.remove('gw-ebenen-offen'); } });
+  document.addEventListener('keydown', function(evt) {
+    if (evt.key !== 'Escape') return;
+    schliesseBlatt();
+    document.body.classList.remove('gw-ebenen-offen');
+    if (istAppModus() && seiteEl.classList.contains('gw-app-schmal')) setzeEbenenOffen(false);
+  });
   // Klick/Tipp ausserhalb schliesst Blatt und Ebenen-Blatt - kurz nach dem
   // Oeffnen ignoriert, weil der oeffnende Klick (z.B. auf einen Kartenpunkt)
   // selbst noch bis zum document hochblubbert.
@@ -3141,6 +3230,10 @@ function(el, x) {
     if (document.body.classList.contains('gw-ebenen-offen') && panel && !panel.contains(evt.target)) {
       document.body.classList.remove('gw-ebenen-offen');
     }
+    if (istAppModus() && seiteEl.classList.contains('gw-app-schmal') && !seiteEl.classList.contains('gw-ebenen-zu') &&
+        panel && !panel.contains(evt.target)) {
+      setzeEbenenOffen(false);
+    }
   });
 
   // Icons (Tabler, MIT) als SVG per DOM - im R-String keine Anfuehrungszeichen
@@ -3148,7 +3241,10 @@ function(el, x) {
     ebenen: ['M12 4l-8 4l8 4l8 -4l-8 -4', 'M4 12l8 4l8 -4', 'M4 16l8 4l8 -4'],
     kurve: ['M4 19l16 0', 'M4 15l4 -6l4 2l4 -5l4 4'],
     vollbild: ['M16 4l4 0l0 4', 'M14 10l6 -6', 'M8 20l-4 0l0 -4', 'M4 20l6 -6', 'M16 20l4 0l0 -4', 'M14 14l6 6', 'M8 4l-4 0l0 4', 'M4 4l6 6'],
-    verkleinern: ['M5 9l4 0l0 -4', 'M3 3l6 6', 'M5 15l4 0l0 4', 'M3 21l6 -6', 'M19 9l-4 0l0 -4', 'M15 9l6 -6', 'M19 15l-4 0l0 4', 'M15 15l6 6']
+    verkleinern: ['M5 9l4 0l0 -4', 'M3 3l6 6', 'M5 15l4 0l0 4', 'M3 21l6 -6', 'M19 9l-4 0l0 -4', 'M15 9l6 -6', 'M19 15l-4 0l0 4', 'M15 15l6 6'],
+    hoch: ['M6 15l6 -6l6 6'],
+    play: ['M7 4v16l13 -8z'],
+    pause: ['M6 5m0 1a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1z', 'M14 5m0 1a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1z']
   };
   function gwIcon(name) {
     var ns = 'http://www.w3.org/2000/svg';
@@ -3193,6 +3289,7 @@ function(el, x) {
     seiteEl.classList.toggle('gw-vollbild', an);
     document.documentElement.classList.toggle('gw-vollbild-aktiv', an);
     if (vollbildKnopfEl) setzeKnopfInhalt(vollbildKnopfEl, an ? 'verkleinern' : 'vollbild', an ? 'Vollbild beenden' : 'Vollbild');
+    bestimmeAppModus();
     if (!an) seiteEl.scrollIntoView({ block: 'start' });
     window.dispatchEvent(new Event('resize'));
   }
@@ -3208,7 +3305,8 @@ function(el, x) {
   }
   document.addEventListener('keydown', function(evt) {
     if (evt.key !== 'Escape' || !istVollbild()) return;
-    var offen = blattEl.style.display !== 'none' || document.body.classList.contains('gw-ebenen-offen');
+    var offen = blattEl.style.display !== 'none' || document.body.classList.contains('gw-ebenen-offen') ||
+      (seiteEl.classList.contains('gw-app-schmal') && !seiteEl.classList.contains('gw-ebenen-zu'));
     if (!offen) setzeVollbild(false);
   }, true);
 
@@ -3257,6 +3355,58 @@ function(el, x) {
     var sliderHost = document.getElementById('datenexplorer-slider');
     if (sliderHost) sliderHost.parentNode.insertBefore(knoepfe, sliderHost.nextSibling);
   }
+  // App-Layout (eigene Seite oder Vollbild, ab 700px): Icon-Leiste links mit
+  // Ebenen und Kurve. Ab 1100px stehen die Ebenen fest neben der Karte
+  // (einklappbar), darunter klappen sie als Schublade ueber die Karte.
+  var appLeisteEbenenEl = null, appLeisteKurveEl = null;
+  if (kartenzeileEl) {
+    var appLeiste = document.createElement('div');
+    appLeiste.className = 'gw-app-leiste';
+    appLeisteEbenenEl = document.createElement('button');
+    appLeisteEbenenEl.type = 'button'; appLeisteEbenenEl.className = 'gw-leiste-knopf';
+    appLeisteEbenenEl.title = 'Ebenen'; appLeisteEbenenEl.setAttribute('aria-label', 'Ebenen');
+    appLeisteEbenenEl.appendChild(gwIcon('ebenen'));
+    appLeisteEbenenEl.addEventListener('click', function(evt) {
+      evt.stopPropagation();
+      setzeEbenenOffen(seiteEl.classList.contains('gw-ebenen-zu'));
+    });
+    appLeisteKurveEl = document.createElement('button');
+    appLeisteKurveEl.type = 'button'; appLeisteKurveEl.className = 'gw-leiste-knopf';
+    appLeisteKurveEl.title = 'Kurve'; appLeisteKurveEl.setAttribute('aria-label', 'Kurve');
+    appLeisteKurveEl.appendChild(gwIcon('kurve'));
+    appLeisteKurveEl.addEventListener('click', function(evt) {
+      evt.stopPropagation();
+      setzeKurveAuf(!seiteEl.classList.contains('gw-kurve-auf'));
+    });
+    appLeiste.appendChild(appLeisteEbenenEl); appLeiste.appendChild(appLeisteKurveEl);
+    kartenzeileEl.insertBefore(appLeiste, kartenzeileEl.firstChild);
+  }
+  function setzeEbenenOffen(offen) {
+    if (!seiteEl) return;
+    seiteEl.classList.toggle('gw-ebenen-zu', !offen);
+    if (appLeisteEbenenEl) appLeisteEbenenEl.classList.toggle('aktiv', offen);
+    blattGeoeffnetUm = Date.now();
+  }
+  var appModusVorher = null, appSchmalVorher = null;
+  function bestimmeAppModus() {
+    if (!seiteEl) return;
+    var an = !istMobil() && (!eingebettet || istVollbild());
+    var schmal = an && window.innerWidth < 1100;
+    seiteEl.classList.toggle('gw-app', an);
+    seiteEl.classList.toggle('gw-app-schmal', schmal);
+    document.documentElement.classList.toggle('gw-app-aktiv', an);
+    document.documentElement.classList.toggle('gw-app-seite', an && !eingebettet);
+    if (an === appModusVorher && schmal === appSchmalVorher) return;
+    appModusVorher = an; appSchmalVorher = schmal;
+    setzeEbenenOffen(!schmal);
+    // Hochformat (Tablet): die breite Schweiz liesse oben und unten viel
+    // Leerraum - die Kurve nutzt ihn, ihr Blatt ist dort von Anfang an offen.
+    setzeKurveAuf(an && window.innerHeight > window.innerWidth * 1.1);
+    aktualisiereKartentitel();
+    setTimeout(function() { window.dispatchEvent(new Event('resize')); }, 0);
+  }
+  window.addEventListener('resize', bestimmeAppModus);
+
   function setzeWertText(text) {
     if (wertAnzeigeEl) wertAnzeigeEl.textContent = text;
     if (kartenleisteWertEl) kartenleisteWertEl.textContent = text.replace('Wert am Cursor: ', '').replace('–', 'Auf die Karte tippen für den Wert');
@@ -3470,6 +3620,7 @@ function(el, x) {
     yearSelect.appendChild(opt);
   });
   yearSelect.addEventListener('change', function() {
+    stoppePlay();
     selectedYear = yearSelect.value;
     var hatNiederschlag = jahreMitNiederschlag.indexOf(selectedYear) !== -1;
     precipCheckbox.disabled = !hatNiederschlag;
@@ -3642,7 +3793,7 @@ function(el, x) {
       zeilen = 3;
     }
     if (mobilKopfUnterEl) mobilKopfUnterEl.textContent = unterzeile + (ebenenZeile ? ' · ' + ebenenZeile : '');
-    if (istMobil()) Plotly.relayout(growthMapGd, { 'title.text': '', 'margin.t': 6 });
+    if (istMobil() || istAppModus()) Plotly.relayout(growthMapGd, { 'title.text': '', 'margin.t': 6 });
     else Plotly.relayout(growthMapGd, { 'title.text': titel, 'margin.t': zeilen === 3 ? 74 : 58 });
   }
 
@@ -3990,7 +4141,7 @@ function(el, x) {
       btn.addEventListener('click', function(evt) {
         evt.preventDefault();
         evt.stopPropagation();
-        if (istMobil()) {
+        if (istTouch()) {
           var inhalt = document.createElement('div');
           if (zusatz) { var z = zusatz(); if (z) inhalt.appendChild(z); }
           var p = document.createElement('div'); p.className = 'gw-blatt-text'; p.textContent = text;
@@ -4296,8 +4447,31 @@ function(el, x) {
   fillHost.className = 'gw-kurvenbereich';
   fillHost.style.width = '100%';
   el.parentNode.insertBefore(fillHost, el);
-  fillHost.appendChild(titleEl);
-  fillHost.appendChild(controls);
+  // App-Layout: Kurve als aufziehbares Blatt ueber der Zeitleiste - der
+  // Griff ist nur dort sichtbar, sonst steht der Inhalt wie bisher da.
+  var kurveGriff = document.createElement('button');
+  kurveGriff.type = 'button';
+  kurveGriff.className = 'gw-kurve-griff';
+  kurveGriff.setAttribute('aria-expanded', 'false');
+  kurveGriff.appendChild(gwIcon('kurve'));
+  var kurveGriffTitel = document.createElement('span');
+  kurveGriffTitel.className = 'gw-kurve-griff-titel';
+  kurveGriffTitel.textContent = 'Graswachstumskurve';
+  var kurveGriffInfo = document.createElement('span');
+  kurveGriffInfo.className = 'gw-kurve-griff-info';
+  var kurveGriffPfeil = gwIcon('hoch');
+  kurveGriffPfeil.setAttribute('class', 'gw-icon gw-kurve-griff-pfeil');
+  kurveGriff.appendChild(kurveGriffTitel); kurveGriff.appendChild(kurveGriffInfo); kurveGriff.appendChild(kurveGriffPfeil);
+  kurveGriff.addEventListener('click', function(evt) {
+    evt.stopPropagation();
+    setzeKurveAuf(!seiteEl.classList.contains('gw-kurve-auf'));
+  });
+  fillHost.appendChild(kurveGriff);
+  var kurveInhalt = document.createElement('div');
+  kurveInhalt.className = 'gw-kurve-inhalt';
+  fillHost.appendChild(kurveInhalt);
+  kurveInhalt.appendChild(titleEl);
+  kurveInhalt.appendChild(controls);
 
   var chartRow = document.createElement('div');
   chartRow.className = 'gw-chart-row';
@@ -4386,7 +4560,35 @@ function(el, x) {
   chartRow.appendChild(el);
   chartRow.appendChild(legendPanel);
   chartRow.appendChild(legendEdge);
-  fillHost.appendChild(chartRow);
+  kurveInhalt.appendChild(chartRow);
+
+  function aktualisiereKurvenGriff() {
+    if (!kurveGriffInfo) return;
+    kurveGriffInfo.textContent = (input.value || 'Alle Standorte') + ' · ' + selectedYear;
+  }
+  function setzeKurveAuf(auf) {
+    if (!seiteEl) return;
+    seiteEl.classList.toggle('gw-kurve-auf', !!auf);
+    if (kurveGriff) kurveGriff.setAttribute('aria-expanded', auf ? 'true' : 'false');
+    if (appLeisteKurveEl) appLeisteKurveEl.classList.toggle('aktiv', !!auf);
+    aktualisiereKurvenGriff();
+    passeKurvenHoeheAn();
+  }
+  // Im Blatt bekommt die Kurve die verfuegbare Hoehe, sonst die feste aus R.
+  function passeKurvenHoeheAn() {
+    if (!kurveInhalt || !chartRow) return;
+    if (istAppModus() && seiteEl.classList.contains('gw-kurve-auf')) {
+      var h = Math.max(180, Math.round(kurveInhalt.clientHeight - controls.offsetHeight - 14));
+      chartRow.style.height = h + 'px';
+      // Breite neu bestimmen: solange das Blatt zu war, hatte die Kurve
+      // keine Breite (display:none) - sonst drueckt sie die Legende hinaus.
+      Plotly.relayout(el, { height: h }).then(function() { Plotly.Plots.resize(el); });
+    } else {
+      chartRow.style.height = '';
+      if (el.layout && el.layout.height !== 520) Plotly.relayout(el, { height: 520 }).then(function() { Plotly.Plots.resize(el); });
+    }
+  }
+  window.addEventListener('resize', passeKurvenHoeheAn);
 
   // el wurde bereits von Plotly (responsive=TRUE) auf seine urspruengliche
   // volle Breite gerendert, BEVOR es hier in chartRow neben legendPanel
@@ -4403,6 +4605,7 @@ function(el, x) {
   // Kalenderwochen-Schieberegler: eigener Container zwischen Kurve und
   // Karten (im HTML bereits als leeres <div id=\"datenexplorer-slider\">
   // angelegt), wird hier befuellt - steuert beide Karten gemeinsam.
+  var stoppePlay = function() {};
   var sliderContainer = document.getElementById('datenexplorer-slider');
   var weekLabel = null;
   var sliderInput = null;
@@ -4480,6 +4683,7 @@ function(el, x) {
     // (anders als 'change', das erst beim Loslassen feuert) - Karten und
     // Tooltip aktualisieren sich daher schon live beim Verschieben.
     sliderInput.addEventListener('input', function() {
+      stoppePlay();
       var w = parseInt(sliderInput.value, 10);
       var maxW = maxWocheFuerJahr(selectedYear);
       if (w > maxW) { w = maxW; sliderInput.value = String(w); }
@@ -4499,14 +4703,14 @@ function(el, x) {
     prevBtn.className = 'gw-step-btn';
     prevBtn.title = 'Eine Woche zurueck';
     prevBtn.textContent = String.fromCharCode(9664);
-    prevBtn.addEventListener('click', function() { springeZuWoche(selectedWeek - 1); });
+    prevBtn.addEventListener('click', function() { stoppePlay(); springeZuWoche(selectedWeek - 1); });
 
     var nextBtn = document.createElement('button');
     nextBtn.type = 'button';
     nextBtn.className = 'gw-step-btn';
     nextBtn.title = 'Eine Woche vor';
     nextBtn.textContent = String.fromCharCode(9654);
-    nextBtn.addEventListener('click', function() { springeZuWoche(selectedWeek + 1); });
+    nextBtn.addEventListener('click', function() { stoppePlay(); springeZuWoche(selectedWeek + 1); });
 
     var todayBtn = document.createElement('button');
     todayBtn.type = 'button';
@@ -4514,6 +4718,7 @@ function(el, x) {
     todayBtn.title = 'Aktuelle Kalenderwoche (heutiges Jahr)';
     todayBtn.textContent = 'Heute';
     todayBtn.addEventListener('click', function() {
+      stoppePlay();
       selectedYear = neuestesJahr;
       yearSelect.value = neuestesJahr;
       var hatNiederschlag = jahreMitNiederschlag.indexOf(selectedYear) !== -1;
@@ -4535,7 +4740,45 @@ function(el, x) {
     trackRow.appendChild(sliderInput);
     alignedBox.appendChild(labelRow);
     alignedBox.appendChild(trackRow);
+    // Play: Woche fuer Woche bis zur letzten verfuegbaren; steht der Regler
+    // schon dort, beginnt es bei der ersten Woche mit Messungen.
+    var playBtn = document.createElement('button');
+    playBtn.type = 'button';
+    playBtn.className = 'gw-step-btn gw-play-btn';
+    var playTimer = null;
+    function setzePlayIcon(laeuft) {
+      playBtn.innerHTML = '';
+      playBtn.appendChild(gwIcon(laeuft ? 'pause' : 'play'));
+      playBtn.title = laeuft ? 'Anhalten' : 'Wochen abspielen';
+      playBtn.setAttribute('aria-label', playBtn.title);
+      playBtn.classList.toggle('aktiv', laeuft);
+    }
+    function ersteWocheMitDaten(jahr) {
+      var praefix = jahr + ' ', erste = null;
+      Object.keys(graswachstumBilder).forEach(function(k) {
+        if (k.indexOf(praefix) !== 0) return;
+        var w = parseInt(k.slice(praefix.length), 10);
+        if (erste === null || w < erste) erste = w;
+      });
+      return erste || 1;
+    }
+    stoppePlay = function() {
+      if (playTimer) { clearInterval(playTimer); playTimer = null; }
+      setzePlayIcon(false);
+    };
+    function startePlay() {
+      if (selectedWeek >= maxWocheFuerJahr(selectedYear)) springeZuWoche(ersteWocheMitDaten(selectedYear));
+      playTimer = setInterval(function() {
+        if (selectedWeek >= maxWocheFuerJahr(selectedYear)) { stoppePlay(); return; }
+        springeZuWoche(selectedWeek + 1);
+      }, 900);
+      setzePlayIcon(true);
+    }
+    setzePlayIcon(false);
+    playBtn.addEventListener('click', function() { if (playTimer) stoppePlay(); else startePlay(); });
+
     sliderRow.appendChild(alignedBox);
+    sliderRow.appendChild(playBtn);
     sliderRow.appendChild(todayBtn);
     sliderContainer.appendChild(sliderRow);
 
@@ -4590,11 +4833,13 @@ function(el, x) {
     var xPixel = evt.clientX - rect.left;
     var xData = fl.xaxis.p2d(xPixel - fl.xaxis._offset);
     var woche = Math.max(1, Math.min(maxWocheFuerJahr(selectedYear), Math.round(xData)));
+    stoppePlay();
     selectedWeek = woche;
     if (sliderInput) sliderInput.value = String(woche);
     applyMapState();
   });
 
+  bestimmeAppModus();
   applyState();
   // Erneuter Aufruf leicht verzoegert: beim allerersten applyState() oben
   // (synchron waehrend des Bindens DIESES Widgets) sind die beiden
@@ -4602,6 +4847,7 @@ function(el, x) {
   // applyMapState()), wodurch applyMapState() dort ins Leere laeuft. Nach
   // 100ms sind alle drei Widgets garantiert initialisiert.
   setTimeout(applyState, 100);
+  setTimeout(function() { window.dispatchEvent(new Event('resize')); }, 150);
 }
 "
 
