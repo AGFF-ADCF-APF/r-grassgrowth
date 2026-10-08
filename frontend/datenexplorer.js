@@ -356,6 +356,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   }
 
   function applyState() {
+    if (GWDatenexplorer.schreibeUrlBald) GWDatenexplorer.schreibeUrlBald();
     setTimeout(aktualisiereKurvenGriff, 0);
     setTimeout(aktualisiereTeaser, 0);
     // vis wird ueber den in R mitgelieferten traceIdx (echte Plotly-Trace-
@@ -476,6 +477,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   }
 
   function applyXAxis() {
+    if (GWDatenexplorer.schreibeUrlBald) GWDatenexplorer.schreibeUrlBald();
     var ticktext = datumOn ? datumTicktextJeJahr[selectedYear] : wochenTicktext;
     Plotly.relayout(el, {
       'xaxis.tickmode': 'array',
@@ -503,6 +505,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   }
 
   function applyMapState() {
+    if (GWDatenexplorer.schreibeUrlBald) GWDatenexplorer.schreibeUrlBald();
     // Frisch abfragen statt einmalig cachen: beim allerersten Aufruf (aus
     // applyState() am Ende von onRender()) existiert das Karten-Widget
     // evtl. noch nicht im DOM, da beide Widgets (Kurve, Wachstumskarte)
@@ -678,6 +681,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   // Nutzer inzwischen eine andere Ebene gewaehlt, wird das (jetzt veraltete)
   // Ergebnis verworfen statt faelschlich angezeigt.
   function aktualisiereHintergrundEbene() {
+    if (GWDatenexplorer.schreibeUrlBald) GWDatenexplorer.schreibeUrlBald();
     if (hintergrundEbene === 'keine') { zeichneKartenBilder(null); return; }
     var ebeneBeimStart = hintergrundEbene;
     var dateiSchluesselBeimStart = ebeneDateiSchluessel(ebeneBeimStart);
@@ -709,6 +713,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   // beim ERSTEN Einschalten je Seitenaufruf (danach zwischengespeichert,
   // ein erneutes Ein-/Ausschalten loest keinen neuen Download aus).
   function aktualisiereSmnStationen() {
+    if (GWDatenexplorer.schreibeUrlBald) GWDatenexplorer.schreibeUrlBald();
     var growthMapGd = document.querySelector('#datenexplorer-growthmap .js-plotly-plot');
     if (!growthMapGd) return;
     Plotly.restyle(growthMapGd, { visible: smnStationenOn }, [smnStationenTraceIdx]);
@@ -1277,6 +1282,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     });
     dokuInhaltEl.appendChild(nav);
     if (!ausSuche) dokuInhaltEl.scrollTop = 0;
+    if (GWDatenexplorer.schreibeUrlBald) GWDatenexplorer.schreibeUrlBald();
   }
   function istDokuOffen() { return !!(dokuRoot && dokuRoot.classList.contains('offen')); }
   function oeffneDoku(id, opener) {
@@ -1296,6 +1302,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     if (!dokuRoot) return;
     dokuRoot.classList.remove('offen');
     document.documentElement.classList.remove('gw-doku-offen');
+    if (GWDatenexplorer.schreibeUrlBald) GWDatenexplorer.schreibeUrlBald();
     if (dokuOpener && dokuOpener.focus) dokuOpener.focus();
   }
 
@@ -2007,6 +2014,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   var radioWachstumspotenzialRate = null, radioWachstumspotenzialKum = null;
   var experimentellerModus = new URLSearchParams(window.location.search).has('experimentell');
   var radioJeEbene = {};
+  var toggleGraswachstum = null, toggleDgv = null, toggleStationen = null;
   function aktualisiereLayerVerfuegbarkeit() {
     if (radioNiederschlag) radioNiederschlag.disabled = !ebeneHatJahr('niederschlag', selectedYear);
     if (radioBoden) radioBoden.disabled = !ebeneHatJahr('boden', selectedYear);
@@ -2538,9 +2546,9 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     // Referenzebene. DGV = Durchschnittlicher GrasVorrat, der intern/in der
     // Erklaerung weiterhin als AFC (Average Farm Cover) referenzierte
     // Fachbegriff.
-    macheLayerToggle('Graswachstum (kg TS/ha/Tag)', true, function(checked) { graswachstumOn = checked; applyState(); },
+    toggleGraswachstum = macheLayerToggle('Graswachstum (kg TS/ha/Tag)', true, function(checked) { graswachstumOn = checked; applyState(); },
       'Die Zahl im Kreis zeigt das zuletzt gemessene Graswachstum in kg TS/ha/Tag (Trockensubstanz-Zuwachs pro Hektare und Tag). Die Graufaerbung des Kreises zeigt, wie lange die Messung zurueckliegt: weiss = frisch gemessen (0 Tage), dunkelgrau = bis zu 14 Tage alt. Standorte ohne Messung in den letzten 14 Tagen werden nicht mehr angezeigt.');
-    macheLayerToggle('DGV (kg TS/ha)', true, function(checked) { afcOn = checked; applyState(); },
+    toggleDgv = macheLayerToggle('DGV (kg TS/ha)', true, function(checked) { afcOn = checked; applyState(); },
       'DGV (Durchschnittlicher GrasVorrat, international AFC = Average Farm Cover) schaetzt den aktuellen Grasvorrat des Betriebs in kg Trockensubstanz pro Hektare (kg TS/ha). Der Ring zeigt diesen Vorrat als Fortschrittsbalken auf einer Skala von 0 bis 1500 kg TS/ha und faerbt ihn nach dem jahreszeitlichen Zielbereich: rot = deutlich zu wenig (unter 200 kg praktisch leer), gruen = im Zielbereich, blaugruen = deutlich mehr als noetig. Der Zielbereich verschiebt sich uebers Jahr, z.B. Fruehling ca. 500-700, Sommer ca. 700-800, Herbst ca. 900-1200 kg TS/ha.', null,
       function() { if (!afcLegendeBox || afcLegendeBox.style.display === 'none') return null; var c = afcLegendeBox.cloneNode(true); c.className = 'gw-layer-legende'; c.style.display = 'block'; c.style.marginBottom = '10px'; return c; });
 
@@ -2578,7 +2586,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     tageSeitMessungBox.appendChild(tsmText);
     messLegendeZeile.appendChild(tageSeitMessungBox);
 
-    macheLayerToggle('MeteoSchweiz-Stationen', false, function(checked) { smnStationenOn = checked; aktualisiereSmnStationen(); },
+    toggleStationen = macheLayerToggle('MeteoSchweiz-Stationen', false, function(checked) { smnStationenOn = checked; aktualisiereSmnStationen(); },
       'Zeigt die oeffentlichen MeteoSchweiz-Automatikstationen (SwissMetNet) mit ihren aktuellsten Tageswerten (Lufttemperatur, Bodentemperatur, Niederschlag, Globalstrahlung, Sonnenscheindauer) als Diamant-Symbole. Reine Wetter-Referenzstationen, unabhaengig von der gewaehlten Kalenderwoche und NICHT Teil der AGFF-Grasmessungen. Bodentemperatur wird nur an einem Teil der rund 150 Stationen gemessen - dort steht im Tooltip entsprechend keine Daten.');
 
     // Schieberegler fuer die Fenstergroesse (Tage) der gleitendes-Fenster-
@@ -3879,6 +3887,18 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       eltern.appendChild(b);
       return b;
     };
+    // 0. Direktlink
+    var a0 = abschnitt('Link zu dieser Ansicht', 'Die Adresse im Browser zeigt immer die aktuelle Ansicht (Jahr, Woche, Auswahl, Ebene, Kartenausschnitt). Wer den Link öffnet, sieht dasselbe.');
+    var linkKnopf = exportFeld('button', 'gw-export-los gw-export-link', 'Link kopieren');
+    linkKnopf.type = 'button';
+    linkKnopf.addEventListener('click', function() {
+      schreibeUrl();
+      var url = window.location.href;
+      var fertig = function() { exportStatus('Link kopiert.'); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(fertig, function() { window.prompt('Link kopieren:', url); });
+      else window.prompt('Link kopieren:', url);
+    });
+    a0.appendChild(linkKnopf);
     // 1. Einzelbilder
     var a1 = abschnitt('Bilder', 'Karte und Kurve der aktuellen Ansicht. Mehrere Dateien kommen als ZIP.');
     zeile(a1, [exportWahl('checkbox', 'gw-ex-obj', 'karte', 'Karte', true), exportWahl('checkbox', 'gw-ex-obj', 'kurve', 'Kurve', true)], 'Objekte');
@@ -3942,18 +3962,152 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   }
   function istExportOffen() { return !!(exportEl && exportEl.classList.contains('offen')); }
 
-  // Hilfe direkt per Adresse oeffnen (QR-Code im PDF): .../growth/help,
-  // .../hilfe oder #hilfe bzw. #hilfe-<thema>, z.B. #hilfe-dgv
-  (function() {
-    var h = (window.location.hash || '').match(/^#hilfe(?:-([a-z0-9-]+))?$/);
-    if (h || /\/(help|hilfe)\/?$/.test(window.location.pathname)) {
-      var thema = h && h[1] && doku.some(function(e) { return e.id === h[1]; }) ? h[1] : null;
-      setTimeout(function() {
-        if (seiteEl && eingebettet) seiteEl.scrollIntoView({ block: 'start' });
-        oeffneDoku(thema);
-      }, 400);
+  // ---------- Direktlinks: Ansicht in der Adresse (#...) ----------
+  // Die Adresse spiegelt laufend Jahr, Woche, Auswahl, Ebene, Schalter,
+  // Kartenausschnitt und offenes Hilfethema; beim Oeffnen eines Links wird die
+  // Ansicht wiederhergestellt. Standardansicht = Adresse ohne #. Nur
+  // replaceState (kein neuer Verlaufseintrag je Klick). Alte Links
+  // #hilfe bzw. #hilfe-<thema> und .../growth/help funktionieren weiter.
+  var urlBereit = false, urlTimer = null, urlWirdGesetzt = false;
+  function gruppenKurz(g) { return g === 0 ? 'alle' : String(groupLabels[g]).split(': ').pop(); }
+  function gruppeAusKurz(k) {
+    for (var g = 0; g < groupLabels.length; g++) if (gruppenKurz(g).toLowerCase() === String(k).toLowerCase()) return g;
+    return -1;
+  }
+  function kartenGd() { return document.querySelector('#datenexplorer-growthmap .js-plotly-plot'); }
+  function zustandAlsHash() {
+    var p = [];
+    var setze = function(k, v) { p.push(k + '=' + encodeURIComponent(v).replace(/%2C/g, ',').replace(/%20/g, '+')); };
+    var wocheGeaendert = selectedYear !== neuestesJahr || selectedWeek !== daten.START_WOCHE;
+    if (wocheGeaendert) { setze('jahr', selectedYear); setze('kw', selectedWeek); }
+    var a = auswahlListen();
+    if (!(selection.type === 'group' && selection.idx === 0)) {
+      if (a.groups.length) setze('gruppe', a.groups.map(gruppenKurz).join(','));
+      if (a.sites.length) setze('standort', a.sites.map(function(i) { return siteNames[i]; }).join(','));
     }
-  })();
+    if (hintergrundEbene !== 'keine') {
+      setze('ebene', hintergrundEbene);
+      if (istFensterEbene(hintergrundEbene) && meteoFenster !== meteoFensterStandard[hintergrundEbene]) setze('tage', meteoFenster);
+    }
+    var an = [], aus = [];
+    if (!graswachstumOn) aus.push('wachstum');
+    if (!afcOn) aus.push('dgv');
+    if (smnStationenOn) an.push('stationen');
+    if (!precipOn && jahreMitNiederschlag.indexOf(selectedYear) !== -1) aus.push('niederschlag');
+    if (datumOn) an.push('datum');
+    if (vorjahrOn && !vorjahrAutomatisch) an.push('vorjahr');
+    if (!vorjahrOn && vorjahrAutomatisch === false && selection.type === 'site') aus.push('vorjahr');
+    if (alleStandorteZeigen) an.push('alle-standorte');
+    if (an.length) setze('an', an.join(','));
+    if (aus.length) setze('aus', aus.join(','));
+    var gd = kartenGd(), info = GWDatenexplorer.kartenInfo;
+    if (gd && info && gd.layout.xaxis.range) {
+      var xr = gd.layout.xaxis.range, yr = gd.layout.yaxis.range;
+      if ((xr[1] - xr[0]) < (info.xMaxSchweiz - info.xMin) * 0.9) setze('karte', [xr[0], xr[1], yr[0], yr[1]].map(function(v) { return v.toFixed(3); }).join(','));
+    }
+    if (istDokuOffen() && dokuAktiv) setze('hilfe', dokuAktiv);
+    return p.length ? '#' + p.join('&') : '';
+  }
+  function schreibeUrl() {
+    if (!urlBereit || urlWirdGesetzt) return;
+    var hash = zustandAlsHash();
+    if (hash === (window.location.hash || '')) return;
+    var basis = window.location.pathname + window.location.search;
+    try { history.replaceState(history.state, '', basis + hash); } catch (e) {}
+  }
+  function schreibeUrlBald() {
+    if (!urlBereit) return;
+    clearTimeout(urlTimer);
+    urlTimer = setTimeout(schreibeUrl, 250);
+  }
+  GWDatenexplorer.schreibeUrlBald = schreibeUrlBald;
+  function leseHash() {
+    var h = (window.location.hash || '').replace(/^#/, ''), q = {};
+    var alt = h.match(/^hilfe(?:-([a-z0-9-]+))?$/);
+    if (alt) { q.hilfe = alt[1] || ''; return q; }
+    h.split('&').forEach(function(teil) {
+      if (!teil) return;
+      var i = teil.indexOf('=');
+      var k = i === -1 ? teil : teil.slice(0, i), v = i === -1 ? '' : teil.slice(i + 1);
+      try { q[decodeURIComponent(k)] = decodeURIComponent(v.replace(/\+/g, ' ')); } catch (e) {}
+    });
+    return q;
+  }
+  function setzeSchalter(wrap, an) {
+    var cb = wrap && wrap.checkbox ? wrap.checkbox : (wrap && wrap.querySelector ? wrap.querySelector('input[type=checkbox]') : null);
+    if (!cb || cb.disabled || cb.checked === an) return;
+    cb.checked = an;
+    cb.dispatchEvent(new Event('change'));
+  }
+  function stelleZustandHer(q) {
+    urlWirdGesetzt = true;
+    try {
+      var liste = function(k) { return q[k] ? q[k].split(',').map(function(x) { return x.trim(); }).filter(Boolean) : []; };
+      if (q.jahr && alleJahre.indexOf(q.jahr) !== -1 && q.jahr !== selectedYear) {
+        yearSelect.value = q.jahr;
+        yearSelect.dispatchEvent(new Event('change'));
+      }
+      if (q.kw) {
+        var w = parseInt(q.kw, 10);
+        if (w >= 1 && w <= 53 && sliderInput) {
+          sliderInput.value = String(Math.min(w, maxWocheFuerJahr(selectedYear)));
+          sliderInput.dispatchEvent(new Event('input'));
+        }
+      }
+      var gruppenIdx = liste('gruppe').map(gruppeAusKurz).filter(function(g) { return g !== -1; });
+      var sitesIdx = liste('standort').map(function(n) { return siteNames.indexOf(n); }).filter(function(i) { return i !== -1; });
+      if (gruppenIdx.length || sitesIdx.length) {
+        setzeAuswahl(gruppenIdx, sitesIdx);
+        aktualisiereAuswahlChips();
+      }
+      var an = liste('an'), aus = liste('aus');
+      setzeSchalter(toggleGraswachstum, aus.indexOf('wachstum') === -1);
+      setzeSchalter(toggleDgv, aus.indexOf('dgv') === -1);
+      setzeSchalter(toggleStationen, an.indexOf('stationen') !== -1);
+      if (aus.indexOf('niederschlag') !== -1) setzeSchalter(precipToggleWrap, false);
+      if (an.indexOf('datum') !== -1) setzeSchalter(xAxisToggleWrap, false);
+      if (an.indexOf('vorjahr') !== -1) setzeSchalter(vorjahrToggleWrap, true);
+      if (aus.indexOf('vorjahr') !== -1) setzeSchalter(vorjahrToggleWrap, false);
+      if (an.indexOf('alle-standorte') !== -1) alleStandorteZeigen = true;
+      if (q.ebene) {
+        var radio = document.querySelector('input[name=gw-layer][value="' + q.ebene.replace(/[^a-z0-9_]/gi, '') + '"]');
+        if (radio && !radio.disabled) { radio.checked = true; radio.dispatchEvent(new Event('change')); }
+        if (q.tage && istFensterEbene(q.ebene) && meteoFensterInput) {
+          var stufe = meteoFensterStufen.indexOf(parseInt(q.tage, 10));
+          if (stufe !== -1) { meteoFensterInput.value = String(stufe); meteoFensterInput.dispatchEvent(new Event('input')); }
+        }
+      }
+      applyState();
+      if (q.karte) {
+        var k = q.karte.split(',').map(parseFloat);
+        // erst nach den Groessenanpassungen beim Start (die setzen die ganze Schweiz)
+        if (k.length === 4 && k.every(isFinite)) setTimeout(function() { var gd = kartenGd(); if (gd) Plotly.relayout(gd, { 'xaxis.range': [k[0], k[1]], 'yaxis.range': [k[2], k[3]] }); }, 1300);
+      }
+      if (q.hilfe !== undefined) {
+        var thema = doku.some(function(e) { return e.id === q.hilfe; }) ? q.hilfe : null;
+        setTimeout(function() { if (seiteEl && eingebettet) seiteEl.scrollIntoView({ block: 'start' }); oeffneDoku(thema); }, 400);
+      }
+    } finally {
+      setTimeout(function() { urlWirdGesetzt = false; }, 500);
+    }
+  }
+  setTimeout(function() {
+    var q = leseHash();
+    if (/\/(help|hilfe)\/?$/.test(window.location.pathname) && q.hilfe === undefined) q.hilfe = '';
+    if (Object.keys(q).length) {
+      stelleZustandHer(q);
+      // Seitenanfang: bei einem Link mit Ansicht direkt zum Datenexplorer
+      if (eingebettet && seiteEl && q.hilfe === undefined) setTimeout(function() { seiteEl.scrollIntoView({ block: 'start' }); }, 600);
+    }
+    setTimeout(function() { urlBereit = true; schreibeUrl(); }, 1900);
+    var kgd = kartenGd();
+    if (kgd && kgd.on) kgd.on('plotly_relayout', schreibeUrlBald);
+  }, 200);
+  window.addEventListener('hashchange', function() {
+    if (urlWirdGesetzt) return;
+    var q = leseHash();
+    if (Object.keys(q).length) stelleZustandHer(q);
+  });
 
   bestimmeAppModus();
   applyState();
