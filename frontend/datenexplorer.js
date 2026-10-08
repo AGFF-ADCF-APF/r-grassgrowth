@@ -20,6 +20,8 @@ GWDatenexplorer.karte = function(el, x, d) {
   // Mobile: rechter Rand fuer die AFC-Legende entfaellt (Legende dort hinter
   // dem i-Knopf), die Schweiz fuellt die ganze Breite.
   var xMaxSchweiz = d.xMaxSchweiz, ySpanSchweiz = d.ySpanSchweiz;
+  // fuer den Export (ganze Schweiz als Figur, siehe kartenFigur())
+  GWDatenexplorer.kartenInfo = { xMin: xMin, xMax: xMax, yMitte: yMitte, scaleratio: scaleratio, xMaxSchweiz: xMaxSchweiz, ySpanSchweiz: ySpanSchweiz };
   var xSpan = xMax - xMin;
 
   // 'Ganze Schweiz'-Ansicht (x-/y-Achsenbereich) fuer eine gegebene
@@ -799,6 +801,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     vollbild: ['M16 4l4 0l0 4', 'M14 10l6 -6', 'M8 20l-4 0l0 -4', 'M4 20l6 -6', 'M16 20l4 0l0 -4', 'M14 14l6 6', 'M8 4l-4 0l0 4', 'M4 4l6 6'],
     verkleinern: ['M5 9l4 0l0 -4', 'M3 3l6 6', 'M5 15l4 0l0 4', 'M3 21l6 -6', 'M19 9l-4 0l0 -4', 'M15 9l6 -6', 'M19 15l-4 0l0 4', 'M15 15l6 6'],
     hoch: ['M6 15l6 -6l6 6'],
+    export: ['M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2', 'M7 11l5 5l5 -5', 'M12 4l0 12'],
     hilfe: ['M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0', 'M12 17l0 .01', 'M12 13.5a1.5 1.5 0 0 1 1 -1.5a2.6 2.6 0 1 0 -3 -4'],
     runter: ['M6 9l6 6l6 -6'],
     zurueck: ['M5 12l14 0', 'M5 12l6 6', 'M5 12l6 -6'],
@@ -1287,6 +1290,11 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     setzeKnopfInhalt(hilfeKnopf, 'hilfe', 'Hilfe');
     hilfeKnopf.addEventListener('click', function(evt) { evt.stopPropagation(); oeffneDoku(null, hilfeKnopf); });
     werkzeugleiste.appendChild(hilfeKnopf);
+    var exportKnopf = document.createElement('button');
+    exportKnopf.type = 'button'; exportKnopf.className = 'gw-werkzeug-knopf';
+    setzeKnopfInhalt(exportKnopf, 'export', 'Export');
+    exportKnopf.addEventListener('click', function(evt) { evt.stopPropagation(); if (istExportOffen()) schliesseExport(); else oeffneExport(exportKnopf); });
+    werkzeugleiste.appendChild(exportKnopf);
     if (eingebettet) {
       vollbildKnopfEl = document.createElement('button');
       vollbildKnopfEl.type = 'button'; vollbildKnopfEl.className = 'gw-werkzeug-knopf';
@@ -1297,7 +1305,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     seiteEl.insertBefore(werkzeugleiste, seiteEl.firstChild);
   }
   document.addEventListener('keydown', function(evt) {
-    if (evt.key !== 'Escape' || !istVollbild() || istDokuOffen()) return;
+    if (evt.key !== 'Escape' || !istVollbild() || istDokuOffen() || istExportOffen()) return;
     var offen = blattEl.style.display !== 'none' || document.body.classList.contains('gw-ebenen-offen') ||
       (seiteEl.classList.contains('gw-app-schmal') && !seiteEl.classList.contains('gw-ebenen-zu'));
     if (!offen) setzeVollbild(false);
@@ -3203,6 +3211,544 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     if (sliderInput) sliderInput.value = String(woche);
     applyMapState();
   });
+
+  // ---------- Export: Bilder, Zeitserien, PDF ----------
+  // Seitenleiste rechts. Karte und Kurve werden ausserhalb des Bildschirms
+  // als Plotly-Figur gerendert (Plotly.toImage mit Figur-Objekt) - die
+  // sichtbare Ansicht bleibt unberuehrt. jsPDF und JSZip (MIT) werden erst
+  // beim ersten Gebrauch von cdnjs geladen.
+  var EXPORT_BIBLIOTHEKEN = {
+    jspdf: 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
+    jszip: 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js'
+  };
+  var exportBibliotheken = {};
+  function ladeBibliothek(name) {
+    if (exportBibliotheken[name]) return exportBibliotheken[name];
+    exportBibliotheken[name] = new Promise(function(ok, fehler) {
+      var s = document.createElement('script');
+      s.src = EXPORT_BIBLIOTHEKEN[name];
+      s.onload = function() { ok(); };
+      s.onerror = function() { delete exportBibliotheken[name]; fehler(new Error('Bibliothek ' + name + ' konnte nicht geladen werden (Internetverbindung?)')); };
+      document.head.appendChild(s);
+    });
+    return exportBibliotheken[name];
+  }
+  function zweistellig(n) { return (n < 10 ? '0' : '') + n; }
+  function exportName(teil, woche) { return 'graswachstum_' + selectedYear + '-KW' + zweistellig(woche || selectedWeek) + (teil ? '_' + teil : ''); }
+  function herunterladen(inhalt, name) {
+    var url = typeof inhalt === 'string' ? inhalt : URL.createObjectURL(inhalt);
+    var a = document.createElement('a');
+    a.href = url; a.download = name; a.style.display = 'none';
+    document.body.appendChild(a); a.click();
+    setTimeout(function() { a.remove(); if (typeof inhalt !== 'string') URL.revokeObjectURL(url); }, 1500);
+  }
+  // Plotly liefert PNG als base64-, SVG als URI-kodierte data:-URL
+  function dataUrlInhalt(url) {
+    var komma = url.indexOf(',');
+    var kopf = url.slice(0, komma), rumpf = url.slice(komma + 1);
+    if (kopf.indexOf(';base64') !== -1) {
+      var bin = atob(rumpf), arr = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      return arr;
+    }
+    return decodeURIComponent(rumpf);
+  }
+  function ladeEbeneP(schluessel) {
+    return new Promise(function(ok, fehler) {
+      var t = setTimeout(function() { fehler(new Error('Ebene ' + schluessel + ' lädt nicht')); }, 30000);
+      ladeEbene(schluessel, function(d) { clearTimeout(t); ok(d); });
+    });
+  }
+  function exportSchrift() { return getComputedStyle(seiteEl || document.body).fontFamily; }
+  function wocheText(woche) {
+    var b = wochenDatumBereichText(woche);
+    return 'KW ' + woche + ' ' + selectedYear + (b ? ' (' + b + ')' : '');
+  }
+  function wochenDatumBereichText(woche) {
+    try {
+      var montag = new Date(Date.UTC(selectedYear, 0, 4));
+      montag.setUTCDate(montag.getUTCDate() - ((montag.getUTCDay() + 6) % 7) + (woche - 1) * 7);
+      var sonntag = new Date(montag.getTime() + 6 * 86400000);
+      var f = function(d, mitJahr) { return zweistellig(d.getUTCDate()) + '.' + zweistellig(d.getUTCMonth() + 1) + '.' + (mitJahr ? d.getUTCFullYear() : ''); };
+      return f(montag, false) + ' – ' + f(sonntag, true);
+    } catch (e) { return ''; }
+  }
+  function ebenenTitel(name, fenster) {
+    var info = layerLegenden[name];
+    if (!info) return '';
+    if (istFensterEbene(name)) return info.label + ' ' + (info.symbol === 'sum' ? 'Σ' : '⌀') + ' ' + fenster + ' Tage';
+    if (name === 'boden') return info.label + ' (berechnet)';
+    return info.label;
+  }
+  function ebenenTitelPdf(name, fenster) {
+    var info = layerLegenden[name];
+    if (!info) return '';
+    if (istFensterEbene(name)) return info.label + ', ' + (info.symbol === 'sum' ? 'Summe' : 'Mittel') + ' ' + fenster + ' Tage';
+    return ebenenTitel(name, fenster);
+  }
+  function ebenenBereich(name, fenster) {
+    var info = layerLegenden[name];
+    return info.fensterSkaliert ? [info.bereich[0], Math.round(info.bereich[1] * fenster / 7)] : info.bereich;
+  }
+
+  // Karte als Figur: ganze Schweiz ('voll') oder aktueller Ausschnitt
+  function kartenFigur(opt) {
+    var gd = document.querySelector('#datenexplorer-growthmap .js-plotly-plot');
+    var info = GWDatenexplorer.kartenInfo;
+    var xr, yr;
+    // Aktueller Ausschnitt nur, wenn hineingezoomt - sonst die ganze Schweiz
+    // ohne den (auf dem Bildschirm fuer Leerraum genutzten) Rand
+    var gx = gd.layout.xaxis.range, gezoomt = gx && (gx[1] - gx[0]) < (info.xMaxSchweiz - info.xMin) * 0.97;
+    if (opt.ansicht === 'aktuell' && gezoomt) {
+      xr = gx.slice(); yr = gd.layout.yaxis.range.slice();
+    } else {
+      xr = [info.xMin, info.xMaxSchweiz];
+      yr = [info.yMitte - info.ySpanSchweiz * 0.52, info.yMitte + info.ySpanSchweiz * 0.52];
+    }
+    var oben = opt.titel ? 54 : 6, breite = opt.breite || 1400;
+    var hoehe = Math.round((breite - 12) * (yr[1] - yr[0]) * info.scaleratio / (xr[1] - xr[0])) + oben + 6;
+    var layout = Object.assign({}, gd.layout, {
+      width: breite, height: hoehe, images: opt.bilder,
+      title: opt.titel ? { text: opt.titel, x: 0.01, xanchor: 'left', font: { size: 18 } } : { text: '' },
+      margin: { l: 6, r: 6, t: oben, b: 6 }, paper_bgcolor: 'white', font: { family: exportSchrift() },
+      xaxis: Object.assign({}, gd.layout.xaxis, { range: xr, autorange: false }),
+      yaxis: Object.assign({}, gd.layout.yaxis, { range: yr, autorange: false })
+    });
+    return { data: opt.mitSpuren ? gd.data : [], layout: layout, config: { staticPlot: true } };
+  }
+  function kartenBilderFuer(woche, ebenenBild, mitStandorten) {
+    var k = selectedYear + ' ' + woche;
+    var bilder = [kartenbildHintergrund];
+    if (ebenenBild) bilder.push(ebenenBild);
+    if (mitStandorten) {
+      if (afcOn && afcRingBilder[k]) bilder.push(afcRingBilder[k]);
+      if (graswachstumOn && graswachstumBilder[k]) bilder.push(graswachstumBilder[k]);
+    }
+    return bilder;
+  }
+  function aktuelleEbeneBild(woche) {
+    if (hintergrundEbene === 'keine') return Promise.resolve(null);
+    return ladeEbeneP(ebeneDateiSchluessel(hintergrundEbene)).then(function(d) { return (d.bilder || {})[selectedYear + ' ' + woche] || null; });
+  }
+  function kartenTitel(woche) {
+    return 'Graswachstum ' + wocheText(woche) + (hintergrundEbene !== 'keine' ? ' · ' + ebenenTitel(hintergrundEbene, meteoFenster) : '');
+  }
+  // Kurve als Figur: mit Titel, Achsenbeschriftung und Plotly-Legende
+  function kurvenFigur(opt) {
+    var daten = el.data.map(function(t) {
+      var sichtbar = t.visible === true || t.visible === undefined;
+      return Object.assign({}, t, { showlegend: sichtbar && !!t.name });
+    });
+    var shapes = (el.layout.shapes || []).map(function(sh, i) {
+      return (i === 0 && opt.woche) ? Object.assign({}, sh, { x0: opt.woche, x1: opt.woche }) : sh;
+    });
+    var layout = Object.assign({}, el.layout, {
+      width: opt.breite || 1400, height: opt.hoehe || 760, shapes: shapes,
+      title: { text: 'Graswachstumskurve – ' + (input.value || 'Alle Standorte') + ' ' + selectedYear + (opt.woche ? ' (KW ' + opt.woche + ')' : ''), x: 0.01, xanchor: 'left', font: { size: 18 } },
+      margin: { l: 64, r: 64, t: 56, b: 120 }, paper_bgcolor: 'white', font: { family: exportSchrift() },
+      showlegend: true, legend: { orientation: 'h', x: 0, y: -0.2, font: { size: 11 } },
+      xaxis: Object.assign({}, el.layout.xaxis, { title: { text: datumOn ? 'Datum (Montag der Woche)' : 'Kalenderwoche' } })
+    });
+    return { data: daten, layout: layout, config: { staticPlot: true } };
+  }
+  function figurBild(fig, format, faktor) {
+    return Plotly.toImage(fig, { format: format, width: fig.layout.width, height: fig.layout.height, scale: format === 'png' ? (faktor || 1) : 1 });
+  }
+  // Fuer PDFs: PNG auf weissem Grund als JPEG (ein Bruchteil der Groesse)
+  function alsJpeg(pngUrl) {
+    return new Promise(function(ok, fehler) {
+      var img = new Image();
+      img.onload = function() {
+        var c = document.createElement('canvas');
+        c.width = img.naturalWidth; c.height = img.naturalHeight;
+        var ctx = c.getContext('2d');
+        ctx.fillStyle = 'white'; ctx.fillRect(0, 0, c.width, c.height);
+        ctx.drawImage(img, 0, 0);
+        ok(c.toDataURL('image/jpeg', 0.88));
+      };
+      img.onerror = function() { fehler(new Error('Bild konnte nicht umgewandelt werden')); };
+      img.src = pngUrl;
+    });
+  }
+  // Ausfuehrliche Legenden fuer PDFs (Canvas, 4-fache Aufloesung)
+  function afcVerlaufFuer(woche) {
+    var fi = afcFensterJeWoche[selectedYear + ' ' + woche];
+    return fi ? afcVerlaeufe[fi - 1] : null;
+  }
+  function afcRingPng(verlauf) {
+    var f = 4, g = 64, c = document.createElement('canvas');
+    c.width = g * f; c.height = g * f;
+    var ctx = c.getContext('2d');
+    ctx.scale(f, f);
+    var m = g / 2, ra = 20, ri = 13;
+    if (ctx.createConicGradient) {
+      var grad = ctx.createConicGradient(-Math.PI / 2, m, m);
+      verlauf.farben.forEach(function(farbe, i) { grad.addColorStop(i / Math.max(1, verlauf.farben.length - 1), farbe); });
+      ctx.fillStyle = grad;
+    } else ctx.fillStyle = verlauf.farben[Math.floor(verlauf.farben.length / 2)];
+    ctx.beginPath(); ctx.arc(m, m, ra, 0, 2 * Math.PI); ctx.arc(m, m, ri, 0, 2 * Math.PI, true); ctx.fill();
+    var punkt = function(wert, rad) { var a = wert / 1500 * 2 * Math.PI; return [m + rad * Math.sin(a), m - rad * Math.cos(a)]; };
+    ctx.strokeStyle = '#000'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(m, m - ri + 1); ctx.lineTo(m, m - ra - 4); ctx.stroke();
+    [verlauf.low, verlauf.high].forEach(function(w) {
+      var a = punkt(w, ri - 1), b = punkt(w, ra + 3);
+      ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+    });
+    var a0 = verlauf.low / 1500 * 2 * Math.PI - Math.PI / 2, a1 = verlauf.high / 1500 * 2 * Math.PI - Math.PI / 2;
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(m, m, ra + 5, a0, a1); ctx.stroke();
+    [[a0, -1], [a1, 1]].forEach(function(v) {
+      var x = m + (ra + 5) * Math.cos(v[0]), y = m + (ra + 5) * Math.sin(v[0]);
+      var tx = -Math.sin(v[0]) * v[1], ty = Math.cos(v[0]) * v[1];
+      ctx.beginPath(); ctx.moveTo(x + tx * 3, y + ty * 3);
+      ctx.lineTo(x - ty * 1.8, y + tx * 1.8); ctx.lineTo(x + ty * 1.8, y - tx * 1.8); ctx.closePath();
+      ctx.fillStyle = '#000'; ctx.fill();
+    });
+    return c.toDataURL('image/png');
+  }
+  // Legende DGV/Graswachstum ins PDF: Ring mit Beschriftung, Grau-Balken,
+  // erklaerende Texte. Gibt die verbrauchte Hoehe (mm) zurueck.
+  function pdfMessLegende(doc, x, y, breite, woche) {
+    var verlauf = afcVerlaufFuer(woche), h = 0;
+    doc.setTextColor(40);
+    if (afcOn && verlauf) {
+      var d = 26;
+      doc.addImage(afcRingPng(verlauf), 'PNG', x, y, d, d);
+      doc.setFontSize(6.5); doc.setTextColor(70);
+      doc.text('0 / 1500', x + d / 2, y - 0.6, { align: 'center' });
+      var pt = function(w, rad) { var a = w / 1500 * 2 * Math.PI; return [x + d / 2 + rad * Math.sin(a), y + d / 2 - rad * Math.cos(a)]; };
+      [verlauf.low, verlauf.high].forEach(function(w) {
+        var p = pt(w, d * 0.46);
+        doc.text(String(w), p[0], p[1] + 1, { align: p[0] > x + d / 2 + 1 ? 'left' : (p[0] < x + d / 2 - 1 ? 'right' : 'center') });
+      });
+      var tx = x + d + 8, tb = breite - d - 8;
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(30);
+      doc.text('Ring: DGV (Durchschnittlicher Grasvorrat, kg TS/ha)', tx, y + 3);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(7.8); doc.setTextColor(60);
+      var t = doc.splitTextToSize('Der Ring füllt sich im Uhrzeigersinn ab 0 (oben) bis 1500 kg TS/ha. Farbe nach dem Zielbereich der Jahreszeit: rot = deutlich zu wenig (unter 200 kg praktisch leer), grün = im Zielbereich, blaugrün = mehr als nötig. Der Doppelpfeil markiert den Zielbereich dieser Woche: ' + verlauf.low + '–' + verlauf.high + ' kg TS/ha.', tb);
+      doc.text(t, tx, y + 7);
+      h = Math.max(d + 2, 7 + t.length * 3.2);
+    }
+    if (graswachstumOn || afcOn) {
+      var y2 = y + h + (h ? 3 : 0);
+      doc.addImage(farbBalkenPng(['#ffffff', '#757575'], 300, 10), 'PNG', x, y2, 26, 3);
+      doc.setDrawColor(190); doc.rect(x, y2, 26, 3);
+      doc.setFontSize(6.5); doc.setTextColor(70);
+      doc.text('0', x, y2 + 6); doc.text('14 Tage', x + 26, y2 + 6, { align: 'right' });
+      var tx2 = x + 34, tb2 = breite - 34;
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(30);
+      doc.text(graswachstumOn ? 'Kreis: Graswachstum (kg TS/ha/Tag)' : 'Graufärbung: Tage seit Messung', tx2, y2 + 2.5);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(7.8); doc.setTextColor(60);
+      var t2 = doc.splitTextToSize((graswachstumOn ? 'Die Zahl im Kreis ist das zuletzt gemessene Graswachstum. ' : '') + 'Die Graufärbung von Kreis und Ring zeigt die Tage seit der letzten Messung: weiss = am Messtag, dunkelgrau = 14 Tage. Ältere Messungen erscheinen nicht.', tb2);
+      doc.text(t2, tx2, y2 + 6.2);
+      h = (y2 - y) + Math.max(7, 6.2 + t2.length * 3.2);
+    }
+    return h;
+  }
+  // Farbskala einer Ebene mit Titel, Einheit und Zwischenwerten
+  function pdfEbenenLegende(doc, name, fenster, x, y, breite, klein) {
+    var info = layerLegenden[name];
+    if (!info) return 0;
+    var bereich = ebenenBereich(name, fenster), bh = klein ? 2.6 : 3.6;
+    doc.addImage(farbBalkenPng(info.farben, 400, 12), 'PNG', x, y, breite, bh);
+    doc.setDrawColor(190); doc.rect(x, y, breite, bh);
+    doc.setFontSize(klein ? 6.3 : 7.5); doc.setTextColor(70);
+    var schritte = klein ? 2 : 4;
+    for (var i = 0; i <= schritte; i++) {
+      var w = bereich[0] + (bereich[1] - bereich[0]) * i / schritte;
+      var wt = Math.abs(w) >= 100 ? String(Math.round(w)) : String(Math.round(w * 10) / 10);
+      doc.line(x + breite * i / schritte, y + bh, x + breite * i / schritte, y + bh + 1);
+      doc.text(wt + (i === schritte ? ' ' + info.einheit : ''), x + breite * i / schritte, y + bh + (klein ? 3.6 : 4.4), { align: i === 0 ? 'left' : (i === schritte ? 'right' : 'center') });
+    }
+    return bh + (klein ? 4.5 : 6);
+  }
+  function farbBalkenPng(farben, breite, hoehe) {
+    var c = document.createElement('canvas');
+    c.width = breite; c.height = hoehe;
+    var ctx = c.getContext('2d'), g = ctx.createLinearGradient(0, 0, breite, 0);
+    farben.forEach(function(f, i) { g.addColorStop(farben.length > 1 ? i / (farben.length - 1) : 0, f); });
+    ctx.fillStyle = g; ctx.fillRect(0, 0, breite, hoehe);
+    return c.toDataURL('image/png');
+  }
+
+  // --- Aktionen ---
+  function exportBilder(objekte, formate, faktor) {
+    var auftraege = [];
+    var ebeneP = aktuelleEbeneBild(selectedWeek);
+    objekte.forEach(function(obj) {
+      formate.forEach(function(fmt) {
+        auftraege.push(ebeneP.then(function(bild) {
+          var fig = obj === 'karte'
+            ? kartenFigur({ ansicht: 'aktuell', bilder: kartenBilderFuer(selectedWeek, bild, true), titel: kartenTitel(selectedWeek), mitSpuren: true })
+            : kurvenFigur({});
+          return figurBild(fig, fmt, faktor).then(function(url) { return { name: exportName(obj) + '.' + fmt, url: url }; });
+        }));
+      });
+    });
+    return Promise.all(auftraege).then(function(dateien) {
+      if (dateien.length === 1) { herunterladen(dateien[0].url, dateien[0].name); return; }
+      return ladeBibliothek('jszip').then(function() {
+        var zip = new JSZip();
+        dateien.forEach(function(d) { zip.file(d.name, dataUrlInhalt(d.url)); });
+        return zip.generateAsync({ type: 'blob' }).then(function(blob) { herunterladen(blob, exportName('bilder') + '.zip'); });
+      });
+    });
+  }
+  function exportZeitserie(von, bis, objekte, format, fortschritt) {
+    var wochen = [];
+    for (var w = von; w <= bis; w++) wochen.push(w);
+    var ebeneDaten = hintergrundEbene === 'keine' ? Promise.resolve(null) : ladeEbeneP(ebeneDateiSchluessel(hintergrundEbene));
+    return Promise.all([ladeBibliothek('jszip'), ebeneDaten]).then(function(r) {
+      var daten = r[1], zip = new JSZip(), schritt = 0, gesamt = wochen.length * objekte.length;
+      var kette = Promise.resolve();
+      wochen.forEach(function(woche) {
+        objekte.forEach(function(obj) {
+          kette = kette.then(function() {
+            var bild = daten ? (daten.bilder || {})[selectedYear + ' ' + woche] : null;
+            var fig = obj === 'karte'
+              ? kartenFigur({ ansicht: 'voll', bilder: kartenBilderFuer(woche, bild, true), titel: kartenTitel(woche) })
+              : kurvenFigur({ woche: woche });
+            return figurBild(fig, format, 1).then(function(url) {
+              zip.file(exportName(obj, woche) + '.' + format, dataUrlInhalt(url));
+              fortschritt(++schritt, gesamt);
+            });
+          });
+        });
+      });
+      return kette.then(function() { return zip.generateAsync({ type: 'blob' }); }).then(function(blob) {
+        herunterladen(blob, 'graswachstum_' + selectedYear + '_KW' + zweistellig(von) + '-KW' + zweistellig(bis) + '.zip');
+      });
+    });
+  }
+  function pdfKopf(doc, titel, unter) {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.setTextColor(30);
+    doc.text(titel, 12, 16);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(100);
+    doc.text(unter, 12, 22);
+    doc.setDrawColor(210); doc.line(12, 25, 198, 25);
+  }
+  function pdfFuss(doc, quellen) {
+    doc.setFontSize(7); doc.setTextColor(120);
+    var zeilen = doc.splitTextToSize(quellen, 186);
+    doc.text(zeilen, 12, 297 - 6 - (zeilen.length - 1) * 3);
+  }
+  function heuteText() { var d = new Date(); return zweistellig(d.getDate()) + '.' + zweistellig(d.getMonth() + 1) + '.' + d.getFullYear(); }
+  function exportPdfBericht(fortschritt) {
+    return Promise.all([ladeBibliothek('jspdf'), aktuelleEbeneBild(selectedWeek)]).then(function(r) {
+      var doc = new window.jspdf.jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+      pdfKopf(doc, 'Graswachstum ' + wocheText(selectedWeek), 'Bericht aus dem Datenexplorer · erstellt am ' + heuteText() + ' · graswachstum.ch');
+      var kf = kartenFigur({ ansicht: 'aktuell', bilder: kartenBilderFuer(selectedWeek, r[1], true), breite: 1500, mitSpuren: true });
+      return figurBild(kf, 'png', 1).then(alsJpeg).then(function(kUrl) {
+        fortschritt(1, 3);
+        var y = 29, b = 186, kH = Math.min(118, b * kf.layout.height / kf.layout.width), kB = kH * kf.layout.width / kf.layout.height;
+        doc.addImage(kUrl, 'JPEG', 12 + (b - kB) / 2, y, kB, kH);
+        y += kH + 4;
+        var info = layerLegenden[hintergrundEbene];
+        if (info) {
+          doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(30);
+          doc.text('Hintergrund: ' + ebenenTitelPdf(hintergrundEbene, meteoFenster), 12, y + 3);
+          y += 5;
+          y += pdfEbenenLegende(doc, hintergrundEbene, meteoFenster, 12, y, 110, false) + 2;
+        }
+        y += pdfMessLegende(doc, 12, y + 3, 186, selectedWeek) + 3;
+        var cf = kurvenFigur({ breite: 1500, hoehe: Math.max(520, Math.round(1500 * (297 - 22 - y) / 186)) });
+        return figurBild(cf, 'png', 1).then(alsJpeg).then(function(cUrl) {
+          fortschritt(2, 3);
+          y += 3;
+          if (y > 297 - 80) { doc.addPage(); y = 14; }
+          var cH = Math.min(297 - 16 - y, b * cf.layout.height / cf.layout.width), cB = cH * cf.layout.width / cf.layout.height;
+          doc.addImage(cUrl, 'JPEG', 12 + (b - cB) / 2, y, cB, cH);
+          pdfFuss(doc, 'Quellen: Messnetz Graswachstum der AGFF (graswachstum.ch)' + (info ? '; ' + info.quelle : '') + '. Erstellt mit dem Datenexplorer Graswachstum.');
+          doc.save(exportName('bericht') + '.pdf');
+          fortschritt(3, 3);
+        });
+      });
+    });
+  }
+  var PDF_EBENEN = ['niederschlag', 'temperatur', 'bodentemperatur', 'sonnenschein', 'et0', 'gdd', 'boden'];
+  function exportPdfEbenen(mitStandorten, fortschritt) {
+    var zellen = [{ name: 'keine', titel: 'Graswachstum und DGV' }].concat(PDF_EBENEN.filter(function(n) { return layerLegenden[n]; }).map(function(n) {
+      var fenster = istFensterEbene(n) ? meteoFensterStandard[n] : null;
+      return { name: n, fenster: fenster, schluessel: fenster ? n + '_' + fenster : n, titel: ebenenTitelPdf(n, fenster) };
+    }));
+    return ladeBibliothek('jspdf').then(function() {
+      var doc = new window.jspdf.jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+      pdfKopf(doc, 'Wetter-Ebenen ' + wocheText(selectedWeek), 'Stichtag jeweils Montag der Woche · erstellt am ' + heuteText() + ' · graswachstum.ch');
+      var spalten = 2, zellB = 91, zellH = 50, x0 = 12, y0 = 29, abstand = 4;
+      var kette = Promise.resolve(), schritt = 0;
+      zellen.forEach(function(z, i) {
+        kette = kette.then(function() {
+          var daten = z.name === 'keine' ? Promise.resolve(null) : ladeEbeneP(z.schluessel).catch(function() { return null; });
+          return daten.then(function(d) {
+            var k = selectedYear + ' ' + selectedWeek;
+            var bild = d ? (d.bilder || {})[k] : null;
+            var stand = d && d.werte && d.werte[k] && d.werte[k].bis ? 'Stand ' + d.werte[k].bis : '';
+            var fig = kartenFigur({ ansicht: 'voll', bilder: kartenBilderFuer(selectedWeek, bild, mitStandorten || z.name === 'keine'), breite: 900 });
+            return figurBild(fig, 'png', 1).then(alsJpeg).then(function(url) {
+              var x = x0 + (i % spalten) * (zellB + abstand), y = y0 + Math.floor(i / spalten) * zellH;
+              doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(30);
+              doc.text(z.titel, x, y + 3);
+              doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(110);
+              if (stand) doc.text(stand, x + zellB, y + 3, { align: 'right' });
+              var mH = Math.min(zellH - 14, zellB * fig.layout.height / fig.layout.width), mB = mH * fig.layout.width / fig.layout.height;
+              doc.addImage(url, 'JPEG', x + (zellB - mB) / 2, y + 5, mB, mH);
+              var info = layerLegenden[z.name];
+              if (info && bild) {
+                pdfEbenenLegende(doc, z.name, z.fenster || 7, x + 8, y + mH + 6.5, zellB - 16, true);
+              } else if (info) {
+                doc.setFontSize(7); doc.setTextColor(150);
+                doc.text('keine Daten für diese Woche', x + zellB / 2, y + mH + 10, { align: 'center' });
+              } else {
+                doc.setFontSize(6.5); doc.setTextColor(80);
+                doc.text('Kreis: Graswachstum kg TS/ha/Tag · Ring: DGV kg TS/ha (Legende unten)', x + zellB / 2, y + mH + 10, { align: 'center' });
+              }
+              fortschritt(++schritt, zellen.length);
+            });
+          });
+        });
+      });
+      return kette.then(function() {
+        var yL = y0 + Math.ceil(zellen.length / spalten) * zellH + 6;
+        if (yL > 297 - 58) { doc.addPage(); yL = 16; }
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(30);
+        doc.text('Legende Messstandorte', 12, yL);
+        doc.setFont('helvetica', 'normal');
+        pdfMessLegende(doc, 12, yL + 5, 186, selectedWeek);
+        pdfFuss(doc, 'Quellen: Messnetz Graswachstum der AGFF (graswachstum.ch); MeteoSchweiz Open Data, 1-km-Gitterdaten (RhiresD/RprelimD Niederschlag, TabsD Temperatur, SrelD Sonnenschein). Bodentemperatur (Schätzung), Verdunstung ET0 (Hargreaves), Wachstumsgradtage (Basis 5 °C) und Bodenwasserbilanz sind daraus berechnet.');
+        doc.save(exportName('wetter-ebenen') + '.pdf');
+      });
+    });
+  }
+
+  // --- Seitenleiste ---
+  var exportEl = null, exportStatusEl = null, exportOpener = null;
+  function exportFeld(tag, klasse, text) { var e = document.createElement(tag); if (klasse) e.className = klasse; if (text !== undefined) e.textContent = text; return e; }
+  function exportWahl(typ, name, wert, text, an) {
+    var l = exportFeld('label', 'gw-export-wahl');
+    var i = document.createElement('input'); i.type = typ; i.name = name; i.value = wert; i.checked = !!an;
+    l.appendChild(i); l.appendChild(document.createTextNode(' ' + text));
+    return l;
+  }
+  function gewaehlt(name) {
+    return Array.prototype.slice.call(exportEl.querySelectorAll('input[name=' + name + ']:checked')).map(function(i) { return i.value; });
+  }
+  function exportStatus(text, fehler) {
+    exportStatusEl.textContent = text || '';
+    exportStatusEl.classList.toggle('fehler', !!fehler);
+  }
+  function exportAusfuehren(knopf, arbeit) {
+    if (knopf.disabled) return;
+    var alle = exportEl.querySelectorAll('.gw-export-los');
+    Array.prototype.forEach.call(alle, function(k) { k.disabled = true; });
+    exportStatus('Wird erstellt …');
+    var fortschritt = function(n, gesamt) { exportStatus('Wird erstellt … ' + n + ' von ' + gesamt); };
+    Promise.resolve().then(function() { return arbeit(fortschritt); }).then(function() {
+      exportStatus('Fertig – die Datei wird heruntergeladen.');
+    }).catch(function(err) {
+      console.error('Export:', err);
+      exportStatus('Das hat nicht geklappt: ' + (err && err.message ? err.message : err), true);
+    }).then(function() {
+      Array.prototype.forEach.call(alle, function(k) { k.disabled = false; });
+    });
+  }
+  function baueExport() {
+    if (exportEl) return;
+    exportEl = exportFeld('aside', 'gw-export');
+    exportEl.setAttribute('aria-label', 'Exportieren');
+    exportEl.addEventListener('click', function(evt) { evt.stopPropagation(); });
+    exportEl.addEventListener('keydown', function(evt) { if (evt.key === 'Escape') { evt.stopPropagation(); schliesseExport(); } });
+    var kopf = exportFeld('div', 'gw-export-kopf');
+    kopf.appendChild(exportFeld('h2', 'gw-export-h', 'Exportieren'));
+    var zu = exportFeld('button', 'gw-doku-zu', String.fromCharCode(215));
+    zu.type = 'button'; zu.setAttribute('aria-label', 'Export schliessen');
+    zu.addEventListener('click', schliesseExport);
+    kopf.appendChild(zu);
+    exportEl.appendChild(kopf);
+    var rumpf = exportFeld('div', 'gw-export-rumpf');
+    exportEl.appendChild(rumpf);
+    var abschnitt = function(titel, text) {
+      var a = exportFeld('section', 'gw-export-abschnitt');
+      a.appendChild(exportFeld('h3', 'gw-export-titel', titel));
+      if (text) a.appendChild(exportFeld('p', 'gw-export-text', text));
+      rumpf.appendChild(a);
+      return a;
+    };
+    var zeile = function(eltern, kinder, beschriftung) {
+      var z = exportFeld('div', 'gw-export-zeile');
+      if (beschriftung) z.appendChild(exportFeld('span', 'gw-export-beschr', beschriftung));
+      kinder.forEach(function(k) { z.appendChild(k); });
+      eltern.appendChild(z);
+      return z;
+    };
+    var losKnopf = function(eltern, text, arbeit) {
+      var b = exportFeld('button', 'gw-export-los', text);
+      b.type = 'button';
+      b.addEventListener('click', function() { exportAusfuehren(b, arbeit); });
+      eltern.appendChild(b);
+      return b;
+    };
+    // 1. Einzelbilder
+    var a1 = abschnitt('Bilder', 'Karte und Kurve der aktuellen Ansicht. Mehrere Dateien kommen als ZIP.');
+    zeile(a1, [exportWahl('checkbox', 'gw-ex-obj', 'karte', 'Karte', true), exportWahl('checkbox', 'gw-ex-obj', 'kurve', 'Kurve', true)], 'Objekte');
+    zeile(a1, [exportWahl('checkbox', 'gw-ex-fmt', 'png', 'PNG', true), exportWahl('checkbox', 'gw-ex-fmt', 'svg', 'SVG', false)], 'Format');
+    zeile(a1, [exportWahl('radio', 'gw-ex-gr', '1', 'Bildschirm', true), exportWahl('radio', 'gw-ex-gr', '2', 'Druck (2×)', false)], 'PNG-Grösse');
+    losKnopf(a1, 'Bilder herunterladen', function() {
+      var obj = gewaehlt('gw-ex-obj'), fmt = gewaehlt('gw-ex-fmt');
+      if (!obj.length || !fmt.length) throw new Error('Bitte mindestens ein Objekt und ein Format wählen.');
+      return exportBilder(obj, fmt, parseInt(gewaehlt('gw-ex-gr')[0] || '1', 10));
+    });
+    // 2. Zeitserie
+    var a2 = abschnitt('Zeitserie (ZIP)', 'Ein Bild je Kalenderwoche im gewählten Jahr, mit der aktiven Ebene.');
+    var von = document.createElement('input'), bis = document.createElement('input');
+    [von, bis].forEach(function(f) { f.type = 'number'; f.min = '1'; f.max = '53'; f.step = '1'; f.className = 'gw-export-zahl'; });
+    von.setAttribute('aria-label', 'von Kalenderwoche'); bis.setAttribute('aria-label', 'bis Kalenderwoche');
+    exportEl.vonEl = von; exportEl.bisEl = bis;
+    zeile(a2, [exportFeld('span', '', 'KW'), von, exportFeld('span', '', 'bis KW'), bis], 'Wochen');
+    zeile(a2, [exportWahl('checkbox', 'gw-ex-zs-obj', 'karte', 'Karte', true), exportWahl('checkbox', 'gw-ex-zs-obj', 'kurve', 'Kurve', false)], 'Objekte');
+    zeile(a2, [exportWahl('radio', 'gw-ex-zs-fmt', 'png', 'PNG', true), exportWahl('radio', 'gw-ex-zs-fmt', 'svg', 'SVG', false)], 'Format');
+    losKnopf(a2, 'ZIP erstellen', function(fortschritt) {
+      var v = parseInt(von.value, 10), b = parseInt(bis.value, 10), maxW = maxWocheFuerJahr(selectedYear);
+      if (!(v >= 1) || !(b >= v)) throw new Error('Bitte gültige Wochen wählen (von ≤ bis).');
+      b = Math.min(b, maxW);
+      var obj = gewaehlt('gw-ex-zs-obj');
+      if (!obj.length) throw new Error('Bitte mindestens ein Objekt wählen.');
+      return exportZeitserie(v, b, obj, gewaehlt('gw-ex-zs-fmt')[0] || 'png', fortschritt);
+    });
+    // 3. PDF-Bericht
+    var a3 = abschnitt('PDF-Bericht', 'Karte, Legende und Kurve der aktuellen Ansicht auf einer A4-Seite.');
+    losKnopf(a3, 'PDF-Bericht erstellen', function(fortschritt) { return exportPdfBericht(fortschritt); });
+    // 4. PDF Wetter-Ebenen
+    var a4 = abschnitt('PDF Wetter-Ebenen', 'Alle Wetter-Ebenen der gewählten Woche als kleine Karten (etwa A7) auf einer A4-Seite.');
+    zeile(a4, [exportWahl('checkbox', 'gw-ex-ws', 'ja', 'Messstandorte einzeichnen', false)]);
+    losKnopf(a4, 'PDF erstellen', function(fortschritt) { return exportPdfEbenen(gewaehlt('gw-ex-ws').length > 0, fortschritt); });
+    exportStatusEl = exportFeld('p', 'gw-export-status');
+    exportStatusEl.setAttribute('role', 'status');
+    exportStatusEl.setAttribute('aria-live', 'polite');
+    exportEl.appendChild(exportStatusEl);
+    document.body.appendChild(exportEl);
+  }
+  function oeffneExport(opener) {
+    baueExport();
+    exportOpener = opener || null;
+    var erste = 1;
+    Object.keys(graswachstumBilder).forEach(function(k) {
+      var t = k.split(' ');
+      if (t[0] === String(selectedYear)) { var w = parseInt(t[1], 10); if (erste === 1 || w < erste) erste = w; }
+    });
+    exportEl.vonEl.value = String(erste);
+    exportEl.bisEl.value = String(selectedWeek);
+    exportStatus('');
+    exportEl.classList.add('offen');
+    document.documentElement.classList.add('gw-export-offen');
+    setTimeout(function() { var f = exportEl.querySelector('.gw-doku-zu'); if (f) f.focus(); }, 0);
+  }
+  function schliesseExport() {
+    if (!exportEl) return;
+    exportEl.classList.remove('offen');
+    document.documentElement.classList.remove('gw-export-offen');
+    if (exportOpener && exportOpener.focus) exportOpener.focus();
+  }
+  function istExportOffen() { return !!(exportEl && exportEl.classList.contains('offen')); }
 
   bestimmeAppModus();
   applyState();
