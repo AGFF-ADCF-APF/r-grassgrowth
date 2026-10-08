@@ -35,7 +35,7 @@ GWDatenexplorer.karte = function(el, x, d) {
   // den ihr das Raster laesst, statt einer festen Hoehe.
   function istAppLayout() {
     var s = document.getElementById('gw-seite');
-    return !!(s && s.classList.contains('gw-app'));
+    return !!(s && (s.classList.contains('gw-app') || s.classList.contains('gw-mobil-app')));
   }
   function vollAnsichtBerechnen(breite, hoehe) {
     // Mobile und App-Layout: kein Plotly-Titel (Kopfzeile ist HTML), Rand
@@ -799,6 +799,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     vollbild: ['M16 4l4 0l0 4', 'M14 10l6 -6', 'M8 20l-4 0l0 -4', 'M4 20l6 -6', 'M16 20l4 0l0 -4', 'M14 14l6 6', 'M8 4l-4 0l0 4', 'M4 4l6 6'],
     verkleinern: ['M5 9l4 0l0 -4', 'M3 3l6 6', 'M5 15l4 0l0 4', 'M3 21l6 -6', 'M19 9l-4 0l0 -4', 'M15 9l6 -6', 'M19 15l-4 0l0 4', 'M15 15l6 6'],
     hoch: ['M6 15l6 -6l6 6'],
+    hilfe: ['M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0', 'M12 17l0 .01', 'M12 13.5a1.5 1.5 0 0 1 1 -1.5a2.6 2.6 0 1 0 -3 -4'],
     runter: ['M6 9l6 6l6 -6'],
     zurueck: ['M5 12l14 0', 'M5 12l6 6', 'M5 12l6 -6'],
     drehen: ['M10 3h4a1 1 0 0 1 1 1v16a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1v-16a1 1 0 0 1 1 -1z', 'M17 7a4 4 0 0 1 4 4', 'M19 9l2 2l2 -2'],
@@ -819,6 +820,430 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     knopf.appendChild(gwIcon(icon));
     var sp = document.createElement('span'); sp.textContent = text; knopf.appendChild(sp);
     knopf.setAttribute('aria-label', text);
+  }
+
+  // ---------- Hilfe und Dokumentation ----------
+  // Ein Fenster fuer alle Erklaerungen: Menue, Suche (Tippfehler, Umlaute,
+  // Wortteile, Synonyme) und je Thema Text plus Kopie des zugehoerigen
+  // Legendenelements. Die i-Knoepfe oeffnen es beim passenden Thema.
+  var dokuExperimentell = new URLSearchParams(window.location.search).has('experimentell');
+  var DOKU_GRUPPEN = ['Erste Schritte', 'Messnetz', 'Wetter-Ebenen', 'Berechnete Ebenen', 'Daten und Quellen', 'Weitere'];
+  var doku = [];
+  function dokuQuelle(schluessel) {
+    return function() { return (layerLegenden[schluessel] && layerLegenden[schluessel].quelle) ? 'Quelle: ' + layerLegenden[schluessel].quelle : ''; };
+  }
+  function dokuEl(tag, klasse, text) {
+    var e = document.createElement(tag);
+    if (klasse) e.className = klasse;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+  function dokuLinien(eintraege) {
+    var box = dokuEl('div', 'gw-doku-linien');
+    eintraege.forEach(function(e) {
+      var z = dokuEl('span', 'gw-doku-linie');
+      var sw = dokuEl('span', 'gw-legend-swatch');
+      if (e[2] === 'balken') { sw.style.borderTopWidth = '8px'; sw.style.width = '10px'; sw.style.borderTopColor = e[1]; }
+      else { sw.style.borderTopColor = e[1]; sw.style.borderTopStyle = e[2]; }
+      z.appendChild(sw); z.appendChild(document.createTextNode(e[0]));
+      box.appendChild(z);
+    });
+    return box;
+  }
+  function dokuKlon(knoten) {
+    if (!knoten || !knoten.childNodes.length) return null;
+    var c = knoten.cloneNode(true);
+    c.style.display = '';
+    c.classList.remove('gw-afc-legende-box');
+    return c;
+  }
+  function dokuFarbskala(schluessel) {
+    return function() {
+      var info = layerLegenden[schluessel];
+      if (!info) return null;
+      if (hintergrundEbene === schluessel && layerLegendeBox && layerLegendeBox.childNodes.length) return dokuKlon(layerLegendeBox);
+      var box = dokuEl('div', 'gw-layer-legende');
+      var wrap = dokuEl('div', 'gw-layer-legende-balken-wrap');
+      var b = dokuEl('div', 'gw-layer-legende-balken');
+      b.style.background = 'linear-gradient(to right,' + info.farben.join(',') + ')';
+      wrap.appendChild(b);
+      var skala = dokuEl('div', 'gw-layer-legende-skala');
+      skala.appendChild(dokuEl('span', '', String(info.bereich[0])));
+      skala.appendChild(dokuEl('span', '', info.bereich[1] + ' ' + info.einheit));
+      box.appendChild(wrap); box.appendChild(skala);
+      return box;
+    };
+  }
+  function dokuEintrag(e) { e.alias = e.alias || []; doku.push(e); return e; }
+
+  dokuEintrag({ id: 'ueberblick', gruppe: 'Erste Schritte', titel: 'Über den Datenexplorer',
+    stichworte: 'start einstieg hilfe anleitung graswachstum.ch agff',
+    text: ['Der Datenexplorer zeigt die Graswachstumsmessungen des AGFF-Messnetzes Woche für Woche: auf der Karte als Zahl im Kreis je Standort, darunter als Wachstumskurve über die Saison. Ältere Jahre lassen sich zum Vergleich wählen.',
+      'Als Hintergrund der Karte können Wetter- und Bodendaten von MeteoSchweiz eingeblendet werden, z. B. Niederschlag, Temperatur oder die berechnete Bodenwasserbilanz. Die Daten werden jede Nacht aktualisiert.',
+      'Im Menü links finden Sie alle Themen, oben die Suche. Die kleinen i-Knöpfe neben den Ebenen öffnen dieses Fenster direkt beim passenden Thema.'] });
+  dokuEintrag({ id: 'karte', gruppe: 'Erste Schritte', titel: 'Karte bedienen',
+    stichworte: 'zoom vergroessern verschieben standort antippen klicken plz ort suche fadenkreuz wert cursor standortblatt',
+    text: ['Vergrössern mit dem Mausrad oder mit zwei Fingern, verschieben durch Ziehen. Über die ganze Schweiz hinaus lässt sich nicht verkleinern; das Haus-Symbol der Werkzeugleiste zeigt wieder die ganze Schweiz.',
+      'Ein Klick auf einen Standort öffnet das Standortblatt mit dem letzten Messwert, dem DGV, dem Zielbereich der Woche und einer kleinen Saisonkurve. Von dort führt «Ganze Graswachstumskurve anzeigen» zur grossen Kurve dieses Standorts.',
+      'Das Feld «PLZ oder Ort suchen» bei den Ebenen setzt ein Fadenkreuz auf den Ort. Ist eine Hintergrund-Ebene aktiv, zeigt der Datenexplorer deren Wert an dieser Stelle (auf dem Desktop auch laufend unter dem Mauszeiger).'] });
+  dokuEintrag({ id: 'zeitleiste', gruppe: 'Erste Schritte', titel: 'Zeitleiste und Abspielen',
+    alias: ['Zeitleiste'], stichworte: 'kalenderwoche kw woche schieberegler heute pfeile play abspielen animation zukunft',
+    text: ['Die Zeitleiste wählt die Kalenderwoche für Karte und Kurve: mit dem Schieberegler, den Pfeilen (eine Woche zurück oder vor) oder «Heute» für die aktuelle Woche. Der grau hinterlegte Teil liegt in der Zukunft.',
+      'Der Abspielen-Knopf zeigt Woche für Woche bis zur letzten verfügbaren Woche. Steht der Regler schon am Ende, beginnt er bei der ersten Woche mit Messungen. Jede andere Bedienung der Zeitleiste hält das Abspielen an.',
+      'In der Wachstumskurve wählt auch ein Klick auf die Achse unter der Grafik die Woche.'] });
+  dokuEintrag({ id: 'kurve', gruppe: 'Erste Schritte', titel: 'Wachstumskurve',
+    alias: ['Wachstumskurve', 'Graswachstumskurve'], stichworte: 'kurve linie mittel durchschnitt mittelland vorjahr niederschlag balken gruppe region hoehenlage jahr legende',
+    legende: function() { return dokuLinien([['Standort (je eigene Farbe)', '#1D9E75', 'solid'], ['Mittleres Wachstum der Auswahl', 'black', 'dashed'], ['Durchschnitt Mittelland, langjährig', 'red', 'dotted'], ['Vorjahr zum Vergleich', 'rgba(140,140,140,0.9)', 'solid'], ['Niederschlag pro Woche', 'steelblue', 'balken']]); },
+    text: ['Die Kurve zeigt das gemessene Graswachstum in kg TS/ha/Tag über die Saison. Oben links wählen Sie eine Gruppe (alle Standorte, eine Region West/Mitte/Ost oder eine Höhenlage) oder tippen einen Standort ins Suchfeld, daneben das Jahr.',
+      'Rechts steht die Legende. Ein Klick auf einen Standort zeigt nur noch diesen. Die Schalter darüber blenden Niederschlag (Balken, mm pro Woche) und die Kurven des Vorjahres ein, oder stellen die Achse von Kalenderwochen auf Datum um.',
+      'Beim Start erscheinen nur Standorte, die regelmässig messen (siehe dort). Die übrigen lassen sich in der Legende dazuschalten.'] });
+  dokuEintrag({ id: 'regelmaessig', gruppe: 'Erste Schritte', titel: 'Regelmässig messende Standorte',
+    stichworte: 'startansicht filter weitere selten gemessen standorte acht wochen',
+    text: ['Damit die Kurve beim Start übersichtlich bleibt, zeigt sie in der Gruppenansicht nur Standorte mit mindestens 8 Kalenderwochen mit Messung im gewählten Jahr. Das Mittel der Gruppe (schwarz gestrichelt) wird weiterhin aus allen Standorten berechnet.',
+      'In der Legende blendet «+ … weitere (selten gemessen)» die übrigen Standorte mit Daten im Jahr ein, «Nur regelmässig messende Standorte» blendet sie wieder aus.'] });
+  dokuEintrag({ id: 'ansicht', gruppe: 'Erste Schritte', titel: 'Ansicht anpassen (Desktop)',
+    alias: ['Grösse von Karte und Kurve verschieben'], stichworte: 'griff ziehen schieben pfeile gross klein vollbild ebenen einklappen layout tastatur',
+    text: ['Zwischen Karte und Kurve liegt ein Griff: Ziehen verschiebt die Grenze, der Pfeil nach oben macht die Kurve ganz gross, der Pfeil nach unten die Karte. Ein Doppelklick auf den Griff stellt die Standardgrösse wieder her. Mit der Tastatur: Griff anwählen, dann Pfeiltasten, Pos1 oder Ende.',
+      'Die Icon-Leiste links blendet die Ebenen und die Kurve ein und aus. Auf der Website vergrössert «Vollbild» den Datenexplorer auf den ganzen Bildschirm; Escape oder der Knopf beenden das Vollbild.'] });
+  dokuEintrag({ id: 'handy', gruppe: 'Erste Schritte', titel: 'Auf dem Handy',
+    stichworte: 'mobile smartphone teaser detail querformat quer drehen zurueck geste regionen',
+    legende: function() { return dokuLinien([['Region West', '#378ADD', 'solid'], ['Region Mitte', '#1D9E75', 'solid'], ['Region Ost', '#BA7517', 'solid'], ['Langjähriges Mittel', '#E24B4A', 'dotted']]); },
+    text: ['Unter der Zeitleiste zeigt eine flache Kurve das Wachstum der drei Regionen, über drei Wochen geglättet, und das langjährige Mittel. Antippen, «Alle Kurven» oder «Standort wählen …» öffnet die grosse Kurve als eigene Ansicht; die Zurück-Geste des Handys schliesst sie wieder.',
+      'Im Hochformat blinkt «Quer ansehen». Wo das Handy es erlaubt, dreht der Knopf die Ansicht; sonst bitte das Handy quer halten. Bei eingeschalteter automatischer Drehung erscheint die Grafik im Querformat über den ganzen Bildschirm.'] });
+
+  dokuEintrag({ id: 'graswachstum', gruppe: 'Messnetz', titel: 'Graswachstum',
+    alias: ['Graswachstum (kg TS/ha/Tag)'], stichworte: 'zuwachs wachstum kreis zahl messung kg ts ha tag',
+    legende: function() { return dokuKlon(tageSeitMessungBox); },
+    text: ['Die Zahl im Kreis zeigt das zuletzt gemessene Graswachstum in kg TS/ha/Tag, also den Zuwachs an Trockensubstanz pro Hektare und Tag.',
+      'Die Graufärbung des Kreises zeigt, wie lange die Messung zurückliegt: weiss = frisch gemessen, dunkelgrau = bis 14 Tage alt. Standorte ohne Messung in den letzten 14 Tagen erscheinen nicht.'] });
+  dokuEintrag({ id: 'dgv', gruppe: 'Messnetz', titel: 'DGV (Grasvorrat)',
+    alias: ['DGV (kg TS/ha)', 'DGV'], stichworte: 'afc average farm cover grasvorrat vorrat ring zielbereich weide futter',
+    legende: function() {
+      var k = dokuKlon(afcLegendeBox);
+      if (!k) return null;
+      var box = dokuEl('div', 'gw-doku-dgv');
+      box.appendChild(k);
+      box.appendChild(dokuEl('p', 'gw-doku-legende-text', 'Oben liegen 0 und 1500 kg TS/ha (Strich), der Ring füllt sich im Uhrzeigersinn. Der Doppelpfeil zeigt den Zielbereich der gewählten Woche: ' +
+        afcLegendeBox.dataset.zielLow + '–' + afcLegendeBox.dataset.zielHigh + ' kg TS/ha (die beiden Zahlen am Ring).'));
+      return box;
+    },
+    text: ['DGV (Durchschnittlicher GrasVorrat, international AFC = Average Farm Cover) schätzt den aktuellen Grasvorrat des Betriebs in kg Trockensubstanz pro Hektare.',
+      'Der Ring zeigt den Vorrat auf einer Skala von 0 bis 1500 kg TS/ha und färbt ihn nach dem Zielbereich der Jahreszeit: rot = deutlich zu wenig (unter 200 kg praktisch leer), grün = im Zielbereich, blaugrün = deutlich mehr als nötig. Der Doppelpfeil markiert den Zielbereich der gewählten Woche.',
+      'Der Zielbereich verschiebt sich übers Jahr, etwa Frühling 500–700, Sommer 700–800, Herbst 900–1200 kg TS/ha.'] });
+  dokuEintrag({ id: 'tage', gruppe: 'Messnetz', titel: 'Tage seit Messung',
+    alias: ['Tage seit Messung (Graswachstum/DGV)'], stichworte: 'alter grau graufaerbung aktualitaet frisch',
+    legende: function() { return dokuKlon(tageSeitMessungBox); },
+    text: ['Kreis und Ring der Standorte werden umso dunkler, je älter die letzte Messung ist: weiss am Messtag, dunkelgrau nach 14 Tagen. Danach verschwindet der Standort von der Karte, bis wieder eine Messung eintrifft.'] });
+  dokuEintrag({ id: 'stationen', gruppe: 'Messnetz', titel: 'MeteoSchweiz-Stationen',
+    alias: ['MeteoSchweiz-Stationen'], stichworte: 'swissmetnet station wetterstation diamant temperatur bodentemperatur niederschlag strahlung sonnenschein tageswerte',
+    text: ['Zeigt die öffentlichen Automatikstationen von MeteoSchweiz (SwissMetNet) mit ihren neuesten Tageswerten: Luft- und Bodentemperatur, Niederschlag, Globalstrahlung und Sonnenscheindauer.',
+      'Die Stationen sind eine reine Wetter-Referenz, unabhängig von der gewählten Woche und nicht Teil der AGFF-Messungen. Bodentemperatur messen nur ein Teil der rund 150 Stationen.'] });
+
+  dokuEintrag({ id: 'zeitraum', gruppe: 'Wetter-Ebenen', titel: 'Zeitraum der Wetter-Ebenen',
+    alias: ['Zeitraum'], stichworte: 'fenster tage schieberegler summe mittel stichtag',
+    text: ['Bei Niederschlag, Temperatur, Bodentemperatur, Sonnenschein und Verdunstung bestimmt der Schieberegler «Zeitraum», über wie viele Tage vor dem Stichtag summiert oder gemittelt wird (z. B. 7 oder 28 Tage). Stichtag ist jeweils der Montag der gewählten Woche.'] });
+  dokuEintrag({ id: 'niederschlag', gruppe: 'Wetter-Ebenen', titel: 'Niederschlagssumme',
+    alias: ['Niederschlagssumme'], stichworte: 'regen regenmenge niederschlag mm nass rhiresd',
+    legende: dokuFarbskala('niederschlag'), quelle: dokuQuelle('niederschlag'),
+    text: ['Summe des Niederschlags im gewählten Zeitraum vor dem Stichtag, als flächendeckendes Raster von MeteoSchweiz. Zusammen mit Verdunstung und Bodenwasserbilanz zeigt sie, ob das Wachstum durch Wassermangel gebremst sein könnte.'] });
+  dokuEintrag({ id: 'temperatur', gruppe: 'Wetter-Ebenen', titel: 'Temperatur 2m',
+    alias: ['Temperatur 2m'], stichworte: 'lufttemperatur waerme hitze kaelte grad basistemperatur tabsd',
+    legende: dokuFarbskala('temperatur'), quelle: dokuQuelle('temperatur'),
+    text: ['Mittlere Lufttemperatur (2 m über Boden) im gewählten Zeitraum vor dem Stichtag.',
+      'Gras wächst erst ab etwa 5 °C spürbar, das Optimum liegt bei etwa 15–20 °C. Über etwa 25 °C bremst Hitzestress das Wachstum auch bei genügend Wasser.'] });
+  dokuEintrag({ id: 'bodentemperatur', gruppe: 'Wetter-Ebenen', titel: 'Bodentemperatur (Schätzung)',
+    alias: ['Bodentemperatur'], stichworte: 'boden temperatur schaetzung vegetationsbeginn mineralisierung stickstoff',
+    legende: dokuFarbskala('bodentemperatur'), quelle: dokuQuelle('bodentemperatur'),
+    text: ['Achtung, Schätzung und keine Messung: MeteoSchweiz misst die Bodentemperatur nur an einzelnen Stationen. Gezeigt wird deshalb das gleitende Mittel der Lufttemperatur im gewählten Zeitraum, als grobe Näherung an die trägere oberste Bodenschicht (etwa 5–10 cm). Ein längerer Zeitraum entspricht einer stärkeren Dämpfung.',
+      'Die Bodentemperatur ist wichtig für den Vegetationsbeginn im Frühling und die Stickstoff-Mineralisierung; beides kommt unter etwa 5–8 °C weitgehend zum Erliegen.'] });
+  dokuEintrag({ id: 'sonnenschein', gruppe: 'Wetter-Ebenen', titel: 'Sonnenscheindauer',
+    alias: ['Sonnenscheindauer'], stichworte: 'sonne strahlung licht photosynthese srel',
+    legende: dokuFarbskala('sonnenschein'), quelle: dokuQuelle('sonnenschein'),
+    text: ['Sonnenscheindauer im gewählten Zeitraum, relativ zur astronomisch möglichen Dauer (0–100 %). Mehr Sonne treibt die Photosynthese an, erhöht aber auch die Verdunstung.',
+      'MeteoSchweiz bereitet diese Daten mit ein bis zwei Monaten Verzögerung auf; die neuesten Wochen fehlen deshalb oft noch.'] });
+  dokuEintrag({ id: 'et0', gruppe: 'Wetter-Ebenen', titel: 'Verdunstung ET0',
+    alias: ['Verdunstung ET0'], stichworte: 'verdunstung evapotranspiration hargreaves trockenstress wasserverbrauch',
+    legende: dokuFarbskala('et0'), quelle: dokuQuelle('et0'),
+    text: ['Potenzielle Verdunstung (Evapotranspiration) nach Hargreaves (FAO-56), als Summe im gewählten Zeitraum. Sie zeigt, wie viel Wasser dem Boden allein durch Verdunstung entzogen wird; hohe Werte bei wenig Niederschlag begünstigen Trockenstress. Dieselbe Berechnung fliesst in die Bodenwasserbilanz ein.'] });
+  dokuEintrag({ id: 'gdd', gruppe: 'Wetter-Ebenen', titel: 'Wachstumsgradtage',
+    alias: ['Wachstumsgradtage'], stichworte: 'gdd gradtage waermesumme temperatursumme vegetation',
+    legende: dokuFarbskala('gdd'), quelle: dokuQuelle('gdd'),
+    text: ['Aufsummierte Wärme seit Jahresbeginn: an jedem Tag die Tagesmitteltemperatur minus 5 °C, sofern positiv. Eine verbreitete Faustregel für die pflanzenverfügbare Wärme seit Vegetationsbeginn; höhere Werte bedeuten mehr angesammelte Wachstumsbedingungen.'] });
+
+  dokuEintrag({ id: 'boden', gruppe: 'Berechnete Ebenen', titel: 'Bodenwasserbilanz',
+    alias: ['Bodenwasserbilanz'], stichworte: 'bodenwasser wasser eimer bucket trocken trockenheit duerre fuellstand speicher',
+    legende: dokuFarbskala('boden'), quelle: dokuQuelle('boden'),
+    text: ['Der Boden wird vereinfacht als Eimer betrachtet: Regen füllt ihn, Verdunstung leert ihn, ist er voll, läuft der Überschuss ab. Ein feuchter Boden verdunstet mehr als ein bereits trockener.',
+      'Der Wert zeigt den Füllstand am Stichtag: 100 mm = gut mit Wasser versorgt, 0 mm = ausgetrocknet. Die Ebene ist selbst berechnet und keine Messung.'] });
+  if (dokuExperimentell) {
+    dokuEintrag({ id: 'potenzial', gruppe: 'Berechnete Ebenen', titel: 'Potenzielles Wachstum (experimentell)',
+      alias: ['Potenzielles Wachstum'], stichworte: 'modvege growr modell potenzial erholung experimentell kumuliert',
+      legende: dokuFarbskala('wachstumspotenzial_rate'), quelle: dokuQuelle('wachstumspotenzial_rate'),
+      text: ['Experimentell: wie viel Graswachstum Temperatur, Strahlung und Wasserhaushalt diese Woche zulassen würden, ohne Nährstoffmangel und ohne Schnitt oder Beweidung. Berechnet mit ModVege (Jouven et al. 2006, R-Paket growR).',
+        'Bekannte Schwächen: Nach einer Trockenperiode springt das Modell bei Regen sofort auf das volle Potenzial; die Erholungsverzögerung dämpft das nur grob. Grundwasserböden werden nicht abgebildet.'] });
+  }
+
+  dokuEintrag({ id: 'quellen', gruppe: 'Daten und Quellen', titel: 'Datenquellen',
+    stichworte: 'quelle daten agff meteoschweiz open data swisstopo lizenz aktualisierung',
+    text: ['Graswachstum und DGV: Messungen der Betriebe im Messnetz Graswachstum der AGFF (graswachstum.ch).',
+      'Wetter: MeteoSchweiz, Open Data – Gitterdaten für Niederschlag, Temperatur und Sonnenschein sowie die Tageswerte der SwissMetNet-Stationen. Ortssuche: swisstopo. Bodenwasserbilanz und Verdunstung sind daraus berechnet.',
+      'Die Seite wird jede Nacht neu erzeugt. Fehlen bei einer Ebene die neuesten Wochen, sind die Daten bei der Quelle noch nicht verfügbar.'] });
+
+  // Synonyme fuer die Suche (normalisiert, siehe dokuNorm)
+  var DOKU_SYNONYME = {
+    afc: ['dgv', 'grasvorrat'], vorrat: ['dgv', 'grasvorrat'], futter: ['dgv', 'graswachstum'],
+    regen: ['niederschlag'], nass: ['niederschlag'], niederschlag: ['regen'],
+    verdunstung: ['et0', 'evapotranspiration'], et: ['et0'], trocken: ['bodenwasser', 'trockenstress', 'trockenheit'],
+    duerre: ['trockenheit', 'bodenwasser'], wasser: ['bodenwasser', 'niederschlag'],
+    hitze: ['temperatur'], kaelte: ['temperatur'], waerme: ['temperatur', 'wachstumsgradtage'], warm: ['temperatur'],
+    sonne: ['sonnenschein'], licht: ['sonnenschein'], gdd: ['wachstumsgradtage'], gradtage: ['wachstumsgradtage'],
+    zuwachs: ['graswachstum'], wachstum: ['graswachstum', 'wachstumskurve'], station: ['stationen'],
+    play: ['abspielen'], animation: ['abspielen'], abspielen: ['play'], woche: ['kalenderwoche', 'zeitleiste'], kw: ['kalenderwoche'],
+    handy: ['smartphone', 'mobile'], smartphone: ['handy'], quer: ['querformat'], drehen: ['querformat', 'quer'],
+    suche: ['suchen', 'plz'], zoom: ['vergroessern'], gross: ['vollbild', 'griff'], legende: ['linie', 'farbe']
+  };
+  function dokuNorm(s) {
+    return String(s || '').toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
+      .replace(/[éèê]/g, 'e').replace(/[àâ]/g, 'a').replace(/ç/g, 'c');
+  }
+  function dokuWoerter(s) { return dokuNorm(s).split(/[^a-z0-9]+/).filter(Boolean); }
+  function dokuAbstand(a, b, max) {
+    if (Math.abs(a.length - b.length) > max) return max + 1;
+    var vor = [], i, j;
+    for (j = 0; j <= b.length; j++) vor[j] = j;
+    for (i = 1; i <= a.length; i++) {
+      var akt = [i], best = i;
+      for (j = 1; j <= b.length; j++) {
+        akt[j] = Math.min(vor[j] + 1, akt[j - 1] + 1, vor[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+        if (akt[j] < best) best = akt[j];
+      }
+      if (best > max) return max + 1;
+      vor = akt;
+    }
+    return vor[b.length];
+  }
+  function dokuIndex(e) {
+    if (e._idx) return e._idx;
+    var text = e.text.join(' ');
+    e._idx = {
+      titelW: dokuWoerter(e.titel), titelN: dokuNorm(e.titel),
+      aliasW: dokuWoerter(e.alias.join(' ') + ' ' + (e.stichworte || '')),
+      textW: dokuWoerter(text), textN: dokuNorm(text)
+    };
+    return e._idx;
+  }
+  // Treffer je Suchwort: Wortanfang im Titel > Stichwort > Wortteil im Titel >
+  // Wortanfang im Text > Wortteil im Text > Tippfehler. Alle Wörter müssen
+  // passen; Synonyme zählen etwas weniger.
+  function dokuBewerte(e, woerter) {
+    var ix = dokuIndex(e), summe = 0, markier = [];
+    for (var w = 0; w < woerter.length; w++) {
+      var t = woerter[w], varianten = [[t, 1]];
+      (DOKU_SYNONYME[t] || []).forEach(function(s) { varianten.push([s, 0.7]); });
+      var best = 0;
+      varianten.forEach(function(v) {
+        var q = v[0], g = v[1], p = 0, toleranz = q.length >= 8 ? 2 : (q.length >= 4 ? 1 : 0);
+        if (ix.titelW.some(function(x) { return x.indexOf(q) === 0; })) p = 10;
+        else if (q.length >= 3 && ix.titelN.indexOf(q) !== -1) p = 8;
+        else if (ix.aliasW.some(function(x) { return x.indexOf(q) === 0; })) p = 7;
+        else if (ix.textW.some(function(x) { return x.indexOf(q) === 0; })) p = 3;
+        else if (q.length >= 4 && ix.textN.indexOf(q) !== -1) p = 2;
+        else if (toleranz) {
+          var fuzzy = function(x) { return x.length >= 3 && dokuAbstand(q, x.slice(0, Math.max(q.length, Math.min(x.length, q.length + 1))), toleranz) <= toleranz; };
+          var tf = ix.titelW.filter(fuzzy), af = ix.aliasW.filter(fuzzy), xf = ix.textW.filter(fuzzy);
+          if (tf.length) { p = 4; markier = markier.concat(tf); }
+          else if (af.length) { p = 3; }
+          else if (xf.length) { p = 1.5; markier = markier.concat(xf); }
+        }
+        if (p > 0) markier.push(q);
+        if (p * g > best) best = p * g;
+      });
+      if (best === 0) return null;
+      summe += best;
+    }
+    return { e: e, punkte: summe, markier: markier };
+  }
+  function dokuSuche(text) {
+    var woerter = dokuWoerter(text);
+    if (!woerter.length) return null;
+    return doku.map(function(e) { return dokuBewerte(e, woerter); }).filter(Boolean)
+      .sort(function(a, b) { return b.punkte - a.punkte; });
+  }
+  // Text mit markierten Treffern als DOM (keine HTML-Strings)
+  function dokuMarkiert(text, markier) {
+    var frag = document.createDocumentFragment();
+    if (!markier || !markier.length) { frag.appendChild(document.createTextNode(text)); return frag; }
+    String(text).split(/([A-Za-z0-9ÄÖÜäöüßéèêàâç]+)/).forEach(function(teil) {
+      if (!teil) return;
+      var n = dokuNorm(teil);
+      var treffer = /[a-z0-9]/.test(n) && markier.some(function(q) { return n.indexOf(q) === 0 || (q.length >= 4 && n.indexOf(q) !== -1) || n === q; });
+      if (treffer) frag.appendChild(dokuEl('mark', '', teil));
+      else frag.appendChild(document.createTextNode(teil));
+    });
+    return frag;
+  }
+  function dokuAuszug(e, markier) {
+    var text = e.text.join(' ');
+    var n = dokuNorm(text), pos = -1;
+    markier.forEach(function(q) { var p = n.indexOf(q); if (p !== -1 && (pos === -1 || p < pos)) pos = p; });
+    if (pos === -1) return text.slice(0, 90) + (text.length > 90 ? ' …' : '');
+    var a = Math.max(0, pos - 35);
+    return (a > 0 ? '… ' : '') + text.slice(a, a + 100) + (a + 100 < text.length ? ' …' : '');
+  }
+
+  var dokuRoot = null, dokuNavEl, dokuInhaltEl, dokuSucheEl, dokuAktiv = null, dokuOpener = null, dokuMarkierAktiv = [];
+  function dokuFinde(label) {
+    var n = dokuNorm(label), best = null, bestLaenge = -1;
+    doku.forEach(function(e) {
+      [e.titel].concat(e.alias).forEach(function(a) {
+        var an = dokuNorm(a);
+        if (n === an && an.length > bestLaenge + 1000) return;
+        if (n === an) { best = e; bestLaenge = 1e6; }
+        else if (n.indexOf(an) === 0 && an.length > bestLaenge && bestLaenge < 1e6) { best = e; bestLaenge = an.length; }
+      });
+    });
+    return best;
+  }
+  function dokuNeu(titel, text, legende) {
+    return dokuEintrag({ id: 'weitere-' + doku.length, gruppe: 'Weitere', titel: titel || 'Erklärung', text: [text || ''], legende: legende || null });
+  }
+  function baueDoku() {
+    if (dokuRoot) return;
+    dokuRoot = dokuEl('div', 'gw-doku');
+    dokuRoot.setAttribute('role', 'dialog');
+    dokuRoot.setAttribute('aria-modal', 'true');
+    dokuRoot.setAttribute('aria-labelledby', 'gw-doku-titel');
+    dokuRoot.addEventListener('click', function(evt) { evt.stopPropagation(); if (evt.target === dokuRoot) schliesseDoku(); });
+    var fenster = dokuEl('div', 'gw-doku-fenster');
+    var kopf = dokuEl('div', 'gw-doku-kopf');
+    var h = dokuEl('h2', 'gw-doku-h', 'Hilfe');
+    h.id = 'gw-doku-titel';
+    var menue = dokuEl('button', 'gw-doku-menue', 'Inhalt');
+    menue.type = 'button';
+    menue.addEventListener('click', function() { dokuRoot.classList.remove('gw-doku-ergebnis'); dokuRoot.classList.toggle('gw-doku-nav-offen'); });
+    dokuSucheEl = dokuEl('input', 'gw-doku-suche');
+    dokuSucheEl.type = 'search';
+    dokuSucheEl.placeholder = 'Suchen, z. B. Regen, DGV, abspielen …';
+    dokuSucheEl.setAttribute('aria-label', 'Dokumentation durchsuchen');
+    dokuSucheEl.addEventListener('input', function() { dokuRoot.classList.remove('gw-doku-ergebnis'); zeichneDokuNav(); });
+    dokuSucheEl.addEventListener('keydown', function(evt) {
+      var links = Array.prototype.slice.call(dokuNavEl.querySelectorAll('.gw-doku-link'));
+      var i = links.findIndex(function(l) { return l.classList.contains('aktiv'); });
+      if (evt.key === 'ArrowDown' || evt.key === 'ArrowUp') {
+        evt.preventDefault();
+        if (!links.length) return;
+        var n = evt.key === 'ArrowDown' ? Math.min(links.length - 1, i + 1) : Math.max(0, i - 1);
+        links[n].click();
+        dokuSucheEl.focus();
+      } else if (evt.key === 'Enter' && links.length) {
+        evt.preventDefault();
+        (links[Math.max(0, i)]).click();
+        dokuRoot.classList.remove('gw-doku-nav-offen');
+      }
+    });
+    var zu = dokuEl('button', 'gw-doku-zu', String.fromCharCode(215));
+    zu.type = 'button';
+    zu.setAttribute('aria-label', 'Hilfe schliessen');
+    zu.addEventListener('click', schliesseDoku);
+    kopf.appendChild(h); kopf.appendChild(menue); kopf.appendChild(dokuSucheEl); kopf.appendChild(zu);
+    var rumpf = dokuEl('div', 'gw-doku-rumpf');
+    dokuNavEl = dokuEl('nav', 'gw-doku-nav');
+    dokuNavEl.setAttribute('aria-label', 'Themen');
+    dokuInhaltEl = dokuEl('article', 'gw-doku-inhalt');
+    rumpf.appendChild(dokuNavEl); rumpf.appendChild(dokuInhaltEl);
+    fenster.appendChild(kopf); fenster.appendChild(rumpf);
+    dokuRoot.appendChild(fenster);
+    dokuRoot.addEventListener('keydown', function(evt) {
+      if (evt.key !== 'Escape') return;
+      evt.stopPropagation();
+      if (dokuSucheEl.value) { dokuSucheEl.value = ''; zeichneDokuNav(); dokuSucheEl.focus(); }
+      else schliesseDoku();
+    });
+    document.body.appendChild(dokuRoot);
+  }
+  function zeichneDokuNav() {
+    dokuNavEl.innerHTML = '';
+    var treffer = dokuSuche(dokuSucheEl.value);
+    var link = function(e, auszug, markier) {
+      var a = dokuEl('button', 'gw-doku-link');
+      a.type = 'button';
+      a.appendChild(dokuMarkiert(e.titel, markier));
+      if (auszug) { var s = dokuEl('span', 'gw-doku-auszug'); s.appendChild(dokuMarkiert(auszug, markier)); a.appendChild(s); }
+      if (dokuAktiv === e.id) a.classList.add('aktiv');
+      a.addEventListener('click', function() {
+        dokuMarkierAktiv = markier || [];
+        zeigeDokuEintrag(e.id);
+        // Handy: Liste schliessen, Text zeigen
+        dokuRoot.classList.remove('gw-doku-nav-offen');
+        dokuRoot.classList.add('gw-doku-ergebnis');
+      });
+      return a;
+    };
+    if (treffer) {
+      dokuRoot.classList.add('gw-doku-sucht');
+      var kopf = dokuEl('div', 'gw-doku-gruppe', treffer.length ? treffer.length + (treffer.length === 1 ? ' Treffer' : ' Treffer') : 'Keine Treffer');
+      dokuNavEl.appendChild(kopf);
+      if (!treffer.length) dokuNavEl.appendChild(dokuEl('p', 'gw-doku-leer', 'Andere Begriffe versuchen, z. B. Regen, Temperatur, Kurve oder Handy.'));
+      treffer.forEach(function(t) { dokuNavEl.appendChild(link(t.e, dokuAuszug(t.e, t.markier), t.markier)); });
+      if (treffer.length) { dokuMarkierAktiv = treffer[0].markier; zeigeDokuEintrag(treffer[0].e.id, true); }
+      return;
+    }
+    dokuRoot.classList.remove('gw-doku-sucht');
+    dokuMarkierAktiv = [];
+    DOKU_GRUPPEN.forEach(function(g) {
+      var eintraege = doku.filter(function(e) { return e.gruppe === g; });
+      if (!eintraege.length) return;
+      dokuNavEl.appendChild(dokuEl('div', 'gw-doku-gruppe', g));
+      eintraege.forEach(function(e) { dokuNavEl.appendChild(link(e)); });
+    });
+  }
+  function zeigeDokuEintrag(id, ausSuche) {
+    var i = doku.findIndex(function(e) { return e.id === id; });
+    if (i === -1) i = 0;
+    var e = doku[i];
+    dokuAktiv = e.id;
+    dokuNavEl.querySelectorAll('.gw-doku-link').forEach(function(l, k) { l.classList.remove('aktiv'); });
+    var aktivLink = Array.prototype.slice.call(dokuNavEl.querySelectorAll('.gw-doku-link')).filter(function(l) { return l.firstChild && l.textContent.indexOf(e.titel) === 0; })[0];
+    if (aktivLink) { aktivLink.classList.add('aktiv'); if (aktivLink.scrollIntoView) aktivLink.scrollIntoView({ block: 'nearest' }); }
+    dokuInhaltEl.innerHTML = '';
+    dokuInhaltEl.appendChild(dokuEl('div', 'gw-doku-pfad', e.gruppe));
+    var t = dokuEl('h3', 'gw-doku-thema'); t.appendChild(dokuMarkiert(e.titel, dokuMarkierAktiv)); dokuInhaltEl.appendChild(t);
+    var leg = null;
+    try { leg = e.legende ? e.legende() : null; } catch (err) { leg = null; }
+    if (leg) { var lw = dokuEl('div', 'gw-doku-legende'); lw.appendChild(leg); dokuInhaltEl.appendChild(lw); }
+    e.text.forEach(function(absatz) { var p = dokuEl('p'); p.appendChild(dokuMarkiert(absatz, dokuMarkierAktiv)); dokuInhaltEl.appendChild(p); });
+    var q = typeof e.quelle === 'function' ? e.quelle() : (e.quelle || '');
+    if (q) dokuInhaltEl.appendChild(dokuEl('p', 'gw-doku-quelle', q));
+    var nav = dokuEl('div', 'gw-doku-blaettern');
+    [[i - 1, 'zurueck', 'Zurück: '], [i + 1, 'weiter', 'Weiter: ']].forEach(function(v) {
+      var ziel = doku[v[0]];
+      var b = dokuEl('button', 'gw-doku-blatt-knopf gw-doku-' + v[1], ziel ? v[2] + ziel.titel : '');
+      b.type = 'button';
+      if (!ziel) { b.style.visibility = 'hidden'; } else b.addEventListener('click', function() { dokuMarkierAktiv = []; zeigeDokuEintrag(ziel.id); });
+      nav.appendChild(b);
+    });
+    dokuInhaltEl.appendChild(nav);
+    if (!ausSuche) dokuInhaltEl.scrollTop = 0;
+  }
+  function istDokuOffen() { return !!(dokuRoot && dokuRoot.classList.contains('offen')); }
+  function oeffneDoku(id, opener) {
+    baueDoku();
+    dokuOpener = opener || document.activeElement;
+    dokuSucheEl.value = '';
+    dokuMarkierAktiv = [];
+    dokuAktiv = id || 'ueberblick';
+    zeichneDokuNav();
+    zeigeDokuEintrag(dokuAktiv);
+    dokuRoot.classList.remove('gw-doku-nav-offen');
+    dokuRoot.classList.add('offen');
+    document.documentElement.classList.add('gw-doku-offen');
+    setTimeout(function() { (id ? dokuRoot.querySelector('.gw-doku-zu') : dokuSucheEl).focus(); }, 0);
+  }
+  function schliesseDoku() {
+    if (!dokuRoot) return;
+    dokuRoot.classList.remove('offen');
+    document.documentElement.classList.remove('gw-doku-offen');
+    if (dokuOpener && dokuOpener.focus) dokuOpener.focus();
   }
 
   // Eingebettet (Grav-Plugin datenexplorer, siehe Datenexplorer_einbettung.json):
@@ -854,18 +1279,25 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     if (!an) seiteEl.scrollIntoView({ block: 'start' });
     window.dispatchEvent(new Event('resize'));
   }
-  if (eingebettet && seiteEl) {
+  if (seiteEl) {
     var werkzeugleiste = document.createElement('div');
     werkzeugleiste.className = 'gw-werkzeugleiste';
-    vollbildKnopfEl = document.createElement('button');
-    vollbildKnopfEl.type = 'button'; vollbildKnopfEl.className = 'gw-werkzeug-knopf';
-    setzeKnopfInhalt(vollbildKnopfEl, 'vollbild', 'Vollbild');
-    vollbildKnopfEl.addEventListener('click', function(evt) { evt.stopPropagation(); setzeVollbild(!istVollbild()); });
-    werkzeugleiste.appendChild(vollbildKnopfEl);
+    var hilfeKnopf = document.createElement('button');
+    hilfeKnopf.type = 'button'; hilfeKnopf.className = 'gw-werkzeug-knopf';
+    setzeKnopfInhalt(hilfeKnopf, 'hilfe', 'Hilfe');
+    hilfeKnopf.addEventListener('click', function(evt) { evt.stopPropagation(); oeffneDoku(null, hilfeKnopf); });
+    werkzeugleiste.appendChild(hilfeKnopf);
+    if (eingebettet) {
+      vollbildKnopfEl = document.createElement('button');
+      vollbildKnopfEl.type = 'button'; vollbildKnopfEl.className = 'gw-werkzeug-knopf';
+      setzeKnopfInhalt(vollbildKnopfEl, 'vollbild', 'Vollbild');
+      vollbildKnopfEl.addEventListener('click', function(evt) { evt.stopPropagation(); setzeVollbild(!istVollbild()); });
+      werkzeugleiste.appendChild(vollbildKnopfEl);
+    }
     seiteEl.insertBefore(werkzeugleiste, seiteEl.firstChild);
   }
   document.addEventListener('keydown', function(evt) {
-    if (evt.key !== 'Escape' || !istVollbild()) return;
+    if (evt.key !== 'Escape' || !istVollbild() || istDokuOffen()) return;
     var offen = blattEl.style.display !== 'none' || document.body.classList.contains('gw-ebenen-offen') ||
       (seiteEl.classList.contains('gw-app-schmal') && !seiteEl.classList.contains('gw-ebenen-zu'));
     if (!offen) setzeVollbild(false);
@@ -874,7 +1306,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   // Mobile-Elemente rund um die Karte (auf dem Desktop per CSS ausgeblendet)
   var kartenzeileEl = document.getElementById('gw-kartenzeile');
   var mobilKopfUnterEl = null, kartenleisteLegendeEl = null, kartenleisteWertEl = null, kurveKnopfEl = null;
-  var teaserEl = null, teaserTitelEl = null, teaserJahr = null;
+  var teaserEl = null, teaserTitelEl = null, teaserJahr = null, teaserKoerper = null, teaserKopfEl = null;
   if (kartenzeileEl) {
     var mobilKopf = document.createElement('div');
     mobilKopf.className = 'gw-mobil-only gw-mobil-kopf';
@@ -934,7 +1366,23 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       teaserWahl.value = '';
       oeffneDetail();
     });
-    teaserKopf.appendChild(teaserTitelEl); teaserKopf.appendChild(teaserWahl);
+    teaserWahl.addEventListener('pointerdown', function(evt) { evt.stopPropagation(); });
+    // Handy-Layout: der Kopf ist zugleich der Griff zwischen Karte und Kurve
+    teaserKopf.setAttribute('role', 'separator');
+    teaserKopf.setAttribute('aria-orientation', 'horizontal');
+    teaserKopf.setAttribute('aria-label', 'Grösse von Karte und Kurve verschieben');
+    teaserKopf.tabIndex = 0;
+    var teaserPfeile = document.createElement('span');
+    teaserPfeile.className = 'gw-teaser-pfeile';
+    [['hoch', 'Kurve ganz nach oben', function() { return teaserMax(); }], ['runter', 'Karte ganz gross', function() { return 0; }]].forEach(function(v) {
+      var b = document.createElement('button');
+      b.type = 'button'; b.className = 'gw-griff-pfeil'; b.title = v[1]; b.setAttribute('aria-label', v[1]);
+      b.appendChild(gwIcon(v[0]));
+      b.addEventListener('pointerdown', function(evt) { evt.stopPropagation(); });
+      b.addEventListener('click', function(evt) { evt.stopPropagation(); setzeTeaserHoehe(v[2]()); });
+      teaserPfeile.appendChild(b);
+    });
+    teaserKopf.appendChild(teaserTitelEl); teaserKopf.appendChild(teaserWahl); teaserKopf.appendChild(teaserPfeile);
     var teaserPlot = document.createElement('div');
     teaserPlot.className = 'gw-teaser-plot';
     teaserPlot.setAttribute('role', 'button');
@@ -949,9 +1397,94 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       var sw = document.createElement('span'); sw.className = 'gw-legend-swatch'; sw.style.borderTopColor = e[1]; sw.style.borderTopStyle = e[2];
       sp.appendChild(sw); sp.appendChild(document.createTextNode(e[0])); teaserLegende.appendChild(sp);
     });
-    teaserEl.appendChild(teaserKopf); teaserEl.appendChild(teaserPlot); teaserEl.appendChild(teaserLegende);
+    teaserKoerper = document.createElement('div');
+    teaserKoerper.className = 'gw-teaser-koerper';
+    teaserKoerper.appendChild(teaserPlot); teaserKoerper.appendChild(teaserLegende);
+    teaserEl.appendChild(teaserKopf); teaserEl.appendChild(teaserKoerper);
     knoepfe.parentNode.insertBefore(teaserEl, knoepfe);
+    teaserKopfEl = teaserKopf;
   }
+  // Handy-Layout: Seite in Bildschirmhoehe, Karte fuellt den Rest; der
+  // Teaser-Kopf ist ein Griff - ziehen verschiebt die Grenze, die Pfeile
+  // schieben sie ganz nach oben oder unten (Karte bildschirmfuellend).
+  var teaserHoehe = null, teaserAnteil = null;
+  function istMobilApp() { return !!(seiteEl && seiteEl.classList.contains('gw-mobil-app')); }
+  function teaserMax() {
+    if (!seiteEl || !teaserEl) return 0;
+    var belegt = 0;
+    Array.prototype.forEach.call(seiteEl.children, function(k) {
+      if (k === teaserEl || k.id === 'gw-kartenzeile') return;
+      var cs = getComputedStyle(k);
+      if (cs.display === 'none' || cs.position === 'fixed' || cs.position === 'absolute') return;
+      belegt += k.offsetHeight;
+    });
+    belegt += teaserKopfEl ? teaserKopfEl.offsetHeight : 0;
+    return Math.max(0, seiteEl.clientHeight - belegt);
+  }
+  function teaserStandard() {
+    var max = teaserMax();
+    return Math.min(max, Math.max(110, Math.min(190, Math.round(max * 0.32))));
+  }
+  function teaserPlotHoehe() {
+    if (!istMobilApp() || teaserHoehe === null) return 140;
+    var leg = teaserEl.querySelector('.gw-teaser-legende');
+    return Math.max(60, teaserHoehe - (leg ? leg.offsetHeight + 4 : 0));
+  }
+  function passeTeaserPlotAn() {
+    var plotEl = teaserEl && teaserEl.querySelector('.gw-teaser-plot');
+    if (!plotEl) return;
+    var h = teaserPlotHoehe();
+    plotEl.style.height = h + 'px';
+    if (plotEl.data && (!istMobilApp() || teaserHoehe >= 60)) Plotly.relayout(plotEl, { height: h });
+  }
+  function setzeTeaserHoehe(h, ohnePlot) {
+    if (!teaserKoerper || !istMobilApp()) return;
+    var max = teaserMax();
+    teaserHoehe = Math.max(0, Math.min(max, Math.round(h)));
+    if (max > 0) teaserAnteil = teaserHoehe / max;
+    teaserKoerper.style.height = teaserHoehe + 'px';
+    seiteEl.classList.toggle('gw-teaser-zu', teaserHoehe < 1);
+    seiteEl.classList.toggle('gw-teaser-voll', max > 0 && teaserHoehe >= max - 1);
+    if (teaserKopfEl) teaserKopfEl.setAttribute('aria-valuenow', String(max ? Math.round(100 * teaserHoehe / max) : 0));
+    if (!ohnePlot) passeTeaserPlotAn();
+  }
+  if (teaserKopfEl) (function() {
+    var startY = 0, startH = 0, bewegt = false, aktiv = false;
+    teaserKopfEl.addEventListener('pointerdown', function(evt) {
+      if (!istMobilApp()) return;
+      aktiv = true; bewegt = false; startY = evt.clientY; startH = teaserHoehe || 0;
+      teaserKopfEl.setPointerCapture(evt.pointerId);
+    });
+    teaserKopfEl.addEventListener('pointermove', function(evt) {
+      if (!aktiv) return;
+      var d = startY - evt.clientY;
+      if (Math.abs(d) > 4) bewegt = true;
+      if (bewegt) setzeTeaserHoehe(startH + d, true);
+    });
+    function ende() {
+      if (!aktiv) return;
+      aktiv = false;
+      var max = teaserMax();
+      if (!bewegt) { if (teaserHoehe < 1 || teaserHoehe >= max - 1) setzeTeaserHoehe(teaserStandard()); return; }
+      if (teaserHoehe < 50) setzeTeaserHoehe(0);
+      else if (teaserHoehe > max - 50) setzeTeaserHoehe(max);
+      else setzeTeaserHoehe(teaserHoehe);
+    }
+    teaserKopfEl.addEventListener('pointerup', ende);
+    teaserKopfEl.addEventListener('pointercancel', ende);
+    teaserKopfEl.addEventListener('keydown', function(evt) {
+      if (!istMobilApp() || evt.target !== teaserKopfEl) return;
+      var h = teaserHoehe || 0, max = teaserMax();
+      var neu = evt.key === 'ArrowUp' ? h + 40 : evt.key === 'ArrowDown' ? h - 40 : evt.key === 'Home' ? max : evt.key === 'End' ? 0 : null;
+      if (neu === null) return;
+      evt.preventDefault();
+      setzeTeaserHoehe(neu);
+    });
+  })();
+  window.addEventListener('resize', function() {
+    if (istMobilApp() && teaserAnteil !== null) setzeTeaserHoehe(teaserAnteil * teaserMax());
+  });
+
   // App-Layout (eigene Seite oder Vollbild, ab 700px): Icon-Leiste links mit
   // Ebenen und Kurve. Ab 1100px stehen die Ebenen fest neben der Karte
   // (einklappbar), darunter klappen sie als Schublade ueber die Karte.
@@ -984,11 +1517,11 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     if (appLeisteEbenenEl) appLeisteEbenenEl.classList.toggle('aktiv', offen);
     blattGeoeffnetUm = Date.now();
   }
-  var appModusVorher = null, appSchmalVorher = null;
+  var appModusVorher = null, appSchmalVorher = null, mobilAppVorher = null;
   // App-Layout ab 700px - eigene Seite, Vollbild und auch eingebettet in
   // eine Website: dort als Block in Bildschirmhoehe unter dem Seitenkopf.
   function setzeBlockHoehe() {
-    if (istAppModus() && eingebettet && !istVollbild()) {
+    if ((istAppModus() || istMobilApp()) && eingebettet && !istVollbild()) {
       var oben = seiteEl.getBoundingClientRect().top + window.scrollY;
       seiteEl.style.height = Math.max(520, Math.round(window.innerHeight - oben)) + 'px';
     } else {
@@ -1001,10 +1534,16 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     var schmal = an && window.innerWidth < 1100;
     seiteEl.classList.toggle('gw-app', an);
     seiteEl.classList.toggle('gw-app-schmal', schmal);
+    seiteEl.classList.toggle('gw-mobil-app', !an);
     document.documentElement.classList.toggle('gw-app-aktiv', an);
-    document.documentElement.classList.toggle('gw-app-seite', an && !eingebettet);
+    document.documentElement.classList.toggle('gw-app-seite', !eingebettet);
     setzeBlockHoehe();
     if (an) schliesseDetail();
+    if (!an !== mobilAppVorher) {
+      mobilAppVorher = !an;
+      if (!an) setTimeout(function() { setzeTeaserHoehe(teaserStandard()); }, 0);
+      else if (teaserKoerper) { teaserKoerper.style.height = ''; teaserHoehe = null; passeTeaserPlotAn(); }
+    }
     if (an === appModusVorher && schmal === appSchmalVorher) return;
     appModusVorher = an; appSchmalVorher = schmal;
     setzeEbenenOffen(!schmal);
@@ -1211,7 +1750,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     if (std) spuren.push({ x: std.x, y: std.y, type: 'scatter', mode: 'lines', line: { color: '#E24B4A', width: 1.5, dash: 'dot' }, hoverinfo: 'skip' });
     var schrift = getComputedStyle(seiteEl || document.body).fontFamily;
     Plotly.react(plotEl, spuren, {
-      height: 140, margin: { l: 30, r: 6, t: 4, b: 20 }, showlegend: false,
+      height: teaserPlotHoehe(), margin: { l: 30, r: 6, t: 4, b: 20 }, showlegend: false,
       xaxis: { range: [1, 52], fixedrange: true, tickvals: [10, 20, 30, 40, 50], tickfont: { size: 10 }, zeroline: false, showgrid: false },
       yaxis: { fixedrange: true, rangemode: 'tozero', tickfont: { size: 10 }, zeroline: false, gridcolor: '#eee', nticks: 4 },
       shapes: strich, font: { family: schrift }, paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)'
@@ -1420,18 +1959,20 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     var gross = (verlauf.high - verlauf.low) / 1500 > 0.5 ? 1 : 0;
     svg.appendChild(el('path', { d: 'M' + p1[0] + ',' + p1[1] + ' A34,34 0 ' + gross + ',1 ' + p2[0] + ',' + p2[1],
       fill: 'none', stroke: '#000', 'stroke-width': 1.5, 'marker-start': 'url(#gw-afc-pfeil)', 'marker-end': 'url(#gw-afc-pfeil)' }));
+    // Schlank: nur die beiden Grenzen des Zielbereichs als kleine Zahlen an
+    // den Pfeilenden - die ausfuehrliche Erklaerung steht in der Hilfe (DGV).
+    [verlauf.low, verlauf.high].forEach(function(wert) {
+      var p = punkt(wert, 43);
+      var t = el('text', { x: p[0], y: p[1] + 3.5, 'font-size': 10, fill: '#444',
+        'text-anchor': p[0] > 42 ? 'start' : (p[0] < 38 ? 'end' : 'middle') });
+      t.textContent = String(wert);
+      svg.appendChild(t);
+    });
     ringWrap.appendChild(svg);
-    var ringZeile = document.createElement('div');
-    var nullEl = document.createElement('div');
-    nullEl.className = 'gw-afc-null';
-    nullEl.textContent = '0 / 1500 kg';
-    ringZeile.appendChild(nullEl);
-    ringZeile.appendChild(ringWrap);
-    var ziel = document.createElement('div');
-    ziel.className = 'gw-layer-legende-quelle';
-    ziel.textContent = 'DGV im Uhrzeigersinn ab 0 (oben). Pfeil = Zielbereich dieser Woche: ' + verlauf.low + '–' + verlauf.high + ' kg TS/ha';
-    afcLegendeBox.appendChild(ringZeile);
-    afcLegendeBox.appendChild(ziel);
+    ringWrap.title = 'DGV-Zielbereich dieser Woche: ' + verlauf.low + '–' + verlauf.high + ' kg TS/ha';
+    afcLegendeBox.dataset.zielLow = verlauf.low;
+    afcLegendeBox.dataset.zielHigh = verlauf.high;
+    afcLegendeBox.appendChild(ringWrap);
   }
 
   // "Tage seit Messung"-Legende (Graufaerbung von Graswachstum-Kreis/AFC-Ring)
@@ -1445,7 +1986,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   function aktualisiereTageSeitMessungLegende() {
     if (!tageSeitMessungBox) return;
     if (!graswachstumOn && !afcOn) { tageSeitMessungBox.style.display = 'none'; return; }
-    tageSeitMessungBox.style.display = 'block';
+    tageSeitMessungBox.style.display = 'flex';
   }
   // Kartentitel: fester Kopf "Graswachstum", darunter Kalenderwoche und
   // Grafikdatum (Erstellung der Seite). Ist eine Meteo-Ebene aktiv, folgt deren
@@ -1815,39 +2356,24 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     // auf Touch-Geraeten funktioniert; ein Klick ausserhalb schliesst das
     // Popup wieder.
     function macheInfoKnopf(text, zusatz, titel) {
+      var eintrag = dokuFinde(titel) || dokuNeu(titel, text, zusatz);
+      if (zusatz && !eintrag.legende) eintrag.legende = zusatz;
       var wrap = document.createElement('span');
       wrap.className = 'gw-info-wrap';
       var btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'gw-info-btn';
       btn.textContent = 'i';
-      btn.title = 'Erklaerung anzeigen';
-      var popup = document.createElement('div');
-      popup.className = 'gw-info-popup';
-      popup.textContent = text;
-      popup.style.display = 'none';
+      btn.title = 'Erklärung: ' + eintrag.titel;
+      btn.setAttribute('aria-label', btn.title);
       btn.addEventListener('click', function(evt) {
         evt.preventDefault();
         evt.stopPropagation();
-        if (istTouch()) {
-          var inhalt = document.createElement('div');
-          if (zusatz) { var z = zusatz(); if (z) inhalt.appendChild(z); }
-          var p = document.createElement('div'); p.className = 'gw-blatt-text'; p.textContent = text;
-          inhalt.appendChild(p);
-          zeigeBlatt(titel || 'Erklaerung', '', inhalt);
-          return;
-        }
-        var offen = popup.style.display === 'block';
-        document.querySelectorAll('.gw-info-popup').forEach(function(p) { p.style.display = 'none'; });
-        popup.style.display = offen ? 'none' : 'block';
+        oeffneDoku(eintrag.id, btn);
       });
       wrap.appendChild(btn);
-      wrap.appendChild(popup);
       return wrap;
     }
-    document.addEventListener('click', function() {
-      document.querySelectorAll('.gw-info-popup').forEach(function(p) { p.style.display = 'none'; });
-    });
 
     // makeToggle() setzt normalerweise Text VOR den Schalter (so in der
     // Kurven-Legende gewuenscht) - im Ebenen-Kasten sollen alle Schalter
@@ -1886,10 +2412,14 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     // Kompakte DGV-Legende (Ring) DIREKT nach dem DGV-Schalter - gehoert
     // inhaltlich dazu. aktualisiereAfcLegende() (siehe unten) blendet die
     // Box aus, sobald DGV ausgeschaltet ist.
+    // DGV-Ring und Tage-seit-Messung nebeneinander in einer Zeile
+    var messLegendeZeile = document.createElement('div');
+    messLegendeZeile.className = 'gw-mess-legende';
+    layerPanel.appendChild(messLegendeZeile);
     afcLegendeBox = document.createElement('div');
-    afcLegendeBox.className = 'gw-layer-legende gw-afc-legende-box';
+    afcLegendeBox.className = 'gw-afc-legende-box';
     afcLegendeBox.style.display = 'none';
-    layerPanel.appendChild(afcLegendeBox);
+    messLegendeZeile.appendChild(afcLegendeBox);
 
     // "Tage seit Messung" (Graufaerbung Graswachstum-Kreis/AFC-Ring) - statt
     // eines Plotly-nativen Colorbars auf der Karte (kollidierte dort mit dem
@@ -1897,27 +2427,21 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     // Graswachstum/DGV. Inhalt aendert sich nie (fixe Skala 0-14 Tage), daher
     // einmalig aufgebaut statt bei jedem Wochenwechsel neu gerendert.
     tageSeitMessungBox = document.createElement('div');
-    tageSeitMessungBox.className = 'gw-layer-legende';
+    tageSeitMessungBox.className = 'gw-tage-legende';
     tageSeitMessungBox.style.display = 'none';
-    var tsmBalkenWrap = document.createElement('div');
-    tsmBalkenWrap.className = 'gw-layer-legende-balken-wrap';
+    tageSeitMessungBox.title = 'Graufärbung von Kreis und Ring: Tage seit der letzten Messung';
     var tsmBalken = document.createElement('div');
-    tsmBalken.className = 'gw-layer-legende-balken';
-    tsmBalken.style.background = 'linear-gradient(to right, white, #757575)';
-    tsmBalkenWrap.appendChild(tsmBalken);
-    var tsmSkala = document.createElement('div');
-    tsmSkala.className = 'gw-layer-legende-skala';
-    var tsmMinEl = document.createElement('span'); tsmMinEl.textContent = '0';
-    var tsmMaxEl = document.createElement('span'); tsmMaxEl.textContent = '14 Tage';
-    tsmSkala.appendChild(tsmMinEl);
-    tsmSkala.appendChild(tsmMaxEl);
-    var tsmLabel = document.createElement('div');
-    tsmLabel.className = 'gw-layer-legende-quelle';
-    tsmLabel.textContent = 'Tage seit Messung (Graswachstum/DGV)';
-    tageSeitMessungBox.appendChild(tsmBalkenWrap);
-    tageSeitMessungBox.appendChild(tsmSkala);
-    tageSeitMessungBox.appendChild(tsmLabel);
-    layerPanel.appendChild(tageSeitMessungBox);
+    tsmBalken.className = 'gw-tage-balken';
+    var tsmText = document.createElement('div');
+    tsmText.className = 'gw-tage-text';
+    ['0 Tage', 'seit Messung', '14 Tage'].forEach(function(t, i) {
+      var sp = document.createElement('span'); sp.textContent = t;
+      if (i === 1) sp.className = 'gw-tage-mitte';
+      tsmText.appendChild(sp);
+    });
+    tageSeitMessungBox.appendChild(tsmBalken);
+    tageSeitMessungBox.appendChild(tsmText);
+    messLegendeZeile.appendChild(tageSeitMessungBox);
 
     macheLayerToggle('MeteoSchweiz-Stationen', false, function(checked) { smnStationenOn = checked; aktualisiereSmnStationen(); },
       'Zeigt die oeffentlichen MeteoSchweiz-Automatikstationen (SwissMetNet) mit ihren aktuellsten Tageswerten (Lufttemperatur, Bodentemperatur, Niederschlag, Globalstrahlung, Sonnenscheindauer) als Diamant-Symbole. Reine Wetter-Referenzstationen, unabhaengig von der gewaehlten Kalenderwoche und NICHT Teil der AGFF-Grasmessungen. Bodentemperatur wird nur an einem Teil der rund 150 Stationen gemessen - dort steht im Tooltip entsprechend keine Daten.');
@@ -2034,7 +2558,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     meteoGitterHeading.textContent = 'MeteoSchweiz-Gitterdaten';
     layerPanel.appendChild(meteoGitterHeading);
     makeLayerRadio('keine', 'keine Meteodaten');
-    radioNiederschlag = makeLayerRadio('niederschlag', layerLegenden.niederschlag.label);
+    radioNiederschlag = makeLayerRadio('niederschlag', layerLegenden.niederschlag.label, 'siehe Hilfe');
     radioTemperatur = makeLayerRadio('temperatur', layerLegenden.temperatur.label,
       'Mittlere Lufttemperatur (2m) im oben gewaehlten Zeitraum vor dem Stichtag. Graswachstum beginnt erst ab einer Basistemperatur von ca. 5 Grad C spuerbar (darunter praktisch Wachstumsstillstand), das Optimum liegt bei ca. 15-20 Grad C. Ueber ca. 25 Grad C bremst Hitzestress das Wachstum trotz ausreichend Wasser wieder. Als Faustregel fuer den Wachstumsantrieb ueber mehrere Tage dient die Wachstumsgradtagsumme: Summe aus (Tagesmitteltemperatur minus 5 Grad C) an allen Tagen mit Werten darueber.');
     radioBodentemperatur = makeLayerRadio('bodentemperatur', layerLegenden.bodentemperatur.label,

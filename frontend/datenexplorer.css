@@ -32,7 +32,12 @@
 .gw-afc-ring-wrap { position: relative; width: 80px; height: 80px; margin: 0 auto; }
 .gw-afc-ring { position: absolute; top: 12px; left: 12px; width: 56px; height: 56px; border-radius: 50%; -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 10px), #000 calc(100% - 10px)); mask: radial-gradient(farthest-side, transparent calc(100% - 10px), #000 calc(100% - 10px)); }
 .gw-afc-ring-svg { position: absolute; top: 0; left: 0; overflow: visible; }
-.gw-afc-null { text-align: center; font-size: 10px; color: #555; margin-bottom: -6px; }
+.gw-mess-legende { display: flex; align-items: center; justify-content: center; gap: 22px; margin: 8px 0 4px; }
+.gw-mess-legende .gw-afc-ring-wrap { margin: 0 18px; }
+.gw-tage-legende { display: flex; align-items: stretch; gap: 6px; height: 56px; }
+.gw-tage-balken { width: 9px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.15); background: linear-gradient(to bottom, white, #757575); }
+.gw-tage-text { display: flex; flex-direction: column; justify-content: space-between; font-size: 10px; line-height: 1.1; color: #555; white-space: nowrap; }
+.gw-tage-mitte { color: #888; }
 .gw-layer-legende-skala { display: flex; justify-content: space-between; font-size: 11px; color: #555; margin-top: 3px; }
 .gw-layer-legende-quelle { font-size: 10px; color: #888; margin-top: 4px; }
 .gw-layer-wert-anzeige { font-size: 12px; font-weight: 600; margin-top: 8px; padding-top: 8px; border-top: 1px solid #eee; }
@@ -214,7 +219,8 @@ html.gw-app-aktiv .gw-blatt { bottom: 86px; }
   #gw-kartenzeile { gap: 0 !important; }
   .gw-mobil-kopf { padding: 8px 10px 2px; }
   .gw-werkzeugleiste { position: absolute; top: 8px; right: 10px; margin: 0; z-index: 5; }
-  #gw-seite.gw-eingebettet .gw-mobil-kopf { padding-right: 56px; }
+  #gw-seite .gw-mobil-kopf { padding-right: 56px; }
+  #gw-seite.gw-eingebettet .gw-mobil-kopf { padding-right: 100px; }
   .gw-werkzeug-knopf span { display: none; }
   .gw-werkzeug-knopf { padding: 7px; }
   #gw-seite.gw-vollbild { padding: 0 !important; }
@@ -229,3 +235,79 @@ html.gw-app-aktiv .gw-blatt { bottom: 86px; }
   .gw-today-btn { width: auto !important; min-width: 56px; padding: 0 8px; margin-left: 8px; }
   .gw-play-btn { margin-left: 8px; }
 }
+
+/* Hilfe und Dokumentation (oeffnet ueber i-Knoepfe und den Hilfe-Knopf) */
+.gw-doku { display: none; position: fixed; inset: 0; z-index: 3500; background: rgba(20, 24, 22, 0.45); align-items: center; justify-content: center; padding: 24px; font-family: var(--gw-schrift, sans-serif); color: #222; }
+.gw-doku.offen { display: flex; }
+html.gw-doku-offen, html.gw-doku-offen body { overflow: hidden !important; }
+.gw-doku-fenster { background: white; border-radius: 12px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3); width: min(940px, 100%); height: min(660px, 100%); display: flex; flex-direction: column; overflow: hidden; }
+.gw-doku-kopf { display: flex; align-items: center; gap: 12px; padding: 12px 14px 12px 20px; border-bottom: 1px solid #e6e6e6; }
+.gw-doku-h { margin: 0; font-size: 18px; font-weight: 600; flex: none; }
+.gw-doku-menue { display: none; }
+.gw-doku-suche { flex: 1 1 auto; min-width: 0; font: inherit; font-size: 14px; padding: 8px 12px; border: 1px solid #c8c8c8; border-radius: 8px; background: #fafafa; }
+.gw-doku-suche:focus { outline: 2px solid var(--gw-akzent, #4a90d9); outline-offset: 0; background: white; }
+.gw-doku-zu { flex: none; width: 36px; height: 36px; border: none; background: none; font-size: 24px; line-height: 1; color: #555; cursor: pointer; border-radius: 8px; }
+.gw-doku-zu:hover { background: #f2f2f2; }
+.gw-doku-rumpf { display: flex; flex: 1 1 auto; min-height: 0; }
+.gw-doku-nav { flex: 0 0 260px; overflow-y: auto; border-right: 1px solid #eee; padding: 10px 8px 16px; background: #fafafa; }
+.gw-doku-gruppe { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: #888; margin: 12px 8px 4px; }
+.gw-doku-gruppe:first-child { margin-top: 2px; }
+.gw-doku-link { display: block; width: 100%; text-align: left; border: none; background: none; font: inherit; font-size: 14px; color: #222; padding: 6px 10px; border-radius: 6px; cursor: pointer; }
+.gw-doku-link:hover { background: #eef0ee; }
+.gw-doku-link.aktiv { background: var(--gw-akzent-hell, #eaf2fb); color: var(--gw-akzent-dunkel, #2a6fbf); font-weight: 600; }
+.gw-doku-auszug { display: block; font-size: 12px; font-weight: 400; color: #666; margin-top: 2px; line-height: 1.35; }
+.gw-doku-leer { font-size: 13px; color: #666; margin: 6px 10px; }
+.gw-doku-inhalt { flex: 1 1 auto; overflow-y: auto; padding: 18px 28px 22px; font-size: 15px; line-height: 1.6; }
+.gw-doku-pfad { font-size: 12px; color: #888; }
+.gw-doku-thema { font-size: 20px; font-weight: 600; margin: 2px 0 12px; line-height: 1.3; }
+.gw-doku-inhalt p { margin: 0 0 12px; max-width: 68ch; }
+.gw-doku-legende { display: inline-block; padding: 12px 18px; margin: 0 0 14px; background: #f7f7f7; border-radius: 8px; }
+.gw-doku-legende .gw-layer-legende { margin-top: 0; min-width: 240px; }
+.gw-doku-legende-text { font-size: 13px; color: #555; margin: 8px 0 0 !important; max-width: 46ch; line-height: 1.45; }
+.gw-doku-dgv .gw-afc-ring-wrap { margin: 8px 26px 6px; }
+.gw-doku-linien { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.gw-doku-linie { display: flex; align-items: center; gap: 8px; }
+.gw-doku-linie .gw-legend-swatch { width: 24px; }
+.gw-doku-quelle { font-size: 12px; color: #777; border-top: 1px solid #eee; padding-top: 8px; }
+.gw-doku-blaettern { display: flex; justify-content: space-between; gap: 12px; margin-top: 22px; }
+.gw-doku-blatt-knopf { border: 1px solid #d0d0d0; background: white; border-radius: 8px; padding: 7px 12px; font: inherit; font-size: 13px; color: #333; cursor: pointer; max-width: 48%; text-align: left; }
+.gw-doku-weiter { text-align: right; margin-left: auto; }
+.gw-doku-blatt-knopf:hover { border-color: var(--gw-akzent, #4a90d9); color: var(--gw-akzent-dunkel, #2a6fbf); }
+.gw-doku mark { background: #fff3a8; color: inherit; border-radius: 2px; padding: 0 1px; }
+@media (max-width: 700px), (max-height: 500px) and (pointer: coarse) {
+  .gw-doku { padding: 0; }
+  .gw-doku-fenster { width: 100%; height: 100%; border-radius: 0; }
+  .gw-doku-kopf { flex-wrap: wrap; gap: 8px; padding: 10px 10px 10px 14px; padding-top: calc(10px + env(safe-area-inset-top)); }
+  .gw-doku-h { flex: 1 1 auto; }
+  .gw-doku-suche { order: 3; flex-basis: 100%; }
+  .gw-doku-menue { display: inline-block; font: inherit; font-size: 13px; padding: 6px 10px; border: 1px solid #c8c8c8; border-radius: 8px; background: white; }
+  .gw-doku-rumpf { position: relative; }
+  .gw-doku-nav { display: none; position: absolute; inset: 0; z-index: 2; border-right: none; }
+  .gw-doku.gw-doku-nav-offen .gw-doku-nav, .gw-doku.gw-doku-sucht:not(.gw-doku-ergebnis) .gw-doku-nav { display: block; }
+  .gw-doku-inhalt { padding: 14px 16px 20px; }
+}
+
+/* Handy-Layout: Seite in Bildschirmhoehe, Karte fuellt den Rest, Griff im
+   Teaser-Kopf (Klasse gw-mobil-app, nur auf dem Handy gesetzt) */
+.gw-teaser-pfeile { display: none; gap: 4px; flex: none; }
+#gw-seite.gw-mobil-app { display: flex !important; flex-direction: column; height: 100vh; height: 100dvh; overflow: hidden; max-width: none !important; margin: 0 !important; padding: 0 !important; background: white; }
+#gw-seite.gw-mobil-app > * { flex: none; }
+#gw-seite.gw-mobil-app > .gw-mobil-kopf { order: 1; }
+#gw-seite.gw-mobil-app > #gw-kartenzeile { order: 2; flex: 1 1 auto; min-height: 0; position: relative; overflow: hidden; }
+#gw-seite.gw-mobil-app #datenexplorer-growthmap { position: absolute !important; inset: 0; height: auto !important; min-width: 0 !important; }
+#gw-seite.gw-mobil-app #datenexplorer-growthmap > .html-widget { position: absolute !important; top: 0; left: 0; }
+#gw-seite.gw-mobil-app > .gw-kartenleiste { order: 3; }
+#gw-seite.gw-mobil-app > .gw-teaser { order: 4; padding: 0; border-top: 1px solid #e6e6e6; }
+#gw-seite.gw-mobil-app > .gw-mobil-knoepfe { order: 5; padding-top: 6px; }
+#gw-seite.gw-mobil-app > #datenexplorer-slider { order: 6; }
+#gw-seite.gw-mobil-app > .gw-kurvenbereich { order: 7; }
+#gw-seite.gw-mobil-app .gw-slider-row { margin: 0 10px calc(6px + env(safe-area-inset-bottom)); }
+#gw-seite.gw-mobil-app .gw-teaser-kopf { position: relative; margin: 0; padding: 12px 10px 6px; background: #fafafa; cursor: row-resize; touch-action: none; user-select: none; }
+#gw-seite.gw-mobil-app .gw-teaser-kopf:before { content: ""; position: absolute; top: 4px; left: 50%; width: 36px; height: 4px; margin-left: -18px; border-radius: 2px; background: #c8c8c8; }
+#gw-seite.gw-mobil-app .gw-teaser-kopf:focus-visible { outline: 2px solid var(--gw-akzent, #4a90d9); outline-offset: -2px; }
+#gw-seite.gw-mobil-app .gw-teaser-pfeile { display: inline-flex; }
+#gw-seite.gw-mobil-app .gw-teaser-titel { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#gw-seite.gw-mobil-app .gw-teaser-wahl { max-width: 42%; }
+#gw-seite.gw-mobil-app .gw-teaser-koerper { overflow: hidden; padding: 0 10px; }
+#gw-seite.gw-mobil-app .gw-teaser-plot { height: auto; }
+#gw-seite.gw-teaser-zu .gw-teaser-pfeile .gw-griff-pfeil:last-child, #gw-seite.gw-teaser-voll .gw-teaser-pfeile .gw-griff-pfeil:first-child { opacity: .35; }
