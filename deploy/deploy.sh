@@ -7,8 +7,9 @@
 #      sind so in wenigen Minuten live.
 #
 # Aufruf aus dem Repo:  deploy/deploy.sh [Datei ...]
-#   ohne Angabe: 27_plot_datenexplorer.R
-#   Beispiel:    deploy/deploy.sh 27_plot_datenexplorer.R deploy/upload_svgs.R
+#   ohne Angabe: 27_plot_datenexplorer.R und frontend/* (Datenexplorer-JS/CSS)
+#   Beispiel:    deploy/deploy.sh frontend/datenexplorer.js
+#   Pfade mit Unterordner (z.B. frontend/) bleiben auf dem Server erhalten.
 #
 # Nach Aenderungen an deploy/entrypoint.sh: Container neu starten
 # (docker compose up -d --force-recreate). An deploy/nginx.conf:
@@ -20,11 +21,12 @@ ZIEL="${GRASSGROWTH_ZIEL:-/opt/stacks/agff-apps/r-grassgrowth}"
 CONTAINER="${GRASSGROWTH_CONTAINER_NAME:-agff-grassgrowth}"
 cd "$(dirname "$0")/.."
 
-if [ "$#" -eq 0 ]; then set -- 27_plot_datenexplorer.R; fi
+if [ "$#" -eq 0 ]; then set -- 27_plot_datenexplorer.R frontend/*; fi
 for f in "$@"; do
   [ -f "$f" ] || { echo "Datei fehlt: $f" >&2; exit 1; }
   case "$f" in
     deploy/*) scp -q "$f" "$SERVER:$ZIEL/deploy/" ;;
+    */*)      ssh "$SERVER" "mkdir -p '$ZIEL/app/$(dirname "$f")'" && scp -q "$f" "$SERVER:$ZIEL/app/$f" ;;
     *)        scp -q "$f" "$SERVER:$ZIEL/app/" ;;
   esac
   echo "kopiert: $f"

@@ -1,0 +1,231 @@
+/* Datenexplorer Graswachstum - Stile (frueher als Strings im R-Skript) */
+
+/* Grundlayout, Ebenen-Kasten, Kurve, Zeitleiste */
+*, *:before, *:after { box-sizing: border-box; }
+.gw-title { font-family: var(--gw-schrift, sans-serif); font-size: 22px; font-weight: 600; margin: 4px 0 10px 0; }
+.gw-controls { margin-bottom: 10px; font-family: var(--gw-schrift, sans-serif); font-size: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 20px; }
+.gw-combo { position: relative; display: inline-block; max-width: 100%; }
+.gw-combo input { padding: 5px 8px; font-size: 14px; width: 240px; max-width: 100%; border: 1px solid #bbb; border-radius: 4px; }
+.gw-combo-list { position: absolute; z-index: 1000; top: 100%; left: 0; background: white; border: 1px solid #bbb; border-radius: 4px; max-height: 260px; overflow-y: auto; width: 240px; max-width: 100%; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+.gw-combo-item { padding: 6px 9px; cursor: pointer; }
+.gw-combo-item:hover, .gw-combo-item.active { background: var(--gw-akzent-hell, #eaf2fb); }
+.gw-combo-sep { padding: 4px 9px; font-size: 11px; color: #888; border-top: 1px solid #eee; margin-top: 2px; user-select: none; }
+.gw-year-select { padding: 5px 8px; font-size: 14px; border: 1px solid #bbb; border-radius: 4px; }
+.gw-layer-panel { font-family: var(--gw-schrift, sans-serif); font-size: 13px; background: #f7f7f7; border-radius: 6px; padding: 12px 14px; }
+#datenexplorer-growthmap .hoverlayer { display: none !important; }
+.gw-tooltip-modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); z-index: 2000; background: white; border: 1px solid #999; border-radius: 8px; padding: 10px 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); max-width: 85vw; max-height: 80vh; overflow-y: auto; font-family: var(--gw-schrift, sans-serif); font-size: 13px; line-height: 1.5; color: #222; pointer-events: none; }
+.gw-layer-heading { font-weight: 600; margin-bottom: 8px; }
+.gw-layer-option { display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer; }
+.gw-layer-option-zeile { display: flex; align-items: center; gap: 4px; }
+.gw-info-wrap { position: relative; display: inline-flex; }
+.gw-info-btn { width: 16px; height: 16px; border-radius: 50%; border: 1px solid #888; background: white; color: #555; font-size: 11px; line-height: 1; cursor: pointer; padding: 0; display: flex; align-items: center; justify-content: center; font-style: italic; font-family: Georgia, serif; flex-shrink: 0; }
+.gw-info-btn:hover { background: var(--gw-akzent-hell, #eaf2fb); border-color: var(--gw-akzent, #4a90d9); color: var(--gw-akzent-dunkel, #2a6fbf); }
+.gw-info-popup { position: absolute; z-index: 20; top: 20px; left: 0; width: 210px; max-width: 85vw; background: white; border: 1px solid #bbb; border-radius: 6px; padding: 10px 12px; font-size: 12px; line-height: 1.4; color: #333; box-shadow: 0 2px 10px rgba(0,0,0,0.15); cursor: auto; }
+.gw-layer-option input:disabled + span { color: #aaa; }
+.gw-meteo-fenster { margin-top: 10px; }
+.gw-meteo-fenster-label { font-size: 11px; color: #555; margin-bottom: 3px; }
+.gw-meteo-fenster input[type=range] { width: 100%; margin: 0; }
+.gw-layer-legende { margin-top: 10px; }
+.gw-layer-legende-balken-wrap { position: relative; padding-bottom: 7px; }
+.gw-layer-legende-balken { height: 12px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.15); }
+.gw-legende-pfeil { position: absolute; top: 12px; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-bottom: 6px solid #333; transform: translateX(-50%); pointer-events: none; }
+.gw-afc-ring-wrap { position: relative; width: 80px; height: 80px; margin: 0 auto; }
+.gw-afc-ring { position: absolute; top: 12px; left: 12px; width: 56px; height: 56px; border-radius: 50%; -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 10px), #000 calc(100% - 10px)); mask: radial-gradient(farthest-side, transparent calc(100% - 10px), #000 calc(100% - 10px)); }
+.gw-afc-ring-svg { position: absolute; top: 0; left: 0; overflow: visible; }
+.gw-afc-null { text-align: center; font-size: 10px; color: #555; margin-bottom: -6px; }
+.gw-layer-legende-skala { display: flex; justify-content: space-between; font-size: 11px; color: #555; margin-top: 3px; }
+.gw-layer-legende-quelle { font-size: 10px; color: #888; margin-top: 4px; }
+.gw-layer-wert-anzeige { font-size: 12px; font-weight: 600; margin-top: 8px; padding-top: 8px; border-top: 1px solid #eee; }
+.gw-layer-wert-zusatz { font-weight: 400; color: #555; margin-top: 2px; padding-top: 0; border-top: none; }
+.gw-lade-punkte { display: inline-flex; gap: 2px; vertical-align: middle; }
+.gw-lade-punkte span { width: 4px; height: 4px; border-radius: 50%; background: #888; display: inline-block; animation: gwBlink 1s infinite ease-in-out; }
+.gw-lade-punkte span:nth-child(2) { animation-delay: 0.15s; }
+.gw-lade-punkte span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes gwBlink { 0%, 80%, 100% { opacity: 0.2; } 40% { opacity: 1; } }
+.gw-toggle-wrap { display: flex; align-items: center; gap: 8px; }
+.gw-layer-vor-boden { margin-top: 10px; padding-top: 10px; border-top: 1px solid #ddd; }
+.gw-toggle { position: relative; display: inline-block; width: 42px; height: 22px; flex-shrink: 0; }
+.gw-toggle input { opacity: 0; width: 0; height: 0; }
+.gw-toggle-slider { position: absolute; inset: 0; background-color: #ccc; transition: .15s; border-radius: 22px; cursor: pointer; }
+.gw-toggle-slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: white; transition: .15s; border-radius: 50%; }
+.gw-toggle input:checked + .gw-toggle-slider { background-color: var(--gw-akzent, #4a90d9); }
+.gw-toggle input:checked + .gw-toggle-slider:before { transform: translateX(20px); }
+.gw-toggle input:disabled + .gw-toggle-slider { opacity: 0.4; cursor: not-allowed; }
+.gw-chart-row { display: flex; flex-direction: row; width: 100%; }
+.gw-legend-panel { flex: 0 0 210px; width: 210px; overflow-y: auto; overflow-x: hidden; border-left: 1px solid #ddd; box-sizing: border-box; padding: 10px 14px; font-family: var(--gw-schrift, sans-serif); font-size: 13px; transition: flex-basis .15s ease, width .15s ease, padding .15s ease, border-color .15s ease; }
+.gw-legend-panel.collapsed { flex-basis: 0; width: 0; padding-left: 0; padding-right: 0; border-left-color: transparent; }
+.gw-legend-header { display: flex; align-items: center; justify-content: space-between; font-weight: 600; margin-bottom: 8px; white-space: nowrap; }
+.gw-legend-options { display: flex; flex-direction: column; gap: 8px; padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid #eee; }
+.gw-legend-close { background: none; border: none; cursor: pointer; font-size: 16px; color: #777; line-height: 1; padding: 2px 4px; }
+.gw-legend-close:hover { color: #000; }
+.gw-legend-item { display: flex; align-items: center; gap: 8px; padding: 3px 4px; white-space: nowrap; border-radius: 3px; }
+.gw-legend-item-clickable { cursor: pointer; }
+.gw-legend-item-clickable:hover { background: var(--gw-akzent-hell, #eef4fb); }
+.gw-legend-swatch { display: inline-block; width: 22px; height: 0; border-top-width: 3px; border-top-style: solid; flex-shrink: 0; }
+.gw-legend-edge { flex: 0 0 34px; width: 34px; border-left: 1px solid #ddd; display: flex; flex-direction: column; align-items: center; padding-top: 6px; box-sizing: border-box; }
+.gw-edge-btn { width: 26px; height: 26px; border: 1px solid #bbb; border-radius: 4px; background: white; cursor: pointer; font-size: 15px; display: flex; align-items: center; justify-content: center; color: #333; padding: 0; }
+.gw-edge-btn:hover { background: #f2f2f2; }
+.gw-edge-btn.active { background: var(--gw-akzent-hell, #eaf2fb); border-color: var(--gw-akzent, #4a90d9); color: var(--gw-akzent-dunkel, #2a6fbf); }
+.gw-slider-row { font-family: var(--gw-schrift, sans-serif); font-size: 14px; display: flex; align-items: center; margin: 10px 0; padding: 10px 16px; background: #f7f7f7; border-radius: 6px; }
+.gw-slider-aligned { flex: 0 0 auto; box-sizing: border-box; min-width: 0; }
+.gw-slider-label-row { display: flex; align-items: center; gap: 10px; width: 100%; margin-bottom: 8px; }
+.gw-slider-track-row { display: flex; align-items: center; width: 100%; }
+.gw-slider-track-row input[type=range] { flex: 1 1 auto; min-width: 0; width: 100%; }
+.gw-slider-label { flex: 1 1 auto; font-weight: 600; text-align: center; }
+.gw-slider-datum { font-weight: 400; font-size: 12px; color: #666; margin-top: 2px; }
+.gw-slider-tooltip { position: absolute; top: -8px; transform: translate(-50%, -100%); background: #333; color: white; padding: 3px 9px; border-radius: 4px; font-size: 12px; white-space: nowrap; pointer-events: none; z-index: 10; }
+.gw-slider-tooltip:after { content: ""; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); border: 5px solid transparent; border-top-color: #333; }
+.gw-step-btn { flex: 0 0 auto; width: 30px; height: 30px; border: 1px solid #bbb; border-radius: 4px; background: white; cursor: pointer; font-size: 12px; display: flex; align-items: center; justify-content: center; color: #333; }
+.gw-step-btn:hover { background: var(--gw-akzent-hell, #eaf2fb); border-color: var(--gw-akzent, #4a90d9); }
+.gw-today-btn { width: auto; padding: 0 12px; font-size: 13px; font-weight: 600; margin-left: auto; }
+.gw-zukunft-maske { position: absolute; background: rgba(0,0,0,0.4); border-radius: 3px; pointer-events: none; z-index: 2; }
+.gw-map-controls-panel { flex: 0 1 220px; min-width: 220px; max-width: 240px; }
+@media (max-width: 700px), (max-height: 500px) and (pointer: coarse) {
+  .gw-chart-row { flex-direction: column; }
+  .gw-legend-panel { flex: 1 1 auto; width: 100%; border-left: none; border-top: 1px solid #ddd; max-height: 260px; }
+  .gw-legend-panel.collapsed { max-height: 0; overflow: hidden; padding-top: 0; padding-bottom: 0; border-top-color: transparent; }
+  .gw-legend-edge { order: -1; flex-direction: row; width: 100%; justify-content: flex-end; border-left: none; border-top: 1px solid #ddd; padding: 6px 0; }
+  .gw-info-btn { width: 22px; height: 22px; font-size: 13px; }
+  .gw-step-btn { width: 34px; height: 34px; }
+  .gw-map-controls-panel { flex: 1 1 auto; max-width: none; }
+}
+
+/* Blatt, Mobile, App-Layout, Einbettung, Hilfe */
+.gw-blatt { position: fixed; z-index: 3000; background: white; box-shadow: 0 4px 24px rgba(0,0,0,0.25); font-family: var(--gw-schrift, sans-serif); font-size: 13px; color: #222; overflow-y: auto; right: 20px; bottom: 20px; width: 340px; max-height: 70vh; max-height: 70dvh; border-radius: 10px; padding: 12px 16px; box-sizing: border-box; }
+.gw-blatt-griff { display: none; width: 36px; height: 4px; border-radius: 2px; background: #ccc; margin: 0 auto 8px; }
+.gw-blatt-kopf { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 4px; }
+.gw-blatt-titel { flex: 1; font-weight: 600; font-size: 15px; }
+.gw-blatt-zu { border: none; background: none; font-size: 22px; line-height: 1; cursor: pointer; color: #555; padding: 0 2px; }
+.gw-blatt-unter { color: #666; font-size: 12px; margin-bottom: 8px; }
+.gw-blatt-zeile { display: flex; justify-content: space-between; gap: 8px; padding: 5px 0; border-bottom: 1px solid #eee; }
+.gw-blatt-zeile b { font-weight: 600; text-align: right; }
+.gw-blatt-knopf { display: block; width: 100%; margin-top: 10px; padding: 9px; border: 1px solid #bbb; border-radius: 6px; background: white; font-size: 13px; cursor: pointer; }
+.gw-blatt-text { font-size: 13px; line-height: 1.5; }
+.gw-mobil-only { display: none; }
+.gw-mobil-kopf-titel { font-weight: 600; font-size: 17px; }
+.gw-mobil-kopf-unter { font-size: 12px; color: #555; margin-top: 1px; }
+.gw-kartenleiste { padding: 6px 10px; border-bottom: 1px solid #eee; font-size: 12px; }
+.gw-kartenleiste-legende { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.gw-kartenleiste-balken { flex: 1; height: 8px; border-radius: 2px; min-width: 40px; }
+.gw-kartenleiste-wert { font-weight: 600; }
+.gw-mobil-knoepfe { gap: 8px; padding: 4px 10px 10px; }
+.gw-mobil-knoepfe button, .gw-werkzeug-knopf { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 9px 12px; border: 1px solid #c8c8c8; border-radius: 8px; background: white; color: #222; font: inherit; font-size: 14px; font-weight: 500; line-height: 1.2; cursor: pointer; }
+.gw-mobil-knoepfe button { flex: 1; }
+.gw-mobil-knoepfe button:active, .gw-werkzeug-knopf:active { background: var(--gw-akzent-hell, #eaf2fb); }
+.gw-mobil-knoepfe button.aktiv { background: var(--gw-akzent-hell, #eaf2fb); border-color: var(--gw-akzent, #4a90d9); color: var(--gw-akzent-dunkel, #2a6fbf); }
+.gw-icon { flex: none; display: inline-block; width: 18px; height: 18px; color: var(--gw-akzent, #4a90d9); }
+.gw-mobil-knoepfe button.aktiv .gw-icon { color: inherit; }
+.gw-werkzeugleiste { display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 8px; }
+.gw-werkzeug-knopf { padding: 6px 10px; font-size: 13px; }
+:root { --gw-akzent: #459185; --gw-akzent-dunkel: #244c46; --gw-akzent-hell: #e3f0ee; --gw-schrift: Inter, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif; }
+#gw-seite { position: relative; accent-color: var(--gw-akzent, #4a90d9); font-family: var(--gw-schrift, sans-serif) !important; }
+#gw-seite.gw-eingebettet { padding: 0 !important; max-width: none !important; font-family: var(--gw-schrift, sans-serif) !important; }
+#gw-seite.gw-vollbild { position: fixed; inset: 0; z-index: 2500; margin: 0 !important; max-width: none !important; padding: 12px 20px !important; background: white; overflow-y: auto; overscroll-behavior: contain; }
+html.gw-vollbild-aktiv, html.gw-vollbild-aktiv body { overflow: hidden !important; }
+#gw-seite svg, #gw-seite img, #gw-seite canvas { max-width: none; }
+#gw-seite .main-svg { display: inline; }
+#gw-seite.gw-app { display: grid !important; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto auto; height: 100vh; height: 100dvh; max-width: none !important; margin: 0 !important; padding: 0 !important; box-sizing: border-box; overflow: hidden; background: white; }
+html.gw-app-seite, html.gw-app-seite body { margin: 0; height: 100%; overflow: hidden; }
+#gw-seite.gw-app > .gw-mobil-kopf { grid-row: 1; grid-column: 1; display: block; padding: 10px 16px 9px; border-bottom: 1px solid #e6e6e6; }
+#gw-seite.gw-app > .gw-werkzeugleiste { grid-row: 1; grid-column: 1; justify-self: end; align-self: center; margin: 0 14px 0 0; z-index: 2; }
+#gw-seite.gw-app > .gw-kartenleiste, #gw-seite.gw-app > .gw-mobil-knoepfe { display: none !important; }
+#gw-seite.gw-app > #gw-kartenzeile { grid-row: 2; grid-column: 1; display: flex !important; flex-wrap: nowrap !important; gap: 0 !important; align-items: stretch !important; min-height: 0; position: relative; }
+#gw-seite.gw-app #datenexplorer-growthmap { flex: 1 1 auto !important; min-width: 0 !important; height: auto !important; position: relative; }
+#gw-seite.gw-app #datenexplorer-growthmap > .html-widget { position: absolute !important; top: 0; left: 0; }
+#gw-seite.gw-app .gw-map-controls-panel { order: -1; flex: 0 0 270px; max-width: 270px; min-width: 0; overflow-y: auto; overscroll-behavior: contain; border-right: 1px solid #e6e6e6; box-sizing: border-box; background: #f7f7f7; }
+#gw-seite.gw-app .gw-layer-panel { border-radius: 0; min-height: 100%; box-sizing: border-box; }
+#gw-seite.gw-app.gw-ebenen-zu .gw-map-controls-panel { display: none; }
+#gw-seite.gw-app.gw-app-schmal .gw-map-controls-panel { position: absolute; left: 51px; top: 0; bottom: 0; z-index: 20; flex: none; width: 310px; max-width: calc(100% - 60px); box-shadow: 6px 0 20px rgba(0,0,0,0.18); }
+.gw-app-leiste { display: none; }
+#gw-seite.gw-app .gw-app-leiste { order: -2; display: flex; flex-direction: column; gap: 8px; padding: 10px 6px; border-right: 1px solid #e6e6e6; background: white; flex: 0 0 auto; }
+.gw-leiste-knopf { width: 38px; height: 38px; padding: 0; border: 1px solid #c8c8c8; border-radius: 8px; background: white; color: #222; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.gw-leiste-knopf .gw-icon { width: 20px; height: 20px; }
+.gw-leiste-knopf.aktiv { background: var(--gw-akzent-hell, #eaf2fb); border-color: var(--gw-akzent, #4a90d9); }
+.gw-leiste-knopf:hover { border-color: var(--gw-akzent, #4a90d9); }
+.gw-kurve-griff { display: none; }
+#gw-seite.gw-app > .gw-kurvenbereich { grid-row: 3; grid-column: 1; border-top: 1px solid #ddd; background: white; min-width: 0; }
+#gw-seite.gw-app .gw-kurve-griff:before { content: ""; position: absolute; top: 3px; left: 50%; width: 36px; height: 3px; margin-left: -18px; border-radius: 2px; background: #ccc; }
+.gw-kurve-griff-titel { font-weight: 600; }
+.gw-kurve-griff-info { color: #666; font-size: 13px; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#gw-seite.gw-app .gw-kurve-inhalt > .gw-title { display: none; }
+#gw-seite.gw-app .gw-kurve-griff { display: flex; align-items: center; gap: 8px; padding: 9px 12px 5px 16px; background: #fafafa; border-bottom: 1px solid #eee; font-size: 14px; color: #222; cursor: row-resize; touch-action: none; user-select: none; position: relative; }
+#gw-seite.gw-app .gw-kurve-griff:focus-visible { outline: 2px solid var(--gw-akzent, #4a90d9); outline-offset: -2px; }
+.gw-griff-pfeil { flex: none; width: 30px; height: 26px; padding: 0; border: 1px solid #c8c8c8; border-radius: 6px; background: white; color: #333; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.gw-griff-pfeil .gw-icon { width: 16px; height: 16px; color: inherit; }
+.gw-griff-pfeil:hover { border-color: var(--gw-akzent, #4a90d9); color: var(--gw-akzent-dunkel, #2a6fbf); }
+#gw-seite.gw-kurve-voll .gw-griff-pfeil:first-of-type, #gw-seite.gw-kurve-zu .gw-griff-pfeil:last-of-type { opacity: .35; }
+#gw-seite.gw-app .gw-kurve-inhalt { display: block; overflow: hidden; padding: 0 16px; box-sizing: border-box; }
+#gw-seite.gw-app > #gw-kartenzeile { overflow: hidden; }
+#gw-seite.gw-griff-zieht, #gw-seite.gw-griff-zieht * { cursor: row-resize !important; user-select: none; }
+.gw-legend-mehr { display: block; width: 100%; margin: 4px 0 6px; padding: 4px 6px; border: 1px dashed #bbb; border-radius: 4px; background: white; color: #555; font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.gw-legend-mehr:hover { border-color: var(--gw-akzent, #4a90d9); color: var(--gw-akzent-dunkel, #2a6fbf); }
+.gw-teaser { padding: 6px 10px 0; }
+.gw-teaser-kopf { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+.gw-teaser-titel { font-weight: 600; font-size: 14px; flex: 1 1 auto; }
+.gw-teaser-wahl { flex: 0 1 auto; max-width: 55%; font: inherit; font-size: 13px; padding: 5px 6px; border: 1px solid #c8c8c8; border-radius: 6px; background: white; }
+.gw-teaser-plot { height: 140px; cursor: pointer; }
+.gw-teaser-legende { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 12px; color: #555; margin-top: 2px; }
+.gw-teaser-legende .gw-legend-swatch { width: 16px; border-top-width: 2px; margin-right: 4px; vertical-align: middle; }
+.gw-detail-kopf, .gw-dreh-hinweis { display: none; }
+body.gw-kurve-detail .gw-kurvenbereich { display: flex !important; flex-direction: column; position: fixed; inset: 0; z-index: 2600; background: white; overflow-y: auto; overscroll-behavior: contain; }
+html.gw-detail-offen, html.gw-detail-offen body { overflow: hidden !important; }
+body.gw-kurve-detail .gw-detail-kopf { display: flex; align-items: center; gap: 8px; padding: 8px 10px; padding-top: calc(8px + env(safe-area-inset-top)); border-bottom: 1px solid #e6e6e6; position: sticky; top: 0; background: white; z-index: 3; }
+.gw-detail-zurueck { flex: none; width: 36px; height: 36px; padding: 0; border: 1px solid #c8c8c8; border-radius: 8px; background: white; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.gw-detail-titel { flex: 1 1 auto; min-width: 0; font-weight: 600; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gw-quer-knopf { animation: gw-blinken 1.4s ease-in-out infinite; border-color: var(--gw-akzent, #4a90d9); color: var(--gw-akzent-dunkel, #2a6fbf); }
+@keyframes gw-blinken { 50% { opacity: .4; } }
+body.gw-kurve-detail .gw-quer-knopf span { display: inline !important; }
+body.gw-kurve-detail .gw-quer-knopf { padding: 6px 10px !important; }
+body.gw-kurve-detail .gw-chart-row .modebar-container { display: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .gw-quer-knopf { animation: none; }
+}
+body.gw-kurve-detail .gw-dreh-hinweis.sichtbar { display: block; margin: 8px 10px 0; padding: 8px 10px; border-radius: 8px; background: var(--gw-akzent-hell, #eaf2fb); font-size: 13px; }
+body.gw-kurve-detail .gw-kurve-inhalt { padding: 6px 8px 12px; }
+body.gw-kurve-detail .gw-kurve-inhalt > .gw-title { display: none; }
+@media (orientation: landscape) and (max-height: 500px) {
+  body.gw-kurve-detail .gw-quer-knopf, body.gw-kurve-detail .gw-controls, body.gw-kurve-detail .gw-legend-panel, body.gw-kurve-detail .gw-legend-edge { display: none !important; }
+  body.gw-kurve-detail .gw-detail-kopf { padding-top: 4px; padding-bottom: 4px; }
+  body.gw-kurve-detail .gw-kurve-inhalt { padding: 0 4px; }
+}
+#gw-seite.gw-app .gw-kurve-inhalt .gw-controls { margin-bottom: 6px; }
+#gw-seite.gw-app > #datenexplorer-slider { grid-row: 4; grid-column: 1; border-top: 1px solid #ddd; }
+#gw-seite.gw-app .gw-slider-row { margin: 0; border-radius: 0; padding: 8px 16px calc(8px + env(safe-area-inset-bottom)); }
+#gw-seite.gw-app .gw-slider-aligned { display: flex; align-items: center; gap: 14px; margin-left: 0 !important; width: auto !important; flex: 1 1 auto !important; }
+#gw-seite.gw-app .gw-slider-label-row { width: auto; flex: 0 0 auto; margin: 0; }
+#gw-seite.gw-app .gw-slider-label { min-width: 130px; }
+#gw-seite.gw-app .gw-slider-track-row { flex: 1 1 auto; }
+.gw-play-btn { margin-left: auto; }
+#gw-seite.gw-app .gw-play-btn { margin-left: 12px; }
+.gw-play-btn .gw-icon { width: 16px; height: 16px; color: inherit; }
+.gw-play-btn.aktiv { background: var(--gw-akzent-hell, #eaf2fb); border-color: var(--gw-akzent, #4a90d9); color: var(--gw-akzent-dunkel, #2a6fbf); }
+.gw-play-btn + .gw-today-btn { margin-left: 8px; }
+html.gw-app-aktiv .gw-blatt { bottom: 86px; }
+#gw-seite.gw-eingebettet:not(.gw-app) > #datenexplorer-slider { position: sticky; bottom: 0; z-index: 30; }
+#gw-seite.gw-eingebettet:not(.gw-app) > #datenexplorer-slider .gw-slider-row { box-shadow: 0 -3px 12px rgba(0,0,0,0.08); }
+.gw-ebenen-zu-zeile { justify-content: space-between; align-items: center; margin-bottom: 4px; }
+@media (max-width: 700px), (max-height: 500px) and (pointer: coarse) {
+  .gw-blatt { left: 0; right: 0; bottom: 0; width: auto; max-height: 65vh; max-height: 65dvh; border-radius: 14px 14px 0 0; padding: 8px 16px calc(14px + env(safe-area-inset-bottom)); }
+  .gw-blatt-griff { display: block; }
+  .gw-desktop-only { display: none !important; }
+  .gw-mobil-only { display: block; }
+  .gw-mobil-knoepfe, .gw-ebenen-zu-zeile { display: flex; }
+  #gw-seite { padding: 0 !important; }
+  #gw-kartenzeile { gap: 0 !important; }
+  .gw-mobil-kopf { padding: 8px 10px 2px; }
+  .gw-werkzeugleiste { position: absolute; top: 8px; right: 10px; margin: 0; z-index: 5; }
+  #gw-seite.gw-eingebettet .gw-mobil-kopf { padding-right: 56px; }
+  .gw-werkzeug-knopf span { display: none; }
+  .gw-werkzeug-knopf { padding: 7px; }
+  #gw-seite.gw-vollbild { padding: 0 !important; }
+  .gw-map-controls-panel { display: none; }
+  body.gw-ebenen-offen .gw-map-controls-panel { display: block; position: fixed; left: 0; right: 0; bottom: 0; z-index: 2900; max-height: 72vh; max-height: 72dvh; overflow-y: auto; overscroll-behavior: contain; border-radius: 14px 14px 0 0; box-shadow: 0 -4px 24px rgba(0,0,0,0.25); padding-bottom: env(safe-area-inset-bottom); background: #f7f7f7; }
+  .gw-ebenen-zu-zeile { position: sticky; top: -12px; z-index: 2; background: #f7f7f7; margin: -12px -14px 6px; padding: 10px 14px 6px; border-bottom: 1px solid #e4e4e4; }
+  .gw-afc-legende-box { display: none !important; }
+  .gw-kurvenbereich { display: none; }
+  .gw-slider-row { margin: 4px 10px; padding: 6px 8px; }
+  .gw-slider-aligned { margin-left: 0 !important; width: auto !important; flex: 1 1 auto !important; }
+  .gw-slider-label-row { gap: 6px; margin-bottom: 4px; }
+  .gw-today-btn { width: auto !important; min-width: 56px; padding: 0 8px; margin-left: 8px; }
+  .gw-play-btn { margin-left: 8px; }
+}
