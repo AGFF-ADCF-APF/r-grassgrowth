@@ -74,8 +74,20 @@ GWDatenexplorer.karte = function(el, x, d) {
     else hoehe = 560;
     if (breite < 50 || hoehe < 50) return;
     var voll = vollAnsichtBerechnen(breite, hoehe);
+    // Hineingezoomt: Ausschnitt behalten (Mitte und Massstab), nur die Hoehe
+    // an das neue Seitenverhaeltnis anpassen - sonst sprang die Karte bei
+    // jeder Groessenaenderung (Drehen, Leiste darunter) auf die ganze Schweiz
+    var xr = el.layout.xaxis && el.layout.xaxis.range, yr = el.layout.yaxis && el.layout.yaxis.range;
+    var gezoomt = vollX && xr && yr && (xr[1] - xr[0]) < (vollX[1] - vollX[0]) * 0.98;
     vollX = voll.x; vollY = voll.y;
-    Plotly.relayout(el, { width: breite, height: hoehe, 'xaxis.range': voll.x, 'yaxis.range': voll.y });
+    if (gezoomt) {
+      var mobil = breite < 700 || window.matchMedia('(max-height: 500px) and (pointer: coarse)').matches;
+      var plotHoehe = hoehe - ((mobil || istAppLayout()) ? 16 : 50);
+      var ySpan = (xr[1] - xr[0]) * plotHoehe / (scaleratio * (breite - 20)), yM = (yr[0] + yr[1]) / 2;
+      Plotly.relayout(el, { width: breite, height: hoehe, 'xaxis.range': xr.slice(), 'yaxis.range': [yM - ySpan / 2, yM + ySpan / 2] });
+    } else {
+      Plotly.relayout(el, { width: breite, height: hoehe, 'xaxis.range': voll.x, 'yaxis.range': voll.y });
+    }
     // Container-Hoehe (CSS, fest 560px im HTML) der tatsaechlichen, hier
     // berechneten Kartenhoehe nachfuehren - sonst bleibt auf Mobile (kleinere
     // hoehe) darunter Leerraum im Container stehen, in dem die Zoom-
@@ -323,11 +335,25 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   function gruppeGewaehlt(gIdx) {
     return selection.type === 'group' ? selection.idx === gIdx : (selection.type === 'multi' && selection.groups.indexOf(gIdx) !== -1);
   }
-  // Farben der Gruppenmittel, wenn mehrere Gruppen kombiniert sind
-  var GRUPPEN_FARBEN = ['black', '#7b3294', '#e66101', '#1b7837', '#2166ac', '#b2182b', '#8c510a', '#01665e'];
+  // Kombinierte Auswahl: jede gewaehlte Kurve bekommt eine eigene, gut
+  // unterscheidbare Farbe (farbenblind-tauglich nach Okabe-Ito, ergaenzt;
+  // bewusst ohne Rot - das ist der Durchschnitt Mittelland), vergeben in der
+  // Reihenfolge der Kaertchen. Ein einzelnes Gruppenmittel bleibt schwarz.
+  var AUSWAHL_FARBEN = ['#0072B2', '#E69F00', '#009E73', '#CC79A7', '#56B4E9', '#D55E00', '#7B3294', '#8C510A', '#999933', '#332288', '#117733', '#AA4499'];
+  function auswahlFarbIndex(type, idx) {
+    if (selection.type !== 'multi') return -1;
+    var gruppenFarbig = selection.groups.length >= 2;
+    if (type === 'group') return gruppenFarbig ? selection.groups.indexOf(idx) : -1;
+    var i = selection.sites.indexOf(idx);
+    return i === -1 ? -1 : i + (gruppenFarbig ? selection.groups.length : 0);
+  }
   function gruppenFarbe(gIdx) {
-    if (selection.type !== 'multi' || selection.groups.length < 2) return 'black';
-    return GRUPPEN_FARBEN[selection.groups.indexOf(gIdx) % GRUPPEN_FARBEN.length];
+    var i = auswahlFarbIndex('group', gIdx);
+    return i === -1 ? 'black' : AUSWAHL_FARBEN[i % AUSWAHL_FARBEN.length];
+  }
+  function siteFarbe(siteIdx) {
+    var i = auswahlFarbIndex('site', siteIdx);
+    return i === -1 ? siteColors[siteIdx] : AUSWAHL_FARBEN[i % AUSWAHL_FARBEN.length];
   }
   function gruppenName(gIdx) { return groupLabels[gIdx].replace(/^Region: /, '').replace(/^Hoehenlage: /, 'Höhenlage '); }
   function auswahlText() {
@@ -375,14 +401,6 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     groupGrowthMeta.forEach(function(m) {
       vis[m.traceIdx] = m.year === selectedYear && gruppeGewaehlt(m.groupIdx);
     });
-    // Gruppenmittel einfaerben (mehrere Gruppen) bzw. zurueck auf schwarz
-    var gIdxListe = [], gFarben = [];
-    groupGrowthMeta.forEach(function(m) {
-      if (m.year !== selectedYear || !el.data[m.traceIdx]) return;
-      var f = gruppenFarbe(m.groupIdx), d = el.data[m.traceIdx];
-      if ((d.line && d.line.color) !== f) { gIdxListe.push(m.traceIdx); gFarben.push(f); }
-    });
-    if (gIdxListe.length) Plotly.restyle(el, { 'line.color': gFarben, 'marker.color': gFarben }, gIdxListe);
     sitePrecipMeta.forEach(function(m) {
       var match = selection.type === 'site' && m.siteIdx === selection.idx;
       vis[m.traceIdx] = precipOn && m.year === selectedYear && match;
@@ -393,6 +411,18 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     vis[standardKurveTraceIdx] = true;
     Plotly.restyle(el, { visible: vis });
     aktualisiereVorjahrOverlay();
+    // Farben der Kurven des gewaehlten Jahres (kombinierte Auswahl: eigene
+    // Palette, sonst Standortfarbe bzw. schwarzes Mittel) - nach dem
+    // Vorjahres-Overlay, das zurueckgesetzte Traces sonst ueberschreiben koennte
+    var fIdx = [], fWerte = [];
+    var setzeFarbe = function(m, f) {
+      var d = el.data[m.traceIdx];
+      if (m.year !== selectedYear || !d) return;
+      if ((d.line && d.line.color) !== f) { fIdx.push(m.traceIdx); fWerte.push(f); }
+    };
+    siteGrowthMeta.forEach(function(m) { setzeFarbe(m, siteFarbe(m.siteIdx)); });
+    groupGrowthMeta.forEach(function(m) { setzeFarbe(m, gruppenFarbe(m.groupIdx)); });
+    if (fIdx.length) Plotly.restyle(el, { 'line.color': fWerte, 'marker.color': fWerte }, fIdx);
     aktualisiereSkala();
     renderLegendItems();
     applyMapState();
@@ -678,6 +708,9 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     if (growthMapGd && !growthMapKlickGebunden) {
       growthMapGd.on('plotly_click', function(data) {
         if (!data.points || data.points.length === 0) return;
+        // Ende einer Zwei-Finger-Geste, Doppeltipp oder Gedrueckthalten ist kein Tipp
+        if (Date.now() - kartenGestenEnde < 500) return;
+        standortGetipptZeit = Date.now();
         var p = data.points[0];
         var orte = mapPointOrts[p.curveNumber];
         var ort = orte ? orte[p.pointNumber] : null;
@@ -720,9 +753,8 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     // setzt das Anzeigefeld zurueck.
     if (growthMapGd && !growthMapZeigerGebunden) {
       growthMapGd.addEventListener('mousemove', verarbeiteKartenZeiger);
-      growthMapGd.addEventListener('touchstart', verarbeiteKartenZeiger, { passive: true });
-      growthMapGd.addEventListener('touchmove', verarbeiteKartenZeiger, { passive: true });
       growthMapGd.addEventListener('mouseleave', versteckeWertAnzeige);
+      bindeKartenGesten(growthMapGd);
       growthMapZeigerGebunden = true;
     }
     if (weekLabel) {
@@ -1084,8 +1116,9 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       'Als Hintergrund der Karte können Wetter- und Bodendaten von MeteoSchweiz eingeblendet werden, z. B. Niederschlag, Temperatur oder die berechnete Bodenwasserbilanz. Die Daten werden jede Nacht aktualisiert.',
       'Im Menü links finden Sie alle Themen, oben die Suche. Die kleinen i-Knöpfe neben den Ebenen öffnen dieses Fenster direkt beim passenden Thema.'] });
   dokuEintrag({ id: 'karte', gruppe: 'Erste Schritte', titel: 'Karte bedienen',
-    stichworte: 'zoom vergroessern verschieben standort antippen klicken plz ort suche fadenkreuz wert cursor standortblatt',
-    text: ['Vergrössern mit dem Mausrad oder mit zwei Fingern, verschieben durch Ziehen. Über die ganze Schweiz hinaus lässt sich nicht verkleinern; das Haus-Symbol der Werkzeugleiste zeigt wieder die ganze Schweiz.',
+    stichworte: 'zoom vergroessern verschieben standort antippen klicken plz ort suche fadenkreuz wert cursor standortblatt zwei finger pinch doppeltipp gedrueckt halten lupe koordinaten touch handy',
+    text: ['Am Computer: vergrössern mit dem Mausrad, einen Ausschnitt durch Aufziehen eines Rechtecks; das Haus-Symbol der Werkzeugleiste zeigt wieder die ganze Schweiz. Über die ganze Schweiz hinaus lässt sich nicht verkleinern.',
+      'Auf Handy und Tablet wie bei Karten-Apps: mit zwei Fingern zoomen und verschieben, doppelt tippen vergrössert. Mit einem Finger scrollt die Seite weiter. Kurz auf einen Standort tippen öffnet sein Blatt; daneben tippen oder den Finger gedrückt halten (und ziehen) zeigt den Wert der Hintergrund-Ebene mit Ort und Koordinaten – beim Gedrückthalten in einer Lupe über dem Finger. Das Fadenkreuz bleibt danach einige Sekunden stehen.',
       'Ein Klick auf einen Standort öffnet das Standortblatt mit dem letzten Messwert, dem DGV, dem Zielbereich der Woche und einer kleinen Saisonkurve. Von dort führt «Ganze Graswachstumskurve anzeigen» zur grossen Kurve dieses Standorts.',
       'Das Feld «PLZ oder Ort suchen» bei den Ebenen setzt ein Fadenkreuz auf den Ort. Ist eine Hintergrund-Ebene aktiv, zeigt der Datenexplorer deren Wert an dieser Stelle (auf dem Desktop auch laufend unter dem Mauszeiger).'] });
   dokuEintrag({ id: 'zeitleiste', gruppe: 'Erste Schritte', titel: 'Zeitleiste und Abspielen',
@@ -1526,7 +1559,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
 
   // Mobile-Elemente rund um die Karte (auf dem Desktop per CSS ausgeblendet)
   var kartenzeileEl = document.getElementById('gw-kartenzeile');
-  var mobilKopfUnterEl = null, kartenleisteLegendeEl = null, kartenleisteWertEl = null, kurveKnopfEl = null, logoEl = null;
+  var mobilKopfUnterEl = null, kartenleisteLegendeEl = null, kartenleisteWertEl = null, kartenleisteZusatzEl = null, kurveKnopfEl = null, logoEl = null;
   var teaserEl = null, teaserTitelEl = null, teaserJahr = null, teaserKoerper = null, teaserKopfEl = null;
   if (kartenzeileEl) {
     var mobilKopf = document.createElement('div');
@@ -1554,7 +1587,9 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     kartenleisteWertEl = document.createElement('div');
     kartenleisteWertEl.className = 'gw-kartenleiste-wert';
     kartenleisteWertEl.style.display = 'none';
-    kartenleiste.appendChild(kartenleisteLegendeEl); kartenleiste.appendChild(kartenleisteWertEl);
+    kartenleisteZusatzEl = document.createElement('div');
+    kartenleisteZusatzEl.className = 'gw-kartenleiste-zusatz';
+    kartenleiste.appendChild(kartenleisteLegendeEl); kartenleiste.appendChild(kartenleisteWertEl); kartenleiste.appendChild(kartenleisteZusatzEl);
     kartenzeileEl.parentNode.insertBefore(kartenleiste, kartenzeileEl.nextSibling);
     var knoepfe = document.createElement('div');
     knoepfe.className = 'gw-mobil-knoepfe gw-mobil-only';
@@ -1795,7 +1830,21 @@ GWDatenexplorer.kurve = function(el, x, daten) {
 
   function setzeWertText(text) {
     if (wertAnzeigeEl) wertAnzeigeEl.textContent = text;
-    if (kartenleisteWertEl) kartenleisteWertEl.textContent = text.replace('Wert am Cursor: ', '').replace('–', 'Auf die Karte tippen für den Wert');
+    wertKurzText = text.replace('Wert am Cursor: ', '');
+    if (kartenleisteWertEl) kartenleisteWertEl.textContent = wertKurzText.replace('–', 'Karte antippen oder gedrückt halten für den Wert');
+    aktualisiereLupe();
+  }
+  // Koordinaten und Ort zum zuletzt abgefragten Punkt (Legende, Leiste unter
+  // der Karte auf dem Handy, Lupe beim Gedrückthalten)
+  var wertKurzText = '', koordText = '', ortText = '';
+  function setzeOrtUndKoordinaten(koord, ort) {
+    if (koord !== null) koordText = koord;
+    if (ort !== null) ortText = ort;
+    if (kartenleisteZusatzEl) {
+      kartenleisteZusatzEl.innerHTML = '';
+      if (ortText || koordText) kartenleisteZusatzEl.innerHTML = [ortText !== wertKurzText ? ortText : '', koordText ? koordText + ' (LV95)' : ''].filter(Boolean).join(' · ');
+    }
+    aktualisiereLupe();
   }
   // Legende der aktiven Hintergrund-Ebene als schmale Leiste unter der Karte
   // (Mobile), i-Knopf zeigt Bezeichnung und Quelle im Blatt.
@@ -1899,7 +1948,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     Array.prototype.slice.call(chipsEl.querySelectorAll('.gw-chip')).forEach(function(c) { c.remove(); });
     var a = auswahlListen();
     var eintraege = a.groups.map(function(g) { return { type: 'group', idx: g, label: gruppenName(g), farbe: gruppenFarbe(g) }; })
-      .concat(a.sites.map(function(i) { return { type: 'site', idx: i, label: siteNames[i], farbe: siteColors[i] }; }));
+      .concat(a.sites.map(function(i) { return { type: 'site', idx: i, label: siteNames[i], farbe: siteFarbe(i) }; }));
     eintraege.forEach(function(o) {
       var chip = document.createElement('span');
       chip.className = 'gw-chip' + (o.type === 'group' ? ' gw-chip-gruppe' : '');
@@ -2464,13 +2513,15 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       '&mapExtent=' + e + ',' + n + ',' + e + ',' + n + '&tolerance=50' +
       '&layers=all:ch.swisstopo-vd.ortschaftenverzeichnis_plz&returnGeometry=false&sr=2056';
     fetch(url).then(function(r) { return r.json(); }).then(function(daten) {
-      if (!ortschaftEl || meineId !== ortschaftAnfrageId) return;
+      if (meineId !== ortschaftAnfrageId) return;
+      if (!ortschaftEl) ortschaftEl = document.createElement('div');
       var treffer = daten && daten.results && daten.results[0];
-      ortschaftEl.textContent = treffer ?
-        ('Ort: ' + treffer.attributes.plz + ' ' + treffer.attributes.langtext) :
-        'Ort: ausserhalb der Schweiz';
+      var ort = treffer ? treffer.attributes.plz + ' ' + treffer.attributes.langtext : 'ausserhalb der Schweiz';
+      ortschaftEl.textContent = 'Ort: ' + ort;
+      setzeOrtUndKoordinaten(null, ort);
     }).catch(function() {
       if (ortschaftEl && meineId === ortschaftAnfrageId) ortschaftEl.textContent = 'Ort: nicht abrufbar (offline?)';
+      if (meineId === ortschaftAnfrageId) setzeOrtUndKoordinaten(null, 'Ort nicht abrufbar');
     });
   }
   // Positioniert den Pfeil auf dem Farbverlaufs-Balken proportional zum Wert
@@ -2488,13 +2539,16 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     legendePfeilEl.style.left = (anteil * 100) + '%';
     legendePfeilEl.style.display = 'block';
   }
-  function zeigeWertAmPunkt(lon, lat) {
-    if (!wertAnzeigeEl) return;
+  // erzwingen: auch ohne aktive Ebene (Tippen/Gedrückthalten auf dem Handy:
+  // Koordinaten und Ort); beim Mauszeiger ohne Ebene keine Ortsabfragen
+  function zeigeWertAmPunkt(lon, lat, erzwingen) {
+    if (!wertAnzeigeEl && !erzwingen) return;
     var lv95 = wgs84ZuLv95(lon, lat);
     if (koordinatenEl) {
       koordinatenEl.textContent = 'Koordinaten: ' + Math.round(lv95.e) + ' / ' + Math.round(lv95.n) + ' (LV95)';
     }
     if (ortschaftEl) ortschaftEl.innerHTML = 'Ort: ' + LADE_PUNKTE_HTML;
+    setzeOrtUndKoordinaten(Math.round(lv95.e) + ' / ' + Math.round(lv95.n), LADE_PUNKTE_HTML);
     ortschaftAnfrageId++;
     clearTimeout(ortschaftAbfrageTimer);
     ortschaftAbfrageTimer = setTimeout(function() {
@@ -2504,6 +2558,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     var gitterJeWoche = aktivesWerteGitter();
     var info = layerLegenden[hintergrundEbene];
     var gitter = gitterJeWoche ? gitterJeWoche[selectedYear + ' ' + selectedWeek] : null;
+    if (!info) setzeWertText('Wert am Cursor: keine Ebene gewählt');
     if (!gitter || !info) { aktualisierePfeilPosition(null); return; }
     var col = Math.floor((lon - gitter.x0) / (gitter.x1 - gitter.x0) * gitter.ncol);
     var row = Math.floor((gitter.y1 - lat) / (gitter.y1 - gitter.y0) * gitter.nrow);
@@ -2521,6 +2576,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     setzeWertText('Wert am Cursor: –');
     if (koordinatenEl) koordinatenEl.textContent = 'Koordinaten: –';
     if (ortschaftEl) ortschaftEl.textContent = 'Ort: –';
+    setzeOrtUndKoordinaten('', '');
     aktualisierePfeilPosition(null);
     ortschaftAnfrageId++;
     clearTimeout(ortschaftAbfrageTimer);
@@ -2537,6 +2593,212 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     var lon = fl.xaxis.p2d(xPixel - fl.xaxis._offset);
     var lat = fl.yaxis.p2d(yPixel - fl.yaxis._offset);
     zeigeWertAmPunkt(lon, lat);
+  }
+
+  // Karte auf Touch-Geraeten wie eine Karten-App (eingebettete Google-Karte):
+  // - zwei Finger: zoomen und verschieben (waehrend der Geste per CSS-
+  //   Transform verschoben/skaliert, erst beim Loslassen neu gezeichnet)
+  // - Doppeltipp: vergroessern
+  // - ein Finger: die Seite scrollt wie gewohnt (Hinweis «zwei Finger»)
+  // - kurz tippen: Standort oeffnen, aber nur, wenn ein Kreis getroffen ist
+  //   (kein «magnetisches» Einrasten auf den naechsten Standort); daneben
+  //   Wert der Ebene mit Fadenkreuz
+  // - gedrueckt halten (auch mit Ziehen): Lupe ueber dem Finger mit Wert,
+  //   Ort und Koordinaten; das Fadenkreuz bleibt danach einige Sekunden
+  var LANG_DRUCK_MS = 450, TIPP_TOLERANZ_PX = 10;
+  var kartenGestenEnde = 0, standortGetipptZeit = 0;
+  var lupeEl = null, kreuzEl = null, hinweisEl = null, kreuzTimer = null, hinweisTimer = null;
+  function gestenElemente() {
+    if (lupeEl) return;
+    lupeEl = document.createElement('div'); lupeEl.className = 'gw-lupe';
+    kreuzEl = document.createElement('div'); kreuzEl.className = 'gw-fadenkreuz';
+    hinweisEl = document.createElement('div'); hinweisEl.className = 'gw-karte-hinweis';
+    hinweisEl.textContent = 'Zum Verschieben und Zoomen zwei Finger verwenden';
+    document.body.appendChild(lupeEl); document.body.appendChild(kreuzEl);
+  }
+  function aktualisiereLupe() {
+    if (!lupeEl || !lupeEl.classList.contains('sichtbar')) return;
+    lupeEl.innerHTML = '<b>' + (wertKurzText && wertKurzText !== '–' ? wertKurzText : '') + '</b>' +
+      (ortText && ortText !== wertKurzText ? '<span>' + ortText + '</span>' : '') + (koordText ? '<small>' + koordText + '</small>' : '');
+  }
+  function zeigeKreuz(clientX, clientY, mitLupe) {
+    gestenElemente();
+    clearTimeout(kreuzTimer);
+    kreuzEl.style.left = clientX + 'px'; kreuzEl.style.top = clientY + 'px';
+    kreuzEl.classList.add('sichtbar');
+    if (mitLupe) {
+      lupeEl.classList.add('sichtbar');
+      lupeEl.style.left = Math.max(80, Math.min(window.innerWidth - 80, clientX)) + 'px';
+      lupeEl.style.top = Math.max(8, clientY - 96) + 'px';
+      aktualisiereLupe();
+    }
+  }
+  // Fadenkreuz (und Lupe) nach einigen Sekunden ausblenden
+  function kreuzSpaeterWeg(ms) {
+    clearTimeout(kreuzTimer);
+    kreuzTimer = setTimeout(versteckeKreuz, ms);
+  }
+  function versteckeKreuz() {
+    clearTimeout(kreuzTimer);
+    if (kreuzEl) kreuzEl.classList.remove('sichtbar');
+    if (lupeEl) lupeEl.classList.remove('sichtbar');
+  }
+  window.addEventListener('scroll', function() { if (kreuzEl && kreuzEl.classList.contains('sichtbar')) versteckeKreuz(); }, { passive: true });
+  function zeigeHinweis(gd) {
+    gestenElemente();
+    if (!hinweisEl.parentNode) document.body.appendChild(hinweisEl);
+    var r = gd.getBoundingClientRect();
+    hinweisEl.style.left = (r.left + r.width / 2) + 'px';
+    hinweisEl.style.top = (Math.max(0, r.top) + Math.min(r.bottom, window.innerHeight)) / 2 + 'px';
+    hinweisEl.classList.add('sichtbar');
+    clearTimeout(hinweisTimer);
+    hinweisTimer = setTimeout(function() { hinweisEl.classList.remove('sichtbar'); }, 1600);
+  }
+  function bindeKartenGesten(gd) {
+    if (istTouch()) {
+      // kein Rechteck-Zoom per Finger, Treffer nur am Kreis (Abstand zum
+      // Kreisrand in px), Doppeltipp macht die Karte selbst
+      Plotly.relayout(gd, { dragmode: false, hoverdistance: 4 });
+      if (gd._context) gd._context.doubleClick = false;
+    }
+    var g = null, letzterTipp = null;
+    var rel = function(t) { var r = gd.getBoundingClientRect(); return { x: t.clientX - r.left, y: t.clientY - r.top, cx: t.clientX, cy: t.clientY }; };
+    var mitte = function(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; };
+    var abstand = function(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); };
+    var ebene = function() { return gd.querySelector('.svg-container'); };
+    function datenPunkt(p) {
+      var fl = gd._fullLayout;
+      return { lon: fl.xaxis.p2d(p.x - fl.xaxis._offset), lat: fl.yaxis.p2d(p.y - fl.yaxis._offset) };
+    }
+    function werteAn(p, mitLupe) {
+      var d = datenPunkt(p);
+      zeigeWertAmPunkt(d.lon, d.lat, true);
+      zeigeKreuz(p.cx, p.cy, mitLupe);
+    }
+    // Grenzen: nicht kleiner als die ganze Schweiz, hoechstens 40-fach gross
+    function grenzen() {
+      var ki = GWDatenexplorer.kartenInfo, xa = gd._fullLayout.xaxis;
+      var jetzt = Math.abs(xa.range[1] - xa.range[0]), voll = ki ? ki.xMaxSchweiz - ki.xMin : jetzt;
+      return { sMin: Math.min(1, jetzt / voll), sMax: jetzt / (voll / 40), ki: ki };
+    }
+    function transformiere() {
+      var el = ebene(); if (!el) return;
+      var tx = g.m.x - g.s * g.m0.x, ty = g.m.y - g.s * g.m0.y;
+      el.style.transformOrigin = '0 0';
+      el.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + g.s + ')';
+      g.raf = null;
+    }
+    function zoomeAuf(x0, x1, yUnten, yOben) {
+      var ki = GWDatenexplorer.kartenInfo;
+      if (ki) {
+        // Mitte bleibt ueber der Schweiz (kein Wegschieben ins Leere)
+        var mx = (x0 + x1) / 2, my = (yUnten + yOben) / 2;
+        var dx = Math.max(ki.xMin, Math.min(ki.xMaxSchweiz, mx)) - mx;
+        var dy = Math.max(ki.yMitte - ki.ySpanSchweiz / 2, Math.min(ki.yMitte + ki.ySpanSchweiz / 2, my)) - my;
+        x0 += dx; x1 += dx; yUnten += dy; yOben += dy;
+      }
+      return Plotly.relayout(gd, { 'xaxis.range': [x0, x1], 'yaxis.range': [yUnten, yOben] });
+    }
+    function beendeZwei() {
+      var el = ebene(), fl = gd._fullLayout, xa = fl.xaxis, ya = fl.yaxis;
+      var s = g.s, tx = g.m.x - s * g.m0.x, ty = g.m.y - s * g.m0.y;
+      if (g.raf) cancelAnimationFrame(g.raf);
+      kartenGestenEnde = Date.now();
+      var zurueck = function() { if (el) el.style.transform = ''; };
+      if (Math.abs(s - 1) < 0.01 && Math.hypot(tx, ty) < 3) { zurueck(); return; }
+      // Bildschirmpunkt q zeigte vor der Geste den Punkt (q - t) / s
+      var alt = function(ax, q, t) { return ax.p2d((q - t) / s - ax._offset); };
+      zoomeAuf(alt(xa, xa._offset, tx), alt(xa, xa._offset + xa._length, tx),
+        alt(ya, ya._offset + ya._length, ty), alt(ya, ya._offset, ty)).then(zurueck, zurueck);
+    }
+    function zoomeUm(p, faktor) {
+      var xa = gd._fullLayout.xaxis, ya = gd._fullLayout.yaxis, d = datenPunkt(p);
+      var gr = grenzen(), f = Math.min(faktor, gr.sMax);
+      if (f <= 1.01) return;
+      zoomeAuf(d.lon - (d.lon - xa.range[0]) / f, d.lon + (xa.range[1] - d.lon) / f,
+        d.lat - (d.lat - ya.range[0]) / f, d.lat + (ya.range[1] - d.lat) / f);
+    }
+    gd.addEventListener('touchstart', function(evt) {
+      if (evt.touches.length >= 2) {
+        // zwei Finger gehoeren der Karte (nicht Plotly, nicht der Seite)
+        evt.preventDefault(); evt.stopPropagation();
+        if (g && g.timer) clearTimeout(g.timer);
+        versteckeKreuz();
+        var a = rel(evt.touches[0]), b = rel(evt.touches[1]), gr = grenzen();
+        g = { art: 'zwei', m0: mitte(a, b), d0: Math.max(10, abstand(a, b)), m: mitte(a, b), s: 1, sMin: gr.sMin, sMax: gr.sMax };
+        gd.style.overflow = 'hidden';
+        return;
+      }
+      if (g && g.art === 'zwei') return;
+      var p = rel(evt.touches[0]);
+      g = { art: 'eins', p0: p, p: p, t0: Date.now(), lang: false, bewegt: false };
+      g.timer = setTimeout(function() {
+        if (!g || g.art !== 'eins' || g.bewegt) return;
+        g.lang = true;
+        if (navigator.vibrate) { try { navigator.vibrate(12); } catch (e) {} }
+        werteAn(g.p, true);
+      }, LANG_DRUCK_MS);
+    }, { capture: true, passive: false });
+    gd.addEventListener('touchmove', function(evt) {
+      if (!g) return;
+      if (g.art === 'zwei') {
+        evt.preventDefault(); evt.stopPropagation();
+        if (evt.touches.length < 2) return;
+        var a = rel(evt.touches[0]), b = rel(evt.touches[1]);
+        g.m = mitte(a, b);
+        g.s = Math.max(g.sMin, Math.min(g.sMax, abstand(a, b) / g.d0));
+        if (!g.raf) g.raf = requestAnimationFrame(transformiere);
+        return;
+      }
+      g.p = rel(evt.touches[0]);
+      if (g.lang) { evt.preventDefault(); werteAn(g.p, true); return; }
+      if (!g.bewegt && abstand(g.p, g.p0) > TIPP_TOLERANZ_PX) {
+        g.bewegt = true; clearTimeout(g.timer);
+        zeigeHinweis(gd);
+      }
+    }, { capture: true, passive: false });
+    function ende(evt) {
+      if (!g) return;
+      if (g.art === 'zwei') {
+        evt.preventDefault();
+        if (evt.touches.length === 0) { beendeZwei(); g = null; }
+        return;
+      }
+      clearTimeout(g.timer);
+      if (g.lang) {
+        evt.preventDefault();
+        kartenGestenEnde = Date.now();
+        kreuzSpaeterWeg(4000);
+        g = null;
+        return;
+      }
+      if (!g.bewegt && evt.type === 'touchend') {
+        var p = g.p0, jetzt = Date.now();
+        if (letzterTipp && jetzt - letzterTipp.t < 320 && abstand(p, letzterTipp.p) < 30) {
+          evt.preventDefault();
+          letzterTipp = null; kartenGestenEnde = jetzt;
+          versteckeKreuz();
+          zoomeUm(p, 2);
+        } else {
+          letzterTipp = { t: jetzt, p: p };
+          var tipp = letzterTipp;
+          // Kurz getippt: hat Plotly einen Standort getroffen (plotly_click),
+          // oeffnet der sein Blatt; sonst Wert an dieser Stelle
+          setTimeout(function() {
+            if (letzterTipp !== tipp || standortGetipptZeit >= tipp.t) return;
+            werteAn(p, true);
+            kreuzSpaeterWeg(4000);
+          }, 340);
+        }
+      }
+      g = null;
+    }
+    gd.addEventListener('touchend', ende, { capture: true, passive: false });
+    gd.addEventListener('touchcancel', function(evt) {
+      if (g && g.art === 'zwei') { var el = ebene(); if (el) el.style.transform = ''; }
+      if (g && g.timer) clearTimeout(g.timer);
+      g = null;
+    }, { capture: true });
   }
   if (mapControlsContainer) {
     var layerPanel = document.createElement('div');
@@ -3122,7 +3384,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       }
       addLegendItem('Mittleres Wachstum', 'black', 'dashed');
     } else if (selection.type === 'multi') {
-      selection.sites.forEach(function(i) { addLegendItem(siteNames[i], siteColors[i], 'solid', i); });
+      selection.sites.forEach(function(i) { addLegendItem(siteNames[i], siteFarbe(i), 'solid', i); });
       selection.groups.forEach(function(g) { addLegendItem('Mittel ' + gruppenName(g), gruppenFarbe(g), 'dashed'); });
     } else {
       addLegendItem(siteNames[selection.idx], siteColors[selection.idx], 'solid', selection.idx);

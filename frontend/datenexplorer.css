@@ -370,3 +370,20 @@ html.gw-doku-offen, html.gw-doku-offen body { overflow: hidden !important; }
 @media (max-width: 700px), (max-height: 500px) and (pointer: coarse) {
   #gw-seite.gw-mit-logo .gw-logo { width: 38px; height: 37px; }
 }
+/* Karte auf Touch-Geraeten: Gesten (siehe bindeKartenGesten()) */
+#datenexplorer-growthmap .js-plotly-plot, #datenexplorer-growthmap .js-plotly-plot * { touch-action: pan-x pan-y; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.gw-kartenleiste-zusatz { color: #555; margin-top: 2px; min-height: 1.35em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gw-fadenkreuz { position: fixed; z-index: 2147483000; width: 34px; height: 34px; margin: -17px 0 0 -17px; pointer-events: none; opacity: 0; transition: opacity .6s ease; }
+.gw-fadenkreuz.sichtbar { opacity: 1; transition: opacity .1s; }
+.gw-fadenkreuz:before, .gw-fadenkreuz:after { content: ""; position: absolute; background: #e6194b; box-shadow: 0 0 0 1px rgba(255,255,255,.85); }
+.gw-fadenkreuz:before { left: 16px; top: 0; width: 2px; height: 34px; }
+.gw-fadenkreuz:after { top: 16px; left: 0; height: 2px; width: 34px; }
+.gw-lupe { position: fixed; z-index: 2147483001; transform: translateX(-50%); pointer-events: none; background: rgba(255,255,255,.97); border: 1px solid #ccc; border-radius: 10px; box-shadow: 0 3px 12px rgba(0,0,0,.2); padding: 6px 10px; font: 13px/1.35 var(--gw-schrift, sans-serif); text-align: center; white-space: nowrap; opacity: 0; transition: opacity .6s ease; }
+.gw-lupe.sichtbar { opacity: 1; transition: opacity .1s; }
+.gw-lupe b { display: block; font-size: 15px; }
+.gw-lupe b:empty { display: none; }
+.gw-lupe span, .gw-lupe small { display: block; color: #444; }
+.gw-lupe small { color: #777; font-size: 11px; }
+.gw-karte-hinweis { position: fixed; transform: translate(-50%, -50%); z-index: 2147483002; pointer-events: none; background: rgba(0,0,0,.72); color: #fff; padding: 10px 16px; border-radius: 8px; font: 600 14px var(--gw-schrift, sans-serif); text-align: center; max-width: 80%; opacity: 0; transition: opacity .3s; }
+.gw-karte-hinweis.sichtbar { opacity: 1; }
+.gw-kartenleiste-wert[style*="none"] + .gw-kartenleiste-zusatz:empty { display: none; }
