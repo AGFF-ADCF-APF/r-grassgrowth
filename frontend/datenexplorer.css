@@ -355,3 +355,14 @@ html.gw-doku-offen, html.gw-doku-offen body { overflow: hidden !important; }
 @media (max-width: 700px), (max-height: 500px) and (pointer: coarse) {
   .gw-export { width: 100%; }
 }
+
+/* Logo im Kopf: nur eigene Seite und Vollbild (Klasse gw-mit-logo) */
+.gw-logo { display: none; }
+#gw-seite.gw-mit-logo .gw-mobil-kopf { display: grid !important; grid-template-columns: auto 1fr; column-gap: 12px; align-items: center; }
+#gw-seite.gw-mit-logo .gw-logo { display: block; grid-row: 1 / span 2; width: 46px; height: 45px; background: url("logo-graswachstum.svg") center / contain no-repeat; border-radius: 4px; }
+#gw-seite.gw-mit-logo .gw-logo:focus-visible { outline: 2px solid var(--gw-akzent, #4a90d9); outline-offset: 2px; }
+#gw-seite.gw-mit-logo .gw-mobil-kopf-titel { align-self: end; }
+#gw-seite.gw-mit-logo .gw-mobil-kopf-unter { align-self: start; }
+@media (max-width: 700px), (max-height: 500px) and (pointer: coarse) {
+  #gw-seite.gw-mit-logo .gw-logo { width: 38px; height: 37px; }
+}

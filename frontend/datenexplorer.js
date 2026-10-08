@@ -1326,6 +1326,16 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       });
     }, 0);
   }
+  // Eigene Seite: Logo als Symbol im Browser-Tab (Pfad aus dem Stylesheet)
+  if (!eingebettet && !document.querySelector('link[rel~=icon]')) {
+    var css = Array.prototype.slice.call(document.querySelectorAll('link[rel=stylesheet]')).filter(function(l) { return /gw-datenexplorer[^/]*\/datenexplorer\.css/.test(l.href); })[0];
+    if (css) {
+      var ico = document.createElement('link');
+      ico.rel = 'icon'; ico.type = 'image/svg+xml';
+      ico.href = css.href.replace(/datenexplorer\.css(\?.*)?$/, 'logo-graswachstum.svg');
+      document.head.appendChild(ico);
+    }
+  }
   var vollbildKnopfEl = null;
   function istVollbild() { return !!(seiteEl && seiteEl.classList.contains('gw-vollbild')); }
   function setzeVollbild(an) {
@@ -1370,14 +1380,25 @@ GWDatenexplorer.kurve = function(el, x, daten) {
 
   // Mobile-Elemente rund um die Karte (auf dem Desktop per CSS ausgeblendet)
   var kartenzeileEl = document.getElementById('gw-kartenzeile');
-  var mobilKopfUnterEl = null, kartenleisteLegendeEl = null, kartenleisteWertEl = null, kurveKnopfEl = null;
+  var mobilKopfUnterEl = null, kartenleisteLegendeEl = null, kartenleisteWertEl = null, kurveKnopfEl = null, logoEl = null;
   var teaserEl = null, teaserTitelEl = null, teaserJahr = null, teaserKoerper = null, teaserKopfEl = null;
   if (kartenzeileEl) {
     var mobilKopf = document.createElement('div');
     mobilKopf.className = 'gw-mobil-only gw-mobil-kopf';
     var mkTitel = document.createElement('div'); mkTitel.className = 'gw-mobil-kopf-titel'; mkTitel.textContent = 'Graswachstum';
     mobilKopfUnterEl = document.createElement('div'); mobilKopfUnterEl.className = 'gw-mobil-kopf-unter';
-    mobilKopf.appendChild(mkTitel); mobilKopf.appendChild(mobilKopfUnterEl);
+    // Logo (frontend/logo-graswachstum.svg, als CSS-Hintergrund): nur auf der
+    // eigenen Seite und im Vollbild - auf der Website steht es im Seitenkopf.
+    // Eigene Seite: Link zur Website; Vollbild auf der Website: beendet es.
+    logoEl = document.createElement('a');
+    logoEl.className = 'gw-logo';
+    logoEl.href = 'https://graswachstum.ch/de/growth';
+    logoEl.title = 'graswachstum.ch';
+    logoEl.setAttribute('aria-label', 'Graswachstum – Messnetz der AGFF (graswachstum.ch)');
+    logoEl.addEventListener('click', function(evt) {
+      if (eingebettet && istVollbild()) { evt.preventDefault(); setzeVollbild(false); }
+    });
+    mobilKopf.appendChild(logoEl); mobilKopf.appendChild(mkTitel); mobilKopf.appendChild(mobilKopfUnterEl);
     kartenzeileEl.parentNode.insertBefore(mobilKopf, kartenzeileEl);
     var kartenleiste = document.createElement('div');
     kartenleiste.className = 'gw-mobil-only gw-kartenleiste';
@@ -1600,6 +1621,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     seiteEl.classList.toggle('gw-app', an);
     seiteEl.classList.toggle('gw-app-schmal', schmal);
     seiteEl.classList.toggle('gw-mobil-app', !an);
+    seiteEl.classList.toggle('gw-mit-logo', !eingebettet || istVollbild());
     document.documentElement.classList.toggle('gw-app-aktiv', an);
     document.documentElement.classList.toggle('gw-app-seite', !eingebettet);
     setzeBlockHoehe();
