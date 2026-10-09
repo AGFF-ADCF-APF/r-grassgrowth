@@ -103,16 +103,22 @@ speichere_ebenen_cache <- function(name, cache, art = "meteo") {
 }
 
 ## Schnellmodus (GRASSGROWTH_SCHNELL=1, z.B. nach einem Code-Deploy): auch das
-## LAUFENDE Jahr kommt aus dem Cache, wenn sich seit dem letzten vollstaendigen
-## Lauf weder die Eingangsdaten (MeteoSchweiz-Dateien bzw. AGFF-Messungen)
-## noch der R-Rechencode geaendert haben. Das Frontend (frontend/*.js, .css)
-## zaehlt nicht dazu - reine Darstellungsaenderungen brauchen kein
-## Neurechnen. Ohne die Variable (naechtlicher Lauf) wird wie bisher alles
-## frisch gerechnet; die Staende werden am Ende des Laufs festgehalten.
+## LAUFENDE Jahr kommt aus dem Cache, wenn sich seit dem letzten Lauf weder die
+## Eingangsdaten (MeteoSchweiz-Dateien bzw. AGFF-Messungen) noch der R-
+## Rechencode geaendert haben. Nicht zum Rechencode zaehlen das Frontend
+## (frontend/*.js, .css) und die Abschnitte zwischen «# @darstellung-anfang»
+## und «# @darstellung-ende» (Kurvenfigur, Seitenaufbau) - reine
+## Darstellungsaenderungen brauchen kein Neurechnen. Ohne die Variable
+## (naechtlicher Lauf) wird wie bisher alles frisch gerechnet; die Staende
+## werden am Ende jedes Laufs festgehalten.
 schnellmodus <- identical(Sys.getenv("GRASSGROWTH_SCHNELL"), "1")
 staende_datei <- file.path(ebenen_cache_dir, "_staende.rds")
 staende_alt <- if (file.exists(staende_datei)) tryCatch(readRDS(staende_datei), error = function(e) list()) else list()
-code_stand <- digest::digest(paste(readLines("27_plot_datenexplorer.R", warn = FALSE), collapse = "\n"), algo = "md5")
+code_stand <- local({
+  z <- readLines("27_plot_datenexplorer.R", warn = FALSE)
+  darstellung <- cumsum(grepl("^# @darstellung-anfang", z)) > cumsum(grepl("^# @darstellung-ende", z))
+  digest::digest(paste(z[!darstellung], collapse = "\n"), algo = "md5")
+})
 geodata_stand <- function() {
   f <- list.files(geodata_dir, recursive = TRUE, full.names = TRUE)
   i <- file.info(f)
@@ -456,6 +462,7 @@ for (jr in names(temperatur_raster_je_jahr)) {
 
 wochen_tooltip <- function(jr, w) paste0("KW ", w, " (Woche ab ", format(montag_von_woche(jr, w), "%d.%m.%Y"), ")")
 
+# @darstellung-anfang (Kurvenfigur - nicht im Rechencode-Fingerabdruck, siehe code_stand)
 # Fixer Y-Achsen-Bereich fuer BEIDE Achsen (Graswachstum links, Niederschlag
 # rechts) - unabhaengig von der aktuell gewaehlten Gruppe/Standort/Jahr, statt
 # wie bisher per Autorange bei jedem Filterwechsel neu zu skalieren (dadurch
@@ -595,6 +602,7 @@ fig_kurve <- fig_kurve %>% layout(
                       line = list(color = "#999", width = 1.5, dash = "dot")))
 ) %>% config(responsive = TRUE, scrollZoom = TRUE)
 
+# @darstellung-ende
 ########################################################################
 ## 2. Kartenbasis (Kantone, Seen) - identisch zu 21_plot_map.R --------
 ########################################################################
@@ -2219,6 +2227,7 @@ if (file.exists(schnittanalyse_index)) {
   }
 }
 
+# @darstellung-anfang (Seitenaufbau bis zum Ende - nicht im Rechencode-Fingerabdruck)
 ########################################################################
 ## 4. Verknuepfung: Jahr-Auswahl, Standort-Sidebar, Kalenderwochen-
 ##    Schieberegler, Karten-Hervorhebung - als onRender() auf der Kurve.
@@ -2296,6 +2305,7 @@ fig_kurve <- htmlwidgets::onRender(fig_kurve, paste0("function(el, x) { GWDatene
 # Frontend als eigene Abhaengigkeit an beide Widgets: save_html() kopiert es
 # nach lib/gw-datenexplorer-<version>/, die Einbettung listet es mit. Die
 # Version folgt dem Inhalt, damit Browser nach Aenderungen neu laden.
+# Gleiche Formel in deploy/frontend_tauschen.R (Frontend-Deploy ohne Neuaufbau).
 frontend_dateien <- file.path("frontend", c("datenexplorer.js", "datenexplorer.css"))
 frontend_version <- paste0("1.", strtoi(substr(digest::digest(
   paste(unlist(lapply(frontend_dateien, readLines, warn = FALSE)), collapse = "\n"), algo = "md5"), 1, 7), 16L))
@@ -2454,13 +2464,14 @@ if (nzchar(cwebp_bin)) {
   cat("WebP-Bilder:", length(genutzt), "\n")
 }
 
-## Stand der Ebenen-Caches festhalten (nur nach einem vollstaendigen Lauf) -
-## erst hier am Ende, damit alle im Lauf heruntergeladenen MeteoSchweiz-Dateien
-## schon im Fingerabdruck stecken. Grundlage fuer den Schnellmodus.
-if (!schnellmodus) {
-  geodata_stand_jetzt <- geodata_stand()
-  staende_neu <- staende_alt
-  for (n in names(gespeicherte_caches)) staende_neu[[n]] <- eingangsstand(gespeicherte_caches[[n]])
-  saveRDS(staende_neu, staende_datei)
-  cat("Cache-Staende festgehalten:", length(gespeicherte_caches), "Ebenen\n")
-}
+## Stand der Ebenen-Caches festhalten - Grundlage fuer den Schnellmodus. Voller
+## Lauf: erst hier am Ende, damit alle im Lauf heruntergeladenen MeteoSchweiz-
+## Dateien schon im Fingerabdruck stecken. Schnellmodus: mit dem Stand vom
+## Laufbeginn (vorsichtig - aendern sich Dateien waehrend des Laufs, rechnet
+## der naechste Lauf neu). So rechnet nach einer Rechencode-Aenderung nur der
+## erste Deploy neu, nicht jeder bis zum naechsten naechtlichen Lauf.
+if (!schnellmodus) geodata_stand_jetzt <- geodata_stand()
+staende_neu <- staende_alt
+for (n in names(gespeicherte_caches)) staende_neu[[n]] <- eingangsstand(gespeicherte_caches[[n]])
+saveRDS(staende_neu, staende_datei)
+cat("Cache-Staende festgehalten:", length(gespeicherte_caches), "Ebenen\n")
