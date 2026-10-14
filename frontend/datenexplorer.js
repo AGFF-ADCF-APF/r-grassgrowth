@@ -296,6 +296,19 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   // gesucht wurde; die Trace wird beim ersten Treffer einmalig per
   // Plotly.addTraces() angelegt und danach nur noch verschoben.
   var fadenkreuzTraceIdx = null;
+  // Eigene Orte (siehe «Eigene Orte» weiter unten) - frueh angelegt, weil die
+  // Ebenen-Leiste ihren Schalter schon beim Aufbau registriert
+  var eigeneOrte = [];
+  var orteAnzeigen = false;
+  var ortLinkAusHash = false;
+  var orteTraceIdx = null;
+  var orteHoerer = [];
+  var ORTE_FARBE = '#c2185b';
+  var ORTE_SPEICHER = 'gw-eigene-orte';
+  try {
+    var gespeicherteOrte = JSON.parse(localStorage.getItem(ORTE_SPEICHER) || '[]');
+    if (Array.isArray(gespeicherteOrte)) eigeneOrte = gespeicherteOrte.filter(function(o) { return o && o.name && isFinite(o.lon) && isFinite(o.lat); });
+  } catch (e) {}
   var hintergrundEbene = 'keine';
   var selectedYear = neuestesJahr;
   var selectedWeek = daten.START_WOCHE;
@@ -694,7 +707,8 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     // die Standorte trotz ausgeblendeten Bildern weiterhin geisterhaft
     // hoverbar bzw. die Legende ohne zugehoerige Ebene sichtbar.
     var vis = mapWochen.map(function(m, i) { return (graswachstumOn || afcOn) && i === idx; });
-    if (growthMapGd) Plotly.restyle(growthMapGd, { visible: vis });
+    if (growthMapGd) Plotly.restyle(growthMapGd, { visible: vis }, vis.map(function(v, i) { return i; }));
+    if (growthMapGd && orteTraceIdx === null && orteAnzeigen && eigeneOrte.length) aktualisiereOrteSpur();
     if (idx >= 0 && growthMapGd) {
       var hl = highlightArrayFor(idx);
       Plotly.restyle(growthMapGd, { 'marker.line.width': [hl] }, [idx]);
@@ -1148,6 +1162,11 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     text: ['Unter der Zeitleiste zeigt eine flache Kurve das Wachstum der drei Regionen, über drei Wochen geglättet, und das langjährige Mittel. Antippen, «Alle Kurven» oder «Standort wählen …» öffnet die grosse Kurve als eigene Ansicht; die Zurück-Geste des Handys schliesst sie wieder.',
       'Im Hochformat blinkt «Quer ansehen». Wo das Handy es erlaubt, dreht der Knopf die Ansicht; sonst bitte das Handy quer halten. Bei eingeschalteter automatischer Drehung erscheint die Grafik im Querformat über den ganzen Bildschirm.'] });
 
+  dokuEintrag({ id: 'eigene-orte', gruppe: 'Erste Schritte', titel: 'Eigene Orte und Karten für Veranstaltungen',
+    alias: ['Eigene Orte', 'Karte für eine Veranstaltung'], stichworte: 'betriebe plz ortschaft liste marker veranstaltung kurs tagung pdf svg html qr jahresrueckblick vergleich teilen',
+    text: ['Unter «Export» › «Karte für eine Veranstaltung» lassen sich eigene Orte erfassen, z.B. die Betriebe der Teilnehmenden: PLZ oder Ortschaft eintippen und einen Vorschlag wählen, oder eine ganze Liste mit Komma oder Zeilenumbruch einfügen. Ein Klick auf einen Namen ändert ihn (z.B. in den Betriebsnamen). Der Schalter «Eigene Orte» zeigt sie als Marker auf der Karte; die Liste bleibt in diesem Browser gespeichert.',
+      '«Karten erstellen» macht je Thema (Niederschlag seit 1. Januar, Bodenwasserbilanz, potenzielles Graswachstum) eine Seite mit Kartenausschnitt auf der Landeskarte, nummerierten Orten, Legende und Wertetabelle. Als PDF zum Drucken, als SVG zum Weiterbearbeiten oder als HTML-Datei für Präsentation und Weitergabe: dort lassen sich die Themen umschalten, die Orte antippen und ein Jahresrückblick zeigt den Verlauf an Ihren Orten im Vergleich zur ganzen Schweiz.',
+      'Auf jeder Seite führt ein QR-Code zur selben Ansicht im Datenexplorer, mit allen Orten. Die Orte stehen dabei im Link; wer ihn erhält, sieht sie.'] });
   dokuEintrag({ id: 'graswachstum', gruppe: 'Messnetz', titel: 'Graswachstum',
     alias: ['Graswachstum (kg TS/ha/Tag)'], stichworte: 'zuwachs wachstum kreis zahl messung kg ts ha tag',
     legende: function() { return dokuKlon(tageSeitMessungBox); },
@@ -1202,6 +1221,10 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     alias: ['Verdunstung ET0'], stichworte: 'verdunstung evapotranspiration hargreaves trockenstress wasserverbrauch',
     legende: dokuFarbskala('et0'), quelle: dokuQuelle('et0'),
     text: ['Potenzielle Verdunstung (Evapotranspiration) nach Hargreaves (FAO-56), als Summe im gewählten Zeitraum. Sie zeigt, wie viel Wasser dem Boden allein durch Verdunstung entzogen wird; hohe Werte bei wenig Niederschlag begünstigen Trockenstress. Dieselbe Berechnung fliesst in die Bodenwasserbilanz ein.'] });
+  dokuEintrag({ id: 'niederschlag_kum', gruppe: 'Wetter-Ebenen', titel: 'Niederschlag seit 1. Januar',
+    alias: ['Niederschlag seit 1. Januar'], stichworte: 'niederschlag regen jahressumme jahr summe kumuliert seit januar',
+    legende: dokuFarbskala('niederschlag_kum'), quelle: dokuQuelle('niederschlag_kum'),
+    text: ['Gesamter Niederschlag des gewählten Jahres vom 1. Januar bis zum Stichtag (Montag der gewählten Woche), aus den täglichen MeteoSchweiz-Gitterdaten aufsummiert. Zeigt, wie nass oder trocken das Jahr bisher verlaufen ist; für die letzten Wochen allein eignet sich die Ebene «Niederschlagssumme».'] });
   dokuEintrag({ id: 'gdd', gruppe: 'Wetter-Ebenen', titel: 'Wachstumsgradtage',
     alias: ['Wachstumsgradtage'], stichworte: 'gdd gradtage waermesumme temperatursumme vegetation',
     legende: dokuFarbskala('gdd'), quelle: dokuQuelle('gdd'),
@@ -2227,7 +2250,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   // dem HTML (analog zum Kalenderwochen-Schieberegler weiter unten).
   var mapControlsContainer = document.getElementById('datenexplorer-map-controls');
   var radioNiederschlag = null, radioBoden = null, radioTemperatur = null, radioBodentemperatur = null;
-  var radioSonnenschein = null, radioEt0 = null, radioGdd = null;
+  var radioSonnenschein = null, radioEt0 = null, radioGdd = null, radioNiederschlagKum = null;
   var radioWachstumspotenzialRate = null, radioWachstumspotenzialKum = null;
   var experimentellerModus = new URLSearchParams(window.location.search).has('experimentell');
   var radioJeEbene = {};
@@ -2240,6 +2263,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     if (radioSonnenschein) radioSonnenschein.disabled = !ebeneHatJahr('sonnenschein', selectedYear);
     if (radioEt0) radioEt0.disabled = !ebeneHatJahr('et0', selectedYear);
     if (radioGdd) radioGdd.disabled = !ebeneHatJahr('gdd', selectedYear);
+    if (radioNiederschlagKum) radioNiederschlagKum.disabled = !ebeneHatJahr('niederschlag_kum', selectedYear);
     if (radioWachstumspotenzialRate) radioWachstumspotenzialRate.disabled = !ebeneHatJahr('wachstumspotenzial_rate', selectedYear);
     if (radioWachstumspotenzialKum) radioWachstumspotenzialKum.disabled = !ebeneHatJahr('wachstumspotenzial_kum', selectedYear);
     schnittRadios.forEach(function(r) { r.disabled = !ebeneHatJahr(r.value, selectedYear); });
@@ -2251,6 +2275,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
         (hintergrundEbene === 'sonnenschein' && radioSonnenschein && radioSonnenschein.disabled) ||
         (hintergrundEbene === 'et0' && radioEt0 && radioEt0.disabled) ||
         (hintergrundEbene === 'gdd' && radioGdd && radioGdd.disabled) ||
+        (hintergrundEbene === 'niederschlag_kum' && radioNiederschlagKum && radioNiederschlagKum.disabled) ||
         (hintergrundEbene === 'wachstumspotenzial_rate' && radioWachstumspotenzialRate && radioWachstumspotenzialRate.disabled) ||
         (hintergrundEbene === 'wachstumspotenzial_kum' && radioWachstumspotenzialKum && radioWachstumspotenzialKum.disabled)) {
       hintergrundEbene = 'keine';
@@ -3019,6 +3044,17 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     toggleStationen = macheLayerToggle('MeteoSchweiz-Stationen', false, function(checked) { smnStationenOn = checked; aktualisiereSmnStationen(); },
       'Zeigt die oeffentlichen MeteoSchweiz-Automatikstationen (SwissMetNet) mit ihren aktuellsten Tageswerten (Lufttemperatur, Bodentemperatur, Niederschlag, Globalstrahlung, Sonnenscheindauer) als Diamant-Symbole. Reine Wetter-Referenzstationen, unabhaengig von der gewaehlten Kalenderwoche und NICHT Teil der AGFF-Grasmessungen. Bodentemperatur wird nur an einem Teil der rund 150 Stationen gemessen - dort steht im Tooltip entsprechend keine Daten.');
 
+    // Eigene Orte (erfasst im Export unter «Karte für eine Veranstaltung»):
+    // Schalter nur sichtbar, wenn die Liste Orte enthaelt
+    var orteToggle = macheLayerToggle('Eigene Orte', orteAnzeigen, function(checked) { setzeOrteAnzeigen(checked); },
+      'Zeigt die eigenen Orte (z.B. Betriebe) als Marker mit Namen. Erfassen, umbenennen und entfernen lassen sie sich unter «Exportieren» › «Karte für eine Veranstaltung»; dort entstehen auch Karten mit Werten für diese Orte als PDF, SVG oder HTML.');
+    orteHoerer.push(function() {
+      orteToggle.parentNode.style.display = eigeneOrte.length ? '' : 'none';
+      var cb = orteToggle.querySelector('input[type=checkbox]');
+      if (cb) cb.checked = orteAnzeigen;
+    });
+    orteToggle.parentNode.style.display = eigeneOrte.length ? '' : 'none';
+
     // Schieberegler fuer die Fenstergroesse (Tage) der gleitendes-Fenster-
     // Ebenen (meteoFensterEbenen, siehe oben) - wird OBERHALB der Legende
     // eingefuegt (layerPanel.appendChild() hier laeuft VOR dem der Legende
@@ -3132,6 +3168,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     layerPanel.appendChild(meteoGitterHeading);
     makeLayerRadio('keine', 'keine Meteodaten');
     radioNiederschlag = makeLayerRadio('niederschlag', layerLegenden.niederschlag.label, 'siehe Hilfe');
+    if (layerLegenden.niederschlag_kum) radioNiederschlagKum = makeLayerRadio('niederschlag_kum', layerLegenden.niederschlag_kum.label, 'siehe Hilfe');
     radioTemperatur = makeLayerRadio('temperatur', layerLegenden.temperatur.label,
       'Mittlere Lufttemperatur (2m) im oben gewaehlten Zeitraum vor dem Stichtag. Graswachstum beginnt erst ab einer Basistemperatur von ca. 5 Grad C spuerbar (darunter praktisch Wachstumsstillstand), das Optimum liegt bei ca. 15-20 Grad C. Ueber ca. 25 Grad C bremst Hitzestress das Wachstum trotz ausreichend Wasser wieder. Als Faustregel fuer den Wachstumsantrieb ueber mehrere Tage dient die Wachstumsgradtagsumme: Summe aus (Tagesmitteltemperatur minus 5 Grad C) an allen Tagen mit Werten darueber.');
     radioBodentemperatur = makeLayerRadio('bodentemperatur', layerLegenden.bodentemperatur.label,
@@ -3781,6 +3818,199 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     applyMapState();
   });
 
+  // ---------- Eigene Orte (z.B. Betriebe fuer eine Veranstaltung) ----------
+  // Liste von PLZ/Ortschaften (swisstopo-Suche mit Vorschlaegen): als Marker
+  // auf der Karte (Schalter), im Direktlink (orte=Name~lon~lat,...; an=orte)
+  // und in der Veranstaltungskarte (Export) mit den Werten der Ebenen. Die
+  // Koordinaten stehen im Link, damit QR-Codes ohne erneute Suche und
+  // eindeutig funktionieren (eine PLZ kann mehrere Ortschaften haben).
+  function ortToken(o) { return o.name.replace(/[~,]/g, ' ').replace(/\s+/g, ' ').trim() + '~' + o.lon.toFixed(3) + '~' + o.lat.toFixed(3); }
+  function ortAusToken(t) {
+    var m = String(t).split('~');
+    if (m.length !== 3) return null;
+    var lon = parseFloat(m[1]), lat = parseFloat(m[2]);
+    if (!m[0].trim() || !isFinite(lon) || !isFinite(lat)) return null;
+    return { name: m[0].trim(), lon: lon, lat: lat };
+  }
+  function ortAusTreffer(t) {
+    return { name: t.attrs.label.replace(/<\/?b>/g, '').replace(' - ', ' ').trim(), lon: t.attrs.lon, lat: t.attrs.lat };
+  }
+  function ortsSuche(text, limit, herkunft) {
+    var url = 'https://api3.geo.admin.ch/rest/services/api/SearchServer?searchText=' + encodeURIComponent(text) +
+      '&type=locations&origins=' + (herkunft || 'zipcode,gg25') + '&limit=' + (limit || 8) + '&sr=2056';
+    return fetch(url).then(function(r) { return r.json(); }).then(function(d) { return (d && d.results) || []; });
+  }
+  // Ein Eintrag aus einer eingefuegten Liste: «3513 Bigenthal» ueber die PLZ
+  // suchen und die Ortschaft mit dem aehnlichsten Namen nehmen (auch bei
+  // Tippfehlern; eine PLZ kann mehrere Ortschaften haben), sonst freie Suche.
+  function normName(t) { return String(t).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, ''); }
+  function namensAehnlichkeit(a, b) {
+    a = normName(a); b = normName(b);
+    if (!a || !b) return 0;
+    if (a === b) return 100;
+    if (a.indexOf(b) === 0 || b.indexOf(a) === 0) return 80;
+    if (a.indexOf(b) !== -1 || b.indexOf(a) !== -1) return 60;
+    var n = 0;
+    while (n < a.length && n < b.length && a[n] === b[n]) n++;
+    return n * 5;
+  }
+  function sucheListenEintrag(text) {
+    var m = String(text).match(/^(\d{4})\s*(.*)$/);
+    if (!m) return ortsSuche(text, 1).then(function(r) { return r[0] || null; });
+    return ortsSuche(m[1], 20, 'zipcode').then(function(r) {
+      r = r.filter(function(t) { return String(t.attrs.detail || t.attrs.label).indexOf(m[1]) !== -1; });
+      if (!r.length) return ortsSuche(text, 1).then(function(x) { return x[0] || null; });
+      if (!m[2]) return r[0];
+      var name = function(t) { return t.attrs.label.replace(/<\/?b>/g, '').replace(/^\d{4}\s*-\s*/, ''); };
+      return r.slice().sort(function(a, b) { return namensAehnlichkeit(name(b), m[2]) - namensAehnlichkeit(name(a), m[2]); })[0];
+    });
+  }
+  function setzeEigeneOrte(liste, ausLink) {
+    var gesehen = {};
+    eigeneOrte = liste.filter(function(o) { var k = ortToken(o); if (gesehen[k]) return false; gesehen[k] = true; return true; });
+    if (!ausLink) { try { localStorage.setItem(ORTE_SPEICHER, JSON.stringify(eigeneOrte)); } catch (e) {} }
+    orteHoerer.forEach(function(f) { f(); });
+    aktualisiereOrteSpur();
+    if (GWDatenexplorer.schreibeUrlBald) GWDatenexplorer.schreibeUrlBald();
+  }
+  function setzeOrteAnzeigen(an) {
+    orteAnzeigen = !!an;
+    orteHoerer.forEach(function(f) { f(); });
+    aktualisiereOrteSpur();
+    if (GWDatenexplorer.schreibeUrlBald) GWDatenexplorer.schreibeUrlBald();
+  }
+  function aktualisiereOrteSpur() {
+    var gd = document.querySelector('#datenexplorer-growthmap .js-plotly-plot');
+    if (!gd || !gd.data) return;
+    var sichtbar = orteAnzeigen && eigeneOrte.length > 0;
+    var lon = eigeneOrte.map(function(o) { return o.lon; }), lat = eigeneOrte.map(function(o) { return o.lat; });
+    var namen = eigeneOrte.map(function(o) { return o.name; });
+    var hover = eigeneOrte.map(function(o, i) { return '<b>' + (i + 1) + '. ' + o.name.replace(/</g, '&lt;') + '</b>'; });
+    if (orteTraceIdx === null) {
+      if (!sichtbar) return;
+      Plotly.addTraces(gd, {
+        x: lon, y: lat, type: 'scatter', mode: 'markers+text', text: namen, textposition: 'top center',
+        textfont: { size: 12, color: '#5a0b2e' }, hoverinfo: 'text', hovertext: hover, cliponaxis: false,
+        marker: { symbol: 'circle', size: 12, color: ORTE_FARBE, line: { color: 'white', width: 2 } },
+        showlegend: false, name: 'Eigene Orte'
+      });
+      orteTraceIdx = gd.data.length - 1;
+      return;
+    }
+    Plotly.restyle(gd, { x: [lon], y: [lat], text: [namen], hovertext: [hover], visible: sichtbar }, [orteTraceIdx]);
+  }
+
+  // Eingabe mit Vorschlaegen und Kaertchen; mehrere Eintraege (Komma,
+  // Semikolon, Zeilenumbruch) werden nacheinander gesucht - je erster Treffer.
+  function macheOrteEditor(meldung) {
+    var wrap = document.createElement('div');
+    wrap.className = 'gw-orte';
+    var liste = document.createElement('div');
+    liste.className = 'gw-orte-liste';
+    var combo = document.createElement('div');
+    combo.className = 'gw-combo gw-orte-combo';
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = 'PLZ oder Ortschaft hinzufügen …';
+    input.setAttribute('aria-label', 'PLZ oder Ortschaft hinzufügen');
+    var vorschlaege = document.createElement('div');
+    vorschlaege.className = 'gw-combo-list';
+    vorschlaege.style.display = 'none';
+    combo.appendChild(input); combo.appendChild(vorschlaege);
+    var aktionen = document.createElement('div');
+    aktionen.className = 'gw-orte-aktionen';
+    var leeren = document.createElement('button');
+    leeren.type = 'button'; leeren.className = 'gw-orte-link'; leeren.textContent = 'Liste leeren';
+    leeren.addEventListener('click', function() { if (!eigeneOrte.length || window.confirm('Alle ' + eigeneOrte.length + ' Orte aus der Liste entfernen?')) setzeEigeneOrte([]); });
+    aktionen.appendChild(leeren);
+    wrap.appendChild(combo); wrap.appendChild(liste); wrap.appendChild(aktionen);
+    var treffer = [], timer = null, aktiv = -1;
+    function zeichneListe() {
+      liste.innerHTML = '';
+      eigeneOrte.forEach(function(o, i) {
+        var chip = document.createElement('span');
+        chip.className = 'gw-ort-chip';
+        var nr = document.createElement('span'); nr.className = 'gw-ort-nr'; nr.textContent = String(i + 1);
+        var name = document.createElement('button'); name.type = 'button'; name.className = 'gw-ort-name'; name.textContent = o.name;
+        name.title = 'Bezeichnung ändern (z.B. Name des Betriebs)';
+        name.addEventListener('click', function() {
+          var neu = window.prompt('Bezeichnung auf Karte und in der Tabelle:', o.name);
+          if (neu && neu.trim()) { var kopie = eigeneOrte.slice(); kopie[i] = Object.assign({}, o, { name: neu.trim() }); setzeEigeneOrte(kopie); }
+        });
+        var weg = document.createElement('button'); weg.type = 'button'; weg.className = 'gw-chip-x'; weg.textContent = String.fromCharCode(215);
+        weg.setAttribute('aria-label', o.name + ' entfernen');
+        weg.addEventListener('click', function() { setzeEigeneOrte(eigeneOrte.filter(function(x, j) { return j !== i; })); });
+        chip.appendChild(nr); chip.appendChild(name); chip.appendChild(weg);
+        liste.appendChild(chip);
+      });
+      leeren.style.display = eigeneOrte.length ? '' : 'none';
+    }
+    orteHoerer.push(zeichneListe);
+    zeichneListe();
+    function waehle(t) {
+      vorschlaege.style.display = 'none'; input.value = ''; treffer = [];
+      setzeEigeneOrte(eigeneOrte.concat([ortAusTreffer(t)]));
+    }
+    function zeigeVorschlaege() {
+      vorschlaege.innerHTML = '';
+      treffer.forEach(function(t, i) {
+        var item = document.createElement('div');
+        item.className = 'gw-combo-item' + (i === aktiv ? ' active' : '');
+        item.textContent = ortAusTreffer(t).name;
+        item.addEventListener('mousedown', function(evt) { evt.preventDefault(); waehle(t); });
+        vorschlaege.appendChild(item);
+      });
+      vorschlaege.style.display = treffer.length ? 'block' : 'none';
+    }
+    function mehrere(text) {
+      var teile = text.split(/[,;\n\t]+/).map(function(x) { return x.trim(); }).filter(Boolean);
+      if (!teile.length) return;
+      input.value = ''; vorschlaege.style.display = 'none';
+      var nichtGefunden = [], neu = [];
+      if (meldung) meldung('Suche ' + teile.length + ' Orte …');
+      var kette = Promise.resolve();
+      teile.forEach(function(t) {
+        kette = kette.then(function() {
+          return sucheListenEintrag(t).then(function(r) { if (r) neu.push(ortAusTreffer(r)); else nichtGefunden.push(t); }, function() { nichtGefunden.push(t); });
+        });
+      });
+      kette.then(function() {
+        var vorher = eigeneOrte.length;
+        setzeEigeneOrte(eigeneOrte.concat(neu));
+        var hinzu = eigeneOrte.length - vorher, doppelt = neu.length - hinzu;
+        if (meldung) meldung(hinzu + ' Orte hinzugefügt' + (doppelt ? ' (' + doppelt + ' doppelt)' : '') + (nichtGefunden.length ? ', nicht gefunden: ' + nichtGefunden.join(', ') : '.'), nichtGefunden.length > 0);
+      });
+    }
+    input.addEventListener('input', function() {
+      clearTimeout(timer);
+      var text = input.value;
+      if (/[,;\n\t]/.test(text)) return;
+      if (text.trim().length < 2) { vorschlaege.style.display = 'none'; return; }
+      timer = setTimeout(function() {
+        ortsSuche(text.trim(), 8).then(function(r) { if (input.value !== text) return; treffer = r; aktiv = -1; zeigeVorschlaege(); }, function() {});
+      }, 250);
+    });
+    input.addEventListener('paste', function(evt) {
+      var text = (evt.clipboardData || window.clipboardData).getData('text');
+      if (/[,;\n\t]/.test(text)) { evt.preventDefault(); mehrere(text); }
+    });
+    input.addEventListener('keydown', function(evt) {
+      if (evt.key === 'ArrowDown' || evt.key === 'ArrowUp') {
+        if (!treffer.length) return;
+        evt.preventDefault();
+        aktiv = (aktiv + (evt.key === 'ArrowDown' ? 1 : -1) + treffer.length) % treffer.length;
+        zeigeVorschlaege();
+      } else if (evt.key === 'Enter') {
+        evt.preventDefault();
+        if (/[,;]/.test(input.value)) mehrere(input.value);
+        else if (treffer.length) waehle(treffer[Math.max(0, aktiv)]);
+        else if (input.value.trim()) mehrere(input.value);
+      } else if (evt.key === 'Escape') { vorschlaege.style.display = 'none'; }
+    });
+    input.addEventListener('blur', function() { setTimeout(function() { vorschlaege.style.display = 'none'; }, 150); });
+    return wrap;
+  }
+
   // ---------- Export: Bilder, Zeitserien, PDF ----------
   // Seitenleiste rechts. Karte und Kurve werden ausserhalb des Bildschirms
   // als Plotly-Figur gerendert (Plotly.toImage mit Figur-Objekt) - die
@@ -4057,23 +4287,14 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       var w = bereich[0] + (bereich[1] - bereich[0]) * i / schritte;
       var wt = Math.abs(w) >= 100 ? String(Math.round(w)) : String(Math.round(w * 10) / 10);
       doc.line(x + breite * i / schritte, y + bh, x + breite * i / schritte, y + bh + 1);
-      doc.text(wt + (i === schritte ? ' ' + info.einheit : ''), x + breite * i / schritte, y + bh + (klein ? 3.6 : 4.4), { align: i === 0 ? 'left' : (i === schritte ? 'right' : 'center') });
+      doc.text(wt + (i === schritte ? ' ' + String(info.einheit).split(',')[0] : ''), x + breite * i / schritte, y + bh + (klein ? 3.6 : 4.4), { align: i === 0 ? 'left' : (i === schritte ? 'right' : 'center') });
     }
     return bh + (klein ? 4.5 : 6);
   }
   // QR-Code zur ausfuehrlichen Hilfe (Legenden) auf graswachstum.ch
   var HILFE_URL = 'https://graswachstum.ch/de/growth/help';
   function pdfQr(doc, x, y, groesse, text) {
-    var qr = window.qrcode(0, 'M');
-    qr.addData(HILFE_URL);
-    qr.make();
-    var n = qr.getModuleCount(), px = 8, rand = 2, c = document.createElement('canvas');
-    c.width = c.height = (n + 2 * rand) * px;
-    var ctx = c.getContext('2d');
-    ctx.fillStyle = 'white'; ctx.fillRect(0, 0, c.width, c.height);
-    ctx.fillStyle = 'black';
-    for (var r = 0; r < n; r++) for (var k = 0; k < n; k++) if (qr.isDark(r, k)) ctx.fillRect((k + rand) * px, (r + rand) * px, px, px);
-    doc.addImage(c.toDataURL('image/png'), 'PNG', x, y, groesse, groesse);
+    pdfQrVektor(doc, HILFE_URL, x, y, groesse, 'M');
     doc.setFontSize(6.5); doc.setTextColor(90);
     var z = doc.splitTextToSize(text, 40);
     doc.text(z, x + groesse + 2.5, y + 3);
@@ -4253,6 +4474,631 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     });
   }
 
+  // --- Veranstaltungskarte: eigene Orte auf Themenkarten ---
+  // Je Thema eine Seite (A4 quer): Kartenausschnitt mit nummerierten Orten,
+  // Legende, Wertetabelle und QR-Code zur App (Link mit Jahr, Woche, Ebene,
+  // Ausschnitt und den Orten). Ausgabe als PDF, SVG (eine Datei je Thema) und
+  // als interaktive HTML-Datei (Themen umschalten, Werte je Ort). Die Marker
+  // zeichnet der Export selbst (nicht Plotly), damit sie in allen Formaten
+  // gleich aussehen und in HTML/SVG anklickbar bzw. bearbeitbar bleiben.
+  var VERANSTALTUNG_THEMEN = [
+    { name: 'niederschlag_kum', titel: 'Niederschlag seit 1. Januar' },
+    { name: 'boden', titel: 'Bodenwasserbilanz' },
+    { name: 'wachstumspotenzial_kum', titel: 'Potenzielles Graswachstum seit 1. Januar', experimentell: true }
+  ];
+  var SEITE = { b: 297, h: 210, rand: 12, karteB: 188, karteH: 163, spalteX: 207, spalteB: 78 };
+  function appBasisUrl() {
+    var h = window.location.hostname;
+    if (/(^|\.)graswachstum\.ch$/.test(h) && h !== 'apps.graswachstum.ch') return window.location.origin + window.location.pathname;
+    return 'https://graswachstum.ch/de/growth';
+  }
+  function veranstaltungsLink(thema, woche, aus) {
+    var enc = function(v) { return encodeURIComponent(v).replace(/%2C/g, ',').replace(/%20/g, '+').replace(/%7E/gi, '~'); };
+    var p = ['jahr=' + selectedYear, 'kw=' + woche, 'ebene=' + thema.name,
+      'karte=' + [aus.xr[0], aus.xr[1], aus.yr[0], aus.yr[1]].map(function(v) { return v.toFixed(3); }).join(',')];
+    if (eigeneOrte.length) { p.push('orte=' + enc(eigeneOrte.map(ortToken).join(','))); p.push('an=orte'); }
+    return appBasisUrl() + (thema.experimentell ? '?experimentell' : '') + '#' + p.join('&');
+  }
+  // Ausschnitt mit Seitenverhaeltnis verhaeltnis (Breite/Hoehe in Pixeln)
+  function veranstaltungsAusschnitt(art, verhaeltnis) {
+    var info = GWDatenexplorer.kartenInfo, gd = kartenGd(), sr = info.scaleratio;
+    var cx, cy, sx, sy;
+    var gx = gd.layout.xaxis.range, gy = gd.layout.yaxis.range;
+    if (art === 'orte' && eigeneOrte.length) {
+      var lons = eigeneOrte.map(function(o) { return o.lon; }), lats = eigeneOrte.map(function(o) { return o.lat; });
+      var x0 = Math.min.apply(null, lons), x1 = Math.max.apply(null, lons), y0 = Math.min.apply(null, lats), y1 = Math.max.apply(null, lats);
+      cx = (x0 + x1) / 2; cy = (y0 + y1) / 2;
+      sx = Math.max((x1 - x0) * 1.35, 0.3); sy = Math.max((y1 - y0) * 1.35, 0.3 / sr);
+    } else if (art === 'aktuell' && gx && (gx[1] - gx[0]) < (info.xMaxSchweiz - info.xMin) * 0.97) {
+      cx = (gx[0] + gx[1]) / 2; cy = (gy[0] + gy[1]) / 2; sx = gx[1] - gx[0]; sy = gy[1] - gy[0];
+    } else {
+      cx = (info.xMin + info.xMaxSchweiz) / 2; cy = info.yMitte; sx = info.xMaxSchweiz - info.xMin; sy = info.ySpanSchweiz * 1.04;
+    }
+    // auf das Seitenverhaeltnis der Kartenflaeche erweitern
+    if (sx / (sy * sr) < verhaeltnis) sx = verhaeltnis * sy * sr; else sy = sx / (verhaeltnis * sr);
+    return { xr: [cx - sx / 2, cx + sx / 2], yr: [cy - sy / 2, cy + sy / 2] };
+  }
+  // Kartenbild des Ausschnitts als Canvas: Ebene scharf (Gitterzellen ohne
+  // Weichzeichnen), darueber die graue Landeskarte von swisstopo im Modus
+  // «multiplizieren» (Ortschaften, Strassen, Relief bleiben lesbar). Ohne
+  // Landeskarte (offline) die Kantons-/Seenkarte des Datenexplorers.
+  function bildLaden(src, mitCors) {
+    return new Promise(function(ok, fehler) {
+      var img = new Image();
+      if (mitCors) img.crossOrigin = 'anonymous';
+      img.onload = function() { ok(img); };
+      img.onerror = function() { fehler(new Error('Bild konnte nicht geladen werden')); };
+      img.src = src;
+    });
+  }
+  var landeskartenCache = {};
+  function landeskarte(aus, breite, hoehe) {
+    var url = 'https://wms.geo.admin.ch/?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=ch.swisstopo.pixelkarte-grau&STYLES=&CRS=EPSG:4326' +
+      '&BBOX=' + [aus.yr[0], aus.xr[0], aus.yr[1], aus.xr[1]].map(function(v) { return v.toFixed(5); }).join(',') +
+      '&WIDTH=' + breite + '&HEIGHT=' + hoehe + '&FORMAT=image/png';
+    if (!landeskartenCache[url]) landeskartenCache[url] = bildLaden(url, true).catch(function() { delete landeskartenCache[url]; return null; });
+    return landeskartenCache[url];
+  }
+  function zeichneGeoBild(ctx, img, b, aus, breite, hoehe) {
+    var x0 = b.x - (b.xanchor === 'right' ? b.sizex : b.xanchor === 'center' ? b.sizex / 2 : 0);
+    var y0 = b.y + (b.yanchor === 'bottom' ? b.sizey : b.yanchor === 'middle' ? b.sizey / 2 : 0);
+    var px = function(lon) { return (lon - aus.xr[0]) / (aus.xr[1] - aus.xr[0]) * breite; };
+    var py = function(lat) { return (aus.yr[1] - lat) / (aus.yr[1] - aus.yr[0]) * hoehe; };
+    ctx.drawImage(img, px(x0), py(y0), px(x0 + b.sizex) - px(x0), py(y0 - b.sizey) - py(y0));
+  }
+  function veranstaltungsKarte(aus, t, opt, breite, hoehe) {
+    var mess = opt.messstandorte ? kartenBilderFuer(t.woche, null, true).slice(1) : [];
+    var ebene = t.bild ? [kartenBilderFuer(t.woche, t.bild, false)[1]] : [];
+    return Promise.all([
+      // doppelte Aufloesung: swisstopo zeichnet dann die detailliertere Stufe
+      // mit verhaeltnismaessig kleineren Ortsnamen
+      opt.landeskarte ? landeskarte(aus, breite * 2, hoehe * 2) : Promise.resolve(null),
+      Promise.all(ebene.map(function(b) { return bildLaden(b.source).then(function(i) { return { b: b, img: i }; }); })),
+      Promise.all(mess.map(function(b) { return bildLaden(b.source).then(function(i) { return { b: b, img: i }; }); })),
+      opt.landeskarte ? Promise.resolve(null) : bildLaden(kartenbildHintergrund.source).then(function(i) { return { b: kartenbildHintergrund, img: i }; })
+    ]).then(function(r) {
+      var c = document.createElement('canvas');
+      c.width = breite; c.height = hoehe;
+      var ctx = c.getContext('2d');
+      ctx.fillStyle = 'white'; ctx.fillRect(0, 0, breite, hoehe);
+      var karte = r[0];
+      if (!karte && r[3]) zeichneGeoBild(ctx, r[3].img, r[3].b, aus, breite, hoehe);
+      ctx.imageSmoothingEnabled = false;
+      r[1].forEach(function(e) { zeichneGeoBild(ctx, e.img, e.b, aus, breite, hoehe); });
+      ctx.imageSmoothingEnabled = true;
+      if (karte) {
+        ctx.globalCompositeOperation = 'multiply';
+        ctx.drawImage(karte, 0, 0, breite, hoehe);
+        ctx.globalCompositeOperation = 'source-over';
+      }
+      r[2].forEach(function(e) { zeichneGeoBild(ctx, e.img, e.b, aus, breite, hoehe); });
+      return { canvas: c, landeskarte: !!karte };
+    });
+  }
+  // Beschriftungen ohne Ueberlappung: rechts, links, oben oder unten vom
+  // Marker; passt nichts, bleibt nur die Nummer (Name steht in der Tabelle).
+  // Masse in mm der Kartenflaeche (kb x kh), Schriftgroesse fs in mm.
+  function beschriftungen(pos, kb, kh, fs, mitNamen) {
+    var belegt = pos.map(function(p) { return p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1 ? null : { x0: p.x * kb - 2.8, x1: p.x * kb + 2.8, y0: p.y * kh - 2.8, y1: p.y * kh + 2.8 }; });
+    var frei = function(q) {
+      if (q.x0 < 0.5 || q.x1 > kb - 0.5 || q.y0 < 0.5 || q.y1 > kh - 0.5) return false;
+      return belegt.every(function(b) { return !b || q.x1 < b.x0 || q.x0 > b.x1 || q.y1 < b.y0 || q.y0 > b.y1; });
+    };
+    return pos.map(function(p, i) {
+      if (!mitNamen || !belegt[i]) return null;
+      var x = p.x * kb, y = p.y * kh, w = eigeneOrte[i].name.length * fs * 0.53 + 0.6, h = fs * 1.05;
+      var kandidaten = [
+        { anker: 'start', tx: x + 3.4, ty: y + fs * 0.36, q: { x0: x + 3.1, x1: x + 3.4 + w, y0: y - h / 2, y1: y + h / 2 } },
+        { anker: 'end', tx: x - 3.4, ty: y + fs * 0.36, q: { x0: x - 3.4 - w, x1: x - 3.1, y0: y - h / 2, y1: y + h / 2 } },
+        { anker: 'middle', tx: x, ty: y - 3.3, q: { x0: x - w / 2, x1: x + w / 2, y0: y - 3.3 - h * 0.8, y1: y - 3.0 + h * 0.2 } },
+        { anker: 'middle', tx: x, ty: y + 3.3 + fs * 0.8, q: { x0: x - w / 2, x1: x + w / 2, y0: y + 3.0, y1: y + 3.3 + h } }
+      ];
+      for (var k = 0; k < kandidaten.length; k++) {
+        if (frei(kandidaten[k].q)) { belegt.push(kandidaten[k].q); return kandidaten[k]; }
+      }
+      return null;
+    });
+  }
+  function gitterWert(gitter, lon, lat) {
+    if (!gitter || !gitter.m) return null;
+    var col = Math.floor((lon - gitter.x0) / (gitter.x1 - gitter.x0) * gitter.ncol);
+    var row = Math.floor((gitter.y1 - lat) / (gitter.y1 - gitter.y0) * gitter.nrow);
+    if (col < 0 || col >= gitter.ncol || row < 0 || row >= gitter.nrow) return null;
+    var w = gitter.m[row][col];
+    return (w === null || w === undefined || isNaN(w)) ? null : w;
+  }
+  function tausender(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '’'); }
+  function wertText(w, info) {
+    if (w === null) return '–';
+    var z = Math.abs(w) >= 100 ? tausender(Math.round(Math.abs(w) >= 2000 ? w / 10 : w) * (Math.abs(w) >= 2000 ? 10 : 1)) : String(Math.round(w * 10) / 10);
+    return z + ' ' + String(info.einheit).split(',')[0];
+  }
+  // Daten je Thema: Bild und Werte der Woche (sonst der letzten Woche davor
+  // mit Daten), Stand, Werte an den Orten
+  function veranstaltungsThema(thema, woche) {
+    return ladeEbeneP(ebeneDateiSchluessel(thema.name)).then(function(d) {
+      var info = layerLegenden[thema.name], bilder = d.bilder || {}, w = woche;
+      while (w > 0 && !bilder[selectedYear + ' ' + w]) w--;
+      if (w === 0) throw new Error('Für «' + thema.titel + '» gibt es ' + selectedYear + ' noch keine Daten.');
+      var k = selectedYear + ' ' + w, gitter = (d.werte || {})[k];
+      var stand = (gitter && gitter.bis) || (d.datum && d.datum[k]) || wochenDatumBereichText(w).split(' – ')[0] + selectedYear;
+      return {
+        thema: thema, info: info, woche: w, bild: bilder[k], stand: stand,
+        werte: eigeneOrte.map(function(o) { return gitterWert(gitter, o.lon, o.lat); })
+      };
+    });
+  }
+  // Fehlerkorrektur L: die Links mit allen Orten sind lang - so bleiben die
+  // Punkte gross genug zum Scannen ab Papier
+  function qrModule(text, stufe) {
+    var qr = window.qrcode(0, stufe || 'L');
+    qr.addData(text); qr.make();
+    return qr;
+  }
+  // QR-Code als Vektor ins PDF (Rechtecke je Zeile zusammengefasst) - als
+  // PNG legt jsPDF ihn unkomprimiert ab (mehrere MB je Seite)
+  function pdfQrVektor(doc, text, x, y, groesse, stufe) {
+    var qr = qrModule(text, stufe), n = qr.getModuleCount(), m = groesse / (n + 4);
+    doc.setFillColor(255, 255, 255); doc.rect(x, y, groesse, groesse, 'F');
+    doc.setFillColor(0, 0, 0);
+    for (var r = 0; r < n; r++) {
+      for (var k = 0; k < n; k++) {
+        if (!qr.isDark(r, k)) continue;
+        var anfang = k;
+        while (k + 1 < n && qr.isDark(r, k + 1)) k++;
+        doc.rect(x + (anfang + 2) * m, y + (r + 2) * m, (k - anfang + 1) * m + 0.01, m + 0.01, 'F');
+      }
+    }
+  }
+  function qrSvgPfad(text, x, y, groesse) {
+    var qr = qrModule(text), n = qr.getModuleCount(), m = groesse / (n + 4), d = '';
+    for (var r = 0; r < n; r++) for (var k = 0; k < n; k++) {
+      if (qr.isDark(r, k)) d += 'M' + (x + (k + 2) * m).toFixed(2) + ' ' + (y + (r + 2) * m).toFixed(2) + 'h' + m.toFixed(2) + 'v' + m.toFixed(2) + 'h-' + m.toFixed(2) + 'z';
+    }
+    return '<rect x="' + x + '" y="' + y + '" width="' + groesse + '" height="' + groesse + '" fill="#fff"/><path d="' + d + '" fill="#000"/>';
+  }
+  // Marker-Positionen in der Kartenflaeche (0..1)
+  function ortePositionen(aus) {
+    return eigeneOrte.map(function(o) {
+      return { x: (o.lon - aus.xr[0]) / (aus.xr[1] - aus.xr[0]), y: (aus.yr[1] - o.lat) / (aus.yr[1] - aus.yr[0]) };
+    });
+  }
+  function esc(t) { return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function veranstaltungsQuelle(t, mitLandeskarte) {
+    return 'Quelle: ' + t.info.quelle + ' Kartengrundlage: ' + (mitLandeskarte ? 'Landeskarte grau © swisstopo' : 'Kantone und Seen (swisstopo)') + '. Erstellt mit dem Datenexplorer Graswachstum der AGFF.';
+  }
+  function themaUntertitel(t, opt) {
+    return (opt.titel ? opt.titel + ' · ' : '') + 'Stand ' + t.stand + ' · erstellt am ' + heuteText() + ' · graswachstum.ch';
+  }
+
+  // Eine Seite als SVG (mm-Koordinaten), Grundlage fuer SVG- und HTML-Ausgabe
+  function veranstaltungSeiteSvg(t, kartenBild, aus, opt, link) {
+    var S = SEITE, pos = ortePositionen(aus), teile = [];
+    var kx = S.rand, ky = 29, kb = S.karteB, kh = S.karteH;
+    teile.push('<rect width="' + S.b + '" height="' + S.h + '" fill="#fff"/>');
+    teile.push('<text x="' + S.rand + '" y="16" font-size="6.2" font-weight="700" fill="#1e1e1e">' + esc(t.thema.titel + ' ' + selectedYear) + '</text>');
+    teile.push('<text x="' + S.rand + '" y="22" font-size="3.3" fill="#646464">' + esc(themaUntertitel(t, opt)) + '</text>');
+    teile.push('<line x1="' + S.rand + '" y1="25" x2="' + (S.b - S.rand) + '" y2="25" stroke="#d2d2d2" stroke-width="0.3"/>');
+    teile.push('<image class="gw-v-karte" x="' + kx + '" y="' + ky + '" width="' + kb + '" height="' + kh + '" preserveAspectRatio="none" xlink:href="' + kartenBild + '"/>');
+    teile.push('<rect x="' + kx + '" y="' + ky + '" width="' + kb + '" height="' + kh + '" fill="none" stroke="#bdbdbd" stroke-width="0.3"/>');
+    // Marker
+    teile.push('<g class="gw-v-orte">');
+    var labels = beschriftungen(pos, kb, kh, 3.1, opt.namen);
+    pos.forEach(function(p, i) {
+      if (p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1) return;
+      var x = kx + p.x * kb, y = ky + p.y * kh, lb = labels[i];
+      teile.push('<g class="gw-v-ort" data-i="' + i + '">');
+      if (lb) teile.push('<text x="' + (kx + lb.tx).toFixed(2) + '" y="' + (ky + lb.ty).toFixed(2) + '" font-size="3.1" text-anchor="' + lb.anker + '" fill="#3a0a20" stroke="#fff" stroke-width="0.9" paint-order="stroke" stroke-linejoin="round">' + esc(eigeneOrte[i].name) + '</text>');
+      teile.push('<circle cx="' + x.toFixed(2) + '" cy="' + y.toFixed(2) + '" r="2.5" fill="' + ORTE_FARBE + '" stroke="#fff" stroke-width="0.6"/>');
+      teile.push('<text x="' + x.toFixed(2) + '" y="' + (y + 1.05).toFixed(2) + '" font-size="2.9" font-weight="700" fill="#fff" text-anchor="middle">' + (i + 1) + '</text>');
+      teile.push('</g>');
+    });
+    teile.push('</g>');
+    // Spalte rechts: Legende
+    var x = S.spalteX, b = S.spalteB, y = 33;
+    teile.push('<text x="' + x + '" y="' + y + '" font-size="3.6" font-weight="700" fill="#1e1e1e">Legende <tspan font-weight="400" fill="#52514e">(' + esc(String(t.info.einheit).split(',')[0]) + ')</tspan></text>');
+    y += 4;
+    var grad = 'gw-v-grad-' + t.thema.name;
+    teile.push('<defs><linearGradient id="' + grad + '">' + t.info.farben.map(function(f, i) { return '<stop offset="' + (t.info.farben.length > 1 ? i / (t.info.farben.length - 1) : 0) + '" stop-color="' + f + '"/>'; }).join('') + '</linearGradient></defs>');
+    teile.push('<rect x="' + x + '" y="' + y + '" width="' + b + '" height="3.6" fill="url(#' + grad + ')" stroke="#bebebe" stroke-width="0.2"/>');
+    var bereich = t.info.bereich;
+    for (var i = 0; i <= 4; i++) {
+      var wv = bereich[0] + (bereich[1] - bereich[0]) * i / 4, xt = x + b * i / 4;
+      teile.push('<line x1="' + xt + '" y1="' + (y + 3.6) + '" x2="' + xt + '" y2="' + (y + 4.6) + '" stroke="#999" stroke-width="0.2"/>');
+      teile.push('<text x="' + xt + '" y="' + (y + 7.6) + '" font-size="2.7" fill="#464646" text-anchor="' + (i === 0 ? 'start' : i === 4 ? 'end' : 'middle') + '">' + tausender(Math.round(wv)) + '</text>');
+    }
+    y += 12;
+    if (t.thema.experimentell) {
+      teile.push('<text x="' + x + '" y="' + y + '" font-size="2.7" fill="#b23b00">Modellrechnung (ModVege), experimentell –</text>');
+      teile.push('<text x="' + x + '" y="' + (y + 3.4) + '" font-size="2.7" fill="#b23b00">ohne Nährstoffe, Schnitt und Beweidung.</text>');
+      y += 8;
+    }
+    // Tabelle
+    var n = eigeneOrte.length, zeileH = Math.max(2.6, Math.min(4.6, (210 - 50 - y) / Math.max(1, n + 1)));
+    var platz = Math.floor((210 - 50 - y) / zeileH) - 1, zeigen = n > platz ? platz - 1 : n;
+    var fs = Math.min(3.1, zeileH * 0.72);
+    teile.push('<text x="' + x + '" y="' + (y + 3) + '" font-size="' + fs + '" font-weight="700" fill="#1e1e1e">Nr. Ort</text>');
+    teile.push('<text x="' + (x + b) + '" y="' + (y + 3) + '" font-size="' + fs + '" font-weight="700" fill="#1e1e1e" text-anchor="end">Wert</text>');
+    y += zeileH;
+    if (zeigen < n) teile.push('<text x="' + x + '" y="' + (y + zeigen * zeileH + zeileH * 0.78) + '" font-size="' + fs + '" fill="#52514e">… und ' + (n - zeigen) + ' weitere (Nummern auf der Karte)</text>');
+    eigeneOrte.slice(0, zeigen).forEach(function(o, i) {
+      var yz = y + i * zeileH;
+      if (i % 2 === 0) teile.push('<rect x="' + (x - 1) + '" y="' + (yz + 0.4) + '" width="' + (b + 2) + '" height="' + zeileH + '" fill="#f6f6f6"/>');
+      teile.push('<g class="gw-v-zeile" data-i="' + i + '"><text x="' + x + '" y="' + (yz + zeileH * 0.78) + '" font-size="' + fs + '" fill="#1e1e1e">' + (i + 1) + '. ' + esc(o.name.length > 30 ? o.name.slice(0, 29) + '…' : o.name) + '</text>');
+      teile.push('<text x="' + (x + b) + '" y="' + (yz + zeileH * 0.78) + '" font-size="' + fs + '" fill="#1e1e1e" text-anchor="end">' + esc(wertText(t.werte[i], t.info)) + '</text></g>');
+    });
+    // QR-Code
+    var q = 30, qy = S.h - S.rand - q - 6;
+    teile.push(qrSvgPfad(link, x, qy, q));
+    teile.push('<text x="' + (x + q + 2.5) + '" y="' + (qy + 5) + '" font-size="2.8" fill="#464646"><tspan x="' + (x + q + 2.5) + '">Online vertiefen:</tspan><tspan x="' + (x + q + 2.5) + '" dy="3.6">diese Karte mit allen</tspan><tspan x="' + (x + q + 2.5) + '" dy="3.6">Orten im Datenexplorer</tspan></text>');
+    teile.push('<a href="' + esc(link) + '"><text x="' + (x + q + 2.5) + '" y="' + (qy + 18) + '" font-size="2.8" fill="#28645a" text-decoration="underline">graswachstum.ch/growth</text></a>');
+    // Quelle
+    teile.push('<text x="' + S.rand + '" y="' + (S.h - 6) + '" font-size="2.4" fill="#787878">' + esc(veranstaltungsQuelle(t, opt.mitLandeskarte)) + '</text>');
+    return '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="297mm" height="210mm" viewBox="0 0 297 210" font-family="Helvetica, Arial, sans-serif">' + teile.join('') + '</svg>';
+  }
+
+  function veranstaltungPdfSeite(doc, t, kartenJpeg, aus, opt, link) {
+    var S = SEITE, pos = ortePositionen(aus), kx = S.rand, ky = 29, kb = S.karteB, kh = S.karteH;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(17); doc.setTextColor(30);
+    doc.text(t.thema.titel + ' ' + selectedYear, S.rand, 16);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(100);
+    doc.text(themaUntertitel(t, opt), S.rand, 22);
+    doc.setDrawColor(210); doc.setLineWidth(0.3); doc.line(S.rand, 25, S.b - S.rand, 25);
+    doc.addImage(kartenJpeg, 'JPEG', kx, ky, kb, kh);
+    doc.setDrawColor(190); doc.rect(kx, ky, kb, kh);
+    var labels = beschriftungen(pos, kb, kh, 3.1, opt.namen);
+    pos.forEach(function(p, i) {
+      if (p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1) return;
+      var x = kx + p.x * kb, y = ky + p.y * kh, lb = labels[i];
+      if (lb) {
+        doc.setFontSize(8.5); doc.setFont('helvetica', 'normal');
+        var bt = doc.getTextWidth(eigeneOrte[i].name), tx = kx + lb.tx, ty = ky + lb.ty;
+        var x0 = lb.anker === 'start' ? tx : lb.anker === 'end' ? tx - bt : tx - bt / 2;
+        doc.setGState(new doc.GState({ opacity: 0.8 })); doc.setFillColor(255, 255, 255);
+        doc.roundedRect(x0 - 0.6, ty - 3.0, bt + 1.2, 3.9, 0.8, 0.8, 'F');
+        doc.setGState(new doc.GState({ opacity: 1 }));
+        doc.setTextColor(58, 10, 32); doc.text(eigeneOrte[i].name, tx, ty, { align: lb.anker === 'start' ? 'left' : lb.anker === 'end' ? 'right' : 'center' });
+      }
+      doc.setFillColor(194, 24, 91); doc.setDrawColor(255, 255, 255); doc.setLineWidth(0.6);
+      doc.circle(x, y, 2.5, 'FD');
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(255, 255, 255);
+      doc.text(String(i + 1), x, y + 0.95, { align: 'center' });
+    });
+    var x = S.spalteX, b = S.spalteB, y = 33;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(30);
+    doc.text('Legende', x, y);
+    doc.setFont('helvetica', 'normal'); doc.setTextColor(82);
+    doc.text('(' + String(t.info.einheit).split(',')[0] + ')', x + doc.getTextWidth('Legende ') + 1, y);
+    y += 4;
+    doc.addImage(farbBalkenPng(t.info.farben, 400, 12), 'PNG', x, y, b, 3.6);
+    doc.setDrawColor(190); doc.setLineWidth(0.2); doc.rect(x, y, b, 3.6);
+    doc.setFontSize(7.5); doc.setTextColor(70);
+    for (var li = 0; li <= 4; li++) {
+      var lw = t.info.bereich[0] + (t.info.bereich[1] - t.info.bereich[0]) * li / 4;
+      doc.line(x + b * li / 4, y + 3.6, x + b * li / 4, y + 4.6);
+      doc.text(tausender(Math.round(lw)), x + b * li / 4, y + 8, { align: li === 0 ? 'left' : li === 4 ? 'right' : 'center' });
+    }
+    y += 12;
+    if (t.thema.experimentell) {
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(178, 59, 0);
+      doc.text(doc.splitTextToSize('Modellrechnung (ModVege), experimentell – ohne Nährstoffe, Schnitt und Beweidung.', b), x, y + 2);
+      y += 9;
+    }
+    var n = eigeneOrte.length, zeileH = Math.max(2.6, Math.min(4.6, (210 - 50 - y) / Math.max(1, n + 1)));
+    var platz = Math.floor((210 - 50 - y) / zeileH) - 1, zeigen = n > platz ? platz - 1 : n;
+    var fs = Math.min(8.8, zeileH * 2.05);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(fs); doc.setTextColor(30);
+    doc.text('Nr. Ort', x, y + 3); doc.text('Wert', x + b, y + 3, { align: 'right' });
+    y += zeileH;
+    doc.setFont('helvetica', 'normal');
+    if (zeigen < n) { doc.setTextColor(82); doc.text('… und ' + (n - zeigen) + ' weitere (Nummern auf der Karte)', x, y + zeigen * zeileH + zeileH * 0.78); }
+    eigeneOrte.slice(0, zeigen).forEach(function(o, i) {
+      var yz = y + i * zeileH;
+      if (i % 2 === 0) { doc.setFillColor(246, 246, 246); doc.rect(x - 1, yz + 0.4, b + 2, zeileH, 'F'); }
+      doc.setTextColor(30);
+      doc.text((i + 1) + '. ' + (o.name.length > 30 ? o.name.slice(0, 29) + '…' : o.name), x, yz + zeileH * 0.78);
+      doc.text(wertText(t.werte[i], t.info), x + b, yz + zeileH * 0.78, { align: 'right' });
+    });
+    var q = 30, qy = S.h - S.rand - q - 6;
+    pdfQrVektor(doc, link, x, qy, q);
+    doc.setFontSize(8); doc.setTextColor(70);
+    doc.text(['Online vertiefen:', 'diese Karte mit allen', 'Orten im Datenexplorer'], x + q + 2.5, qy + 5);
+    doc.setTextColor(40, 100, 90);
+    doc.textWithLink('graswachstum.ch/growth', x + q + 2.5, qy + 18, { url: link });
+    doc.setFontSize(7); doc.setTextColor(120);
+    doc.text(doc.splitTextToSize(veranstaltungsQuelle(t, opt.mitLandeskarte), S.b - 2 * S.rand), S.rand, S.h - 6);
+  }
+
+  // --- Jahresrueckblick (HTML-Ausgabe): eigene Orte im Vergleich zur Schweiz ---
+  // Je Kalenderwoche: Mittel der eigenen Orte und Mittel aller Gitterzellen der
+  // Schweiz fuer Niederschlag seit 1. Januar, Bodenwasserbilanz und potenzielles
+  // Wachstum; dazu das gemessene Graswachstum des naechsten Messstandorts.
+  // Farben geprueft (dataviz-Validator): Gebiet #c2185b = Markerfarbe,
+  // Schweiz #2a78d6, Referenz #eda100 gestrichelt mit sichtbarer Beschriftung.
+  var RB_FARBEN = { gebiet: '#c2185b', schweiz: '#2a78d6', referenz: '#eda100' };
+  function mittel(werte) {
+    var s = 0, n = 0;
+    werte.forEach(function(v) { if (v !== null && v !== undefined && !isNaN(v)) { s += v; n++; } });
+    return n ? s / n : null;
+  }
+  function gitterMittel(gitter) {
+    var s = 0, n = 0;
+    (gitter.m || []).forEach(function(zeile) { (zeile || []).forEach(function(v) { if (v !== null && v !== undefined && !isNaN(v)) { s += v; n++; } }); });
+    return n ? s / n : null;
+  }
+  // Koordinaten der Messstandorte aus den Kartenpunkten (je Snapshot-Trace)
+  function messstandortKoordinaten() {
+    var gd = kartenGd(), k = {};
+    mapWochen.forEach(function(m, i) {
+      var t = gd && gd.data[i], namen = mapPointOrts[i];
+      if (!t || !namen) return;
+      namen.forEach(function(n, j) { if (!k[n] && isFinite(t.x[j]) && isFinite(t.y[j])) k[n] = { lon: t.x[j], lat: t.y[j] }; });
+    });
+    return k;
+  }
+  function km(a, b) {
+    var r = Math.PI / 180, dx = (a.lon - b.lon) * Math.cos((a.lat + b.lat) / 2 * r) * 111.32, dy = (a.lat - b.lat) * 110.57;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+  function jahresrueckblickDaten(wocheBis) {
+    var themen = VERANSTALTUNG_THEMEN.filter(function(t) { return layerLegenden[t.name]; });
+    return Promise.all(themen.map(function(th) {
+      return ladeEbeneP(ebeneDateiSchluessel(th.name)).then(function(d) {
+        var punkte = [];
+        for (var w = 1; w <= wocheBis; w++) {
+          var g = (d.werte || {})[selectedYear + ' ' + w];
+          if (!g || !g.m) continue;
+          punkte.push({ w: w, gebiet: mittel(eigeneOrte.map(function(o) { return gitterWert(g, o.lon, o.lat); })), schweiz: gitterMittel(g) });
+        }
+        return { thema: th, info: layerLegenden[th.name], punkte: punkte };
+      }, function() { return null; });
+    })).then(function(liste) {
+      // Gemessenes Graswachstum: naechster Messstandort mit Daten im Jahr
+      var koord = messstandortKoordinaten(), mitte = { lon: mittel(eigeneOrte.map(function(o) { return o.lon; })), lat: mittel(eigeneOrte.map(function(o) { return o.lat; })) };
+      var best = null;
+      siteGrowthMeta.forEach(function(m) {
+        if (m.year !== selectedYear) return;
+        var n = siteNames[m.siteIdx], c = koord[n];
+        if (!c) return;
+        var d = km(mitte, c);
+        if (!best || d < best.km) best = { name: n, km: d, traceIdx: m.traceIdx };
+      });
+      var spur = function(idx) {
+        var t = el.data[idx];
+        return t ? t.x.map(function(x, i) { return [x, t.y[i]]; }).filter(function(p) { return p[1] !== null && isFinite(p[1]) && p[0] <= wocheBis; }) : [];
+      };
+      var alle = null;
+      groupGrowthMeta.forEach(function(m) { if (m.year === selectedYear && m.groupIdx === 0) alle = m.traceIdx; });
+      var messung = {
+        standort: best, nah: best ? spur(best.traceIdx) : [], schweiz: alle !== null ? spur(alle) : [],
+        referenz: spur(standardKurveTraceIdx).filter(function(p) { return p[0] <= 52; })
+      };
+      return { themen: liste.filter(Boolean), messung: messung };
+    });
+  }
+  function netteSchrittweite(roh) {
+    var e = Math.pow(10, Math.floor(Math.log10(Math.max(roh, 1e-9)))), f = roh / e;
+    return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * e;
+  }
+  // Liniendiagramm als SVG; serien: [{ name, farbe, strich, punkte: [[woche, wert], ...] }]
+  function rueckblickDiagramm(id, serien, einheit) {
+    var B = 640, H = 250, l = 52, r = 78, o = 26, u = 34, pb = B - l - r, ph = H - o - u, xMax = 52;
+    var yMax = 0;
+    serien.forEach(function(s) { s.punkte.forEach(function(p) { if (p[1] > yMax) yMax = p[1]; }); });
+    var schritt = netteSchrittweite((yMax || 1) / 4);
+    yMax = Math.max(schritt, Math.ceil(yMax / schritt) * schritt);
+    var X = function(w) { return l + (w - 1) / (xMax - 1) * pb; }, Y = function(v) { return o + ph - v / yMax * ph; };
+    var t = ['<svg class="gw-rb-svg" viewBox="0 0 ' + B + ' ' + H + '" role="img" aria-label="Diagramm ' + esc(serien.map(function(s) { return s.name; }).join(', ')) + '">'];
+    for (var v = 0; v <= yMax + 1e-9; v += schritt) {
+      t.push('<line x1="' + l + '" x2="' + (l + pb) + '" y1="' + Y(v).toFixed(1) + '" y2="' + Y(v).toFixed(1) + '" stroke="' + (v === 0 ? '#9a9a9a' : '#e6e6e6') + '" stroke-width="1"/>');
+      t.push('<text x="' + (l - 6) + '" y="' + (Y(v) + 4).toFixed(1) + '" font-size="11" fill="#52514e" text-anchor="end">' + tausender(Math.round(v)) + '</text>');
+    }
+    t.push('<text x="' + (l - 44) + '" y="11" font-size="11" fill="#52514e">' + esc(einheit) + '</text>');
+    for (var w = 1; w <= 52; w += 4) {
+      t.push('<text x="' + X(w).toFixed(1) + '" y="' + (o + ph + 16) + '" font-size="11" fill="#52514e" text-anchor="middle">' + w + '</text>');
+    }
+    t.push('<text x="' + (l + pb / 2) + '" y="' + (H - 2) + '" font-size="11" fill="#52514e" text-anchor="middle">Kalenderwoche</text>');
+    serien.forEach(function(s) {
+      var d = '', vorher = null;
+      s.punkte.forEach(function(p) {
+        if (p[1] === null) { vorher = null; return; }
+        d += (vorher === null || p[0] - vorher > 2 ? 'M' : 'L') + X(p[0]).toFixed(1) + ' ' + Y(p[1]).toFixed(1);
+        vorher = p[0];
+      });
+      t.push('<path d="' + d + '" fill="none" stroke="' + s.farbe + '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"' + (s.strich === 'dash' ? ' stroke-dasharray="6 4"' : '') + '/>');
+    });
+    // Direktbeschriftung am Linienende, Text in Textfarbe; Ueberlappungen verschieben
+    var enden = serien.map(function(s) {
+      var p = s.punkte.filter(function(q) { return q[1] !== null; }).pop();
+      return p ? { name: s.kurz || s.name, farbe: s.farbe, x: X(p[0]), y: Y(p[1]) } : null;
+    }).filter(Boolean).sort(function(a, b) { return a.y - b.y; });
+    enden.forEach(function(e, i) { if (i > 0 && e.y - enden[i - 1].y < 13) e.y = enden[i - 1].y + 13; });
+    enden.forEach(function(e) {
+      t.push('<circle cx="' + e.x.toFixed(1) + '" cy="' + e.y.toFixed(1) + '" r="3" fill="' + e.farbe + '" stroke="#fff" stroke-width="2"/>');
+      t.push('<text x="' + (Math.min(e.x, l + pb) + 7).toFixed(1) + '" y="' + (e.y + 4).toFixed(1) + '" font-size="11" fill="#1e1e1e">' + esc(e.name) + '</text>');
+    });
+    t.push('<line class="gw-rb-kreuz" x1="0" x2="0" y1="' + o + '" y2="' + (o + ph) + '" stroke="#52514e" stroke-width="1" visibility="hidden"/>');
+    t.push('<rect class="gw-rb-flaeche" x="' + l + '" y="' + o + '" width="' + pb + '" height="' + ph + '" fill="transparent"/>');
+    t.push('</svg>');
+    var daten = { l: l, pb: pb, o: o, ph: ph, yMax: yMax, B: B, H: H, einheit: einheit,
+      serien: serien.map(function(s) { var m = {}; s.punkte.forEach(function(p) { if (p[1] !== null) m[p[0]] = Math.round(p[1] * 10) / 10; }); return { name: s.name, farbe: s.farbe, werte: m }; }) };
+    var legende = '<div class="gw-rb-legende">' + serien.map(function(s) {
+      return '<span><i style="border-top:2px ' + (s.strich === 'dash' ? 'dashed' : 'solid') + ' ' + s.farbe + '"></i>' + esc(s.name) + '</span>';
+    }).join('') + '</div>';
+    var wochen = [];
+    serien.forEach(function(s) { s.punkte.forEach(function(p) { if (p[1] !== null && wochen.indexOf(p[0]) === -1) wochen.push(p[0]); }); });
+    wochen.sort(function(a, b) { return a - b; });
+    var tabelle = '<details class="gw-rb-tabelle"><summary>Tabelle</summary><table><thead><tr><th>KW</th>' + serien.map(function(s) { return '<th>' + esc(s.name) + '</th>'; }).join('') + '</tr></thead><tbody>' +
+      wochen.map(function(w) { return '<tr><td>' + w + '</td>' + daten.serien.map(function(s) { return '<td>' + (s.werte[w] !== undefined ? tausender(Math.round(s.werte[w])) : '–') + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table></details>';
+    return { html: legende + '<div class="gw-rb-fig" data-id="' + id + '">' + t.join('') + '</div>' + tabelle, daten: daten };
+  }
+  function prozentText(a, b) {
+    if (a === null || b === null || !b) return '';
+    var p = Math.round((a / b - 1) * 100);
+    return p === 0 ? 'wie das Schweizer Mittel' : (Math.abs(p) + ' % ' + (p > 0 ? 'über' : 'unter') + ' dem Schweizer Mittel');
+  }
+  function jahresrueckblickHtml(rb) {
+    var diagramme = [], kacheln = [], daten = {};
+    rb.themen.forEach(function(t, i) {
+      var ein = String(t.info.einheit).split(',')[0];
+      var serien = [
+        { name: 'Ihre Orte (Mittel)', kurz: 'Ihre Orte', farbe: RB_FARBEN.gebiet, punkte: t.punkte.map(function(p) { return [p.w, p.gebiet]; }) },
+        { name: 'Schweiz (Mittel)', kurz: 'Schweiz', farbe: RB_FARBEN.schweiz, punkte: t.punkte.map(function(p) { return [p.w, p.schweiz]; }) }
+      ];
+      var d = rueckblickDiagramm('rb' + i, serien, ein);
+      daten['rb' + i] = d.daten;
+      diagramme.push('<figure class="gw-rb-karte"><figcaption>' + esc(t.thema.titel) + (t.thema.experimentell ? ' <small>(Modellrechnung, experimentell)</small>' : '') + '</figcaption>' + d.html + '</figure>');
+      var letzte = t.punkte.filter(function(p) { return p.gebiet !== null; }).pop();
+      if (!letzte) return;
+      var zusatz = '';
+      if (t.thema.name === 'boden') {
+        var trocken = t.punkte.filter(function(p) { return p.gebiet !== null && p.gebiet < 30; });
+        var tief = t.punkte.reduce(function(a, p) { return p.gebiet !== null && (!a || p.gebiet < a.gebiet) ? p : a; }, null);
+        zusatz = trocken.length ? trocken.length + ' Wochen unter 30 mm, am trockensten KW ' + tief.w + ' (' + Math.round(tief.gebiet) + ' mm)' : 'keine Woche unter 30 mm';
+        kacheln.push('<div class="gw-rb-kachel"><span>' + esc(t.thema.titel) + ', KW ' + letzte.w + '</span><b>' + Math.round(letzte.gebiet) + ' mm</b><em>' + esc(zusatz) + '</em></div>');
+      } else {
+        kacheln.push('<div class="gw-rb-kachel"><span>' + esc(t.thema.titel) + ' (bis KW ' + letzte.w + ')</span><b>' + tausender(Math.round(letzte.gebiet)) + ' ' + esc(ein) + '</b><em>' +
+          esc(prozentText(letzte.gebiet, letzte.schweiz)) + (letzte.schweiz !== null ? ' (' + tausender(Math.round(letzte.schweiz)) + ' ' + esc(ein) + ')' : '') + '</em></div>');
+      }
+    });
+    var m = rb.messung;
+    if (m.standort && m.nah.length) {
+      var serien = [
+        { name: 'Gemessen in ' + m.standort.name + ' (' + Math.round(m.standort.km) + ' km)', kurz: m.standort.name, farbe: RB_FARBEN.gebiet, punkte: m.nah },
+        { name: 'Alle Standorte (Mittel)', kurz: 'Alle Standorte', farbe: RB_FARBEN.schweiz, punkte: m.schweiz },
+        { name: 'Durchschnitt Mittelland, langjährig', kurz: 'Mittelland', farbe: RB_FARBEN.referenz, strich: 'dash', punkte: m.referenz }
+      ];
+      var d = rueckblickDiagramm('rbm', serien, 'kg TS/ha/Tag');
+      daten.rbm = d.daten;
+      diagramme.push('<figure class="gw-rb-karte"><figcaption>Gemessenes Graswachstum ' + selectedYear + '</figcaption>' + d.html + '</figure>');
+      var spitze = m.nah.reduce(function(a, p) { return !a || p[1] > a[1] ? p : a; }, null);
+      kacheln.push('<div class="gw-rb-kachel"><span>Nächster Messstandort</span><b>' + esc(m.standort.name) + '</b><em>' + Math.round(m.standort.km) + ' km vom Mittelpunkt Ihrer Orte · Spitze ' + Math.round(spitze[1]) + ' kg TS/ha/Tag in KW ' + spitze[0] + '</em></div>');
+    }
+    return {
+      html: '<section data-t="rb" hidden class="gw-rb"><div class="gw-rb-kacheln">' + kacheln.join('') + '</div><div class="gw-rb-gitter">' + diagramme.join('') + '</div>' +
+        '<p class="gw-rb-hinweis">«Ihre Orte» = Mittel der Werte an den erfassten Orten; «Schweiz» = Mittel aller 1-km-Gitterzellen der Schweiz. Gemessenes Graswachstum: Messnetz der AGFF.</p></section>',
+      daten: daten
+    };
+  }
+
+  function veranstaltungHtml(seiten, opt, rueckblick) {
+    var rb = rueckblick ? jahresrueckblickHtml(rueckblick) : null;
+    var daten = {
+      orte: eigeneOrte.map(function(o) { return o.name; }),
+      themen: seiten.map(function(s) { return { titel: s.t.thema.titel, einheit: String(s.t.info.einheit).split(',')[0], werte: s.t.werte.map(function(w) { return wertText(w, s.t.info); }) }; })
+    };
+    var tabs = seiten.map(function(s, i) { return '<button type="button" data-t="' + i + '"' + (i === 0 ? ' class="an"' : '') + '>' + esc(s.t.thema.titel) + '</button>'; }).join('') +
+      (rb ? '<button type="button" data-t="rb">Jahresrückblick ' + selectedYear + '</button>' : '');
+    var bloecke = seiten.map(function(s, i) {
+      return '<section data-t="' + i + '"' + (i === 0 ? '' : ' hidden') + '>' + s.svg + '<p class="link"><a href="' + esc(s.link) + '" target="_blank" rel="noopener">Diese Karte im Datenexplorer öffnen</a></p></section>';
+    }).join('');
+    var skript = 'var D=' + JSON.stringify(daten).replace(/</g, '\\u003c') + ';var R=' + JSON.stringify(rb ? rb.daten : {}).replace(/</g, '\\u003c') + ';' +
+      'var tip=document.getElementById("tip");' +
+      'document.querySelectorAll("nav button").forEach(function(b){b.addEventListener("click",function(){' +
+      'document.querySelectorAll("nav button").forEach(function(x){x.classList.toggle("an",x===b)});' +
+      'document.querySelectorAll("main section").forEach(function(s){s.hidden=s.getAttribute("data-t")!==b.getAttribute("data-t")});tip.hidden=true;})});' +
+      'function zeige(i,e){var h="<b>"+(i+1)+". "+D.orte[i].replace(/</g,"&lt;")+"</b>";D.themen.forEach(function(t){h+="<br>"+t.titel+": <b>"+t.werte[i]+"</b>"});' +
+      'tip.innerHTML=h;tip.hidden=false;var x=e.clientX,y=e.clientY;tip.style.left=Math.min(x+12,innerWidth-tip.offsetWidth-8)+"px";tip.style.top=Math.max(8,y-tip.offsetHeight-12)+"px";' +
+      'document.querySelectorAll(".gw-v-ort,.gw-v-zeile").forEach(function(g){g.classList.toggle("hell",+g.getAttribute("data-i")===i)})}' +
+      'document.querySelectorAll(".gw-v-ort,.gw-v-zeile").forEach(function(g){var i=+g.getAttribute("data-i");' +
+      'g.addEventListener("mouseenter",function(e){zeige(i,e)});g.addEventListener("click",function(e){e.stopPropagation();zeige(i,e)});' +
+      'g.addEventListener("mouseleave",function(){tip.hidden=true;document.querySelectorAll(".hell").forEach(function(x){x.classList.remove("hell")})})});' +
+      'document.addEventListener("click",function(){tip.hidden=true});' +
+      // Jahresrueckblick: Fadenkreuz und Tooltip je Diagramm
+      'document.querySelectorAll(".gw-rb-fig").forEach(function(f){var d=R[f.getAttribute("data-id")];if(!d)return;var svg=f.querySelector("svg"),kreuz=svg.querySelector(".gw-rb-kreuz"),pk=[];' +
+      'd.serien.forEach(function(s){var c=document.createElementNS("http://www.w3.org/2000/svg","circle");c.setAttribute("r","4");c.setAttribute("fill",s.farbe);c.setAttribute("stroke","#fff");c.setAttribute("stroke-width","2");c.setAttribute("visibility","hidden");svg.appendChild(c);pk.push(c)});' +
+      'function weg(){kreuz.setAttribute("visibility","hidden");pk.forEach(function(c){c.setAttribute("visibility","hidden")});tip.hidden=true}' +
+      'svg.addEventListener("pointerleave",weg);svg.addEventListener("pointermove",function(e){var p=svg.createSVGPoint();p.x=e.clientX;p.y=e.clientY;p=p.matrixTransform(svg.getScreenCTM().inverse());' +
+      'var w=Math.round((p.x-d.l)/d.pb*51+1);if(w<1||w>52){weg();return}var x=d.l+(w-1)/51*d.pb,h="<b>KW "+w+"</b>",irgend=false;' +
+      'd.serien.forEach(function(s,i){var v=s.werte[w];if(v===undefined){pk[i].setAttribute("visibility","hidden");return}irgend=true;var y=d.o+d.ph-v/d.yMax*d.ph;pk[i].setAttribute("cx",x);pk[i].setAttribute("cy",y);pk[i].setAttribute("visibility","visible");' +
+      'h+="<br><i style=\\"display:inline-block;width:10px;border-top:2px solid "+s.farbe+";vertical-align:middle;margin-right:5px\\"></i>"+s.name+": <b>"+String(Math.round(v)).replace(/\\B(?=(\\d{3})+(?!\\d))/g,"\u2019")+" "+d.einheit+"</b>"});' +
+      'if(!irgend){weg();return}kreuz.setAttribute("x1",x);kreuz.setAttribute("x2",x);kreuz.setAttribute("visibility","visible");tip.innerHTML=h;tip.hidden=false;' +
+      'tip.style.left=Math.min(e.clientX+14,innerWidth-tip.offsetWidth-8)+"px";tip.style.top=Math.max(8,e.clientY-tip.offsetHeight-14)+"px"})});';
+    var titel = opt.titel || ('Graswachstum ' + selectedYear + ' – Karten für eigene Orte');
+    return '<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+      '<title>' + esc(titel) + '</title><style>' +
+      'body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:#eef1ee;color:#1e1e1e}' +
+      'header{padding:14px 18px 6px}header h1{margin:0;font-size:20px}header p{margin:4px 0 0;color:#555;font-size:13px}' +
+      'nav{display:flex;flex-wrap:wrap;gap:6px;padding:8px 18px}nav button{font:inherit;font-size:14px;padding:7px 12px;border:1px solid #9bb5a8;border-radius:16px;background:#fff;cursor:pointer}' +
+      'nav button.an{background:#2f6f5e;color:#fff;border-color:#2f6f5e}' +
+      'main{padding:6px 18px 24px}section svg{width:100%;height:auto;max-height:calc(100vh - 150px);background:#fff;box-shadow:0 1px 6px rgba(0,0,0,.15);border-radius:4px;display:block;margin:0 auto}' +
+      '.gw-v-ort,.gw-v-zeile{cursor:pointer}.gw-v-ort.hell circle{stroke:#ffd54f;stroke-width:1.2}.gw-v-zeile.hell text{font-weight:700}' +
+      '.link{text-align:center;font-size:14px}.link a{color:#2f6f5e}' +
+      '#tip{position:fixed;z-index:9;background:#fff;border:1px solid #bbb;border-radius:8px;box-shadow:0 3px 12px rgba(0,0,0,.2);padding:7px 10px;font-size:13px;line-height:1.45;max-width:300px;pointer-events:none}' +
+      '.gw-rb{max-width:1200px;margin:0 auto}.gw-rb-kacheln{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-bottom:12px}' +
+      '.gw-rb-kachel{background:#fff;border-radius:8px;padding:10px 12px;box-shadow:0 1px 4px rgba(0,0,0,.1)}.gw-rb-kachel span{display:block;font-size:12.5px;color:#52514e}' +
+      '.gw-rb-kachel b{display:block;font-size:24px;margin:2px 0}.gw-rb-kachel em{display:block;font-style:normal;font-size:12.5px;color:#52514e}' +
+      '.gw-rb-gitter{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,520px),1fr));gap:12px}' +
+      '.gw-rb-karte{margin:0;background:#fff;border-radius:8px;padding:10px 12px;box-shadow:0 1px 4px rgba(0,0,0,.1)}.gw-rb-karte figcaption{font-weight:700;font-size:15px;margin-bottom:4px}.gw-rb-karte small{font-weight:400;color:#b23b00}' +
+      '.gw-rb-legende{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12.5px;color:#1e1e1e;margin:2px 0 4px}.gw-rb-legende i{display:inline-block;width:18px;vertical-align:middle;margin-right:5px}' +
+      '.gw-rb-svg{width:100%;height:auto;display:block;touch-action:pan-y}.gw-rb-tabelle summary{cursor:pointer;font-size:12.5px;color:#2f6f5e;margin-top:4px}' +
+      '.gw-rb-tabelle table{border-collapse:collapse;font-size:12px;margin-top:6px}.gw-rb-tabelle th,.gw-rb-tabelle td{padding:2px 8px;text-align:right;border-bottom:1px solid #eee}' +
+      '.gw-rb-hinweis{font-size:12px;color:#52514e;margin-top:10px}' +
+      '@media (max-width:600px){header,nav,main{padding-left:10px;padding-right:10px}.gw-rb-fig{overflow-x:auto}.gw-rb-svg{min-width:560px}}' +
+      '@media print{nav,.link,#tip{display:none}main section{display:block!important;page-break-after:always}section svg{box-shadow:none;max-height:none}}' +
+      '</style></head><body><header><h1>' + esc(titel) + '</h1><p>Stichtag ' + esc(wocheText(seiten[0].t.woche)) + ' · erstellt am ' + heuteText() + ' · Orte antippen für die Werte aller Themen</p></header>' +
+      '<nav>' + tabs + '</nav><main>' + bloecke + (rb ? rb.html : '') + '</main><div id="tip" hidden></div><script>' + skript + '</script></body></html>';
+  }
+
+  function exportVeranstaltung(opt, fortschritt) {
+    if (!eigeneOrte.length) throw new Error('Bitte zuerst Orte erfassen.');
+    var themen = VERANSTALTUNG_THEMEN.filter(function(t) { return opt.themen.indexOf(t.name) !== -1 && layerLegenden[t.name]; });
+    if (!themen.length) throw new Error('Bitte mindestens ein Thema wählen.');
+    if (!opt.formate.length) throw new Error('Bitte mindestens ein Format wählen.');
+    var pxB = 1500, pxH = Math.round(pxB * SEITE.karteH / SEITE.karteB);
+    opt.pxB = pxB; opt.pxH = pxH;
+    var aus = veranstaltungsAusschnitt(opt.ausschnitt, pxB / pxH);
+    var schritte = themen.length * opt.formate.length + 1, schritt = 0;
+    var weiter = function() { fortschritt(++schritt, schritte); };
+    return Promise.all([ladeBibliothek('qrcode'), opt.formate.indexOf('pdf') !== -1 ? ladeBibliothek('jspdf') : null,
+      opt.formate.length > 1 || (opt.formate.indexOf('svg') !== -1 && themen.length > 1) ? ladeBibliothek('jszip') : null]).then(function() {
+      return Promise.all([Promise.all(themen.map(function(th) { return veranstaltungsThema(th, selectedWeek); })),
+        opt.formate.indexOf('html') !== -1 ? jahresrueckblickDaten(selectedWeek).catch(function(e) { console.warn('Jahresrückblick:', e); return null; }) : null]);
+    }).then(function(ergebnis) {
+      var daten = ergebnis[0], rueckblick = ergebnis[1];
+      weiter();
+      var dateien = [], doc = null, seitenHtml = [];
+      var kette = Promise.resolve();
+      daten.forEach(function(t) {
+        var link = veranstaltungsLink(t.thema, t.woche, aus);
+        var datei = 'graswachstum_' + selectedYear + '-KW' + zweistellig(t.woche) + '_' + t.thema.name;
+        kette = kette.then(function() {
+          return veranstaltungsKarte(aus, t, opt, pxB, pxH).then(function(k) {
+            opt.mitLandeskarte = k.landeskarte;
+            var jpg = k.canvas.toDataURL('image/jpeg', 0.8);
+            if (opt.formate.indexOf('pdf') !== -1) {
+              if (!doc) doc = new window.jspdf.jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape', compress: true });
+              else doc.addPage('a4', 'landscape');
+              veranstaltungPdfSeite(doc, t, jpg, aus, opt, link);
+              weiter();
+            }
+            if (opt.formate.indexOf('svg') !== -1) {
+              dateien.push({ name: datei + '.svg', inhalt: '<?xml version="1.0" encoding="UTF-8"?>\n' + veranstaltungSeiteSvg(t, jpg, aus, opt, link) });
+              weiter();
+            }
+            if (opt.formate.indexOf('html') !== -1) {
+              seitenHtml.push({ t: t, link: link, svg: veranstaltungSeiteSvg(t, jpg, aus, opt, link).replace(/ width="297mm" height="210mm"/, '') });
+              weiter();
+            }
+          });
+        });
+      });
+      return kette.then(function() {
+        var basis = 'graswachstum_' + selectedYear + '-KW' + zweistellig(daten[0].woche) + '_orte';
+        if (doc) dateien.unshift({ name: basis + '.pdf', inhalt: doc.output('blob') });
+        if (seitenHtml.length) dateien.push({ name: basis + '.html', inhalt: new Blob([veranstaltungHtml(seitenHtml, opt, rueckblick)], { type: 'text/html;charset=utf-8' }) });
+        if (dateien.length === 1) {
+          var d = dateien[0];
+          herunterladen(d.inhalt instanceof Blob ? d.inhalt : new Blob([d.inhalt], { type: 'image/svg+xml;charset=utf-8' }), d.name);
+          return;
+        }
+        var zip = new JSZip();
+        dateien.forEach(function(d) { zip.file(d.name, d.inhalt); });
+        return zip.generateAsync({ type: 'blob' }).then(function(blob) { herunterladen(blob, basis + '.zip'); });
+      });
+    });
+  }
+
   // --- Seitenleiste ---
   var exportEl = null, exportStatusEl = null, exportOpener = null;
   function exportFeld(tag, klasse, text) { var e = document.createElement(tag); if (klasse) e.className = klasse; if (text !== undefined) e.textContent = text; return e; }
@@ -4332,6 +5178,35 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       else window.prompt('Link kopieren:', url);
     });
     a0.appendChild(linkKnopf);
+    // Veranstaltungskarte: eigene Orte auf Themenkarten
+    var aV = abschnitt('Karte für eine Veranstaltung', 'Eigene Orte (z.B. die Betriebe der Teilnehmenden) auf Karten zu Niederschlag, Wasserbilanz und potenziellem Graswachstum, mit Wertetabelle und QR-Code zur App. Stichtag ist die Woche der Zeitleiste.');
+    aV.classList.add('gw-export-veranstaltung');
+    aV.appendChild(macheOrteEditor(exportStatus));
+    aV.appendChild(exportFeld('p', 'gw-export-hinweis', 'Mehrere PLZ auf einmal: mit Komma oder Zeilenumbruch einfügen. Auf einen Namen tippen, um ihn zu ändern (z.B. Betriebsname).'));
+    var orteSchalter = exportWahl('checkbox', 'gw-ex-v-zeigen', 'ja', 'Orte auf der Karte zeigen', orteAnzeigen);
+    orteSchalter.querySelector('input').addEventListener('change', function(evt) { setzeOrteAnzeigen(evt.target.checked); });
+    orteHoerer.push(function() { orteSchalter.querySelector('input').checked = orteAnzeigen; });
+    zeile(aV, [orteSchalter]);
+    var titelFeld = document.createElement('input');
+    titelFeld.type = 'text'; titelFeld.className = 'gw-export-text-feld'; titelFeld.placeholder = 'z.B. Weidetagung Muri, 20.10.2026';
+    titelFeld.setAttribute('aria-label', 'Titel der Veranstaltung (optional)');
+    zeile(aV, [titelFeld], 'Titel');
+    zeile(aV, VERANSTALTUNG_THEMEN.filter(function(t) { return layerLegenden[t.name]; }).map(function(t) {
+      return exportWahl('checkbox', 'gw-ex-v-thema', t.name, t.titel + (t.experimentell ? ' (experimentell)' : ''), true);
+    }), 'Themen');
+    zeile(aV, [exportWahl('radio', 'gw-ex-v-aus', 'orte', 'um die Orte', true), exportWahl('radio', 'gw-ex-v-aus', 'aktuell', 'aktueller Ausschnitt', false),
+      exportWahl('radio', 'gw-ex-v-aus', 'voll', 'ganze Schweiz', false)], 'Ausschnitt');
+    zeile(aV, [exportWahl('checkbox', 'gw-ex-v-lk', 'ja', 'Landeskarte (swisstopo)', true), exportWahl('checkbox', 'gw-ex-v-namen', 'ja', 'Namen an der Karte', true),
+      exportWahl('checkbox', 'gw-ex-v-mess', 'ja', 'Messstandorte', false)], 'Karte');
+    zeile(aV, [exportWahl('checkbox', 'gw-ex-v-fmt', 'pdf', 'PDF', true), exportWahl('checkbox', 'gw-ex-v-fmt', 'svg', 'SVG', false),
+      exportWahl('checkbox', 'gw-ex-v-fmt', 'html', 'HTML (interaktiv)', true)], 'Format');
+    losKnopf(aV, 'Karten erstellen', function(fortschritt) {
+      return exportVeranstaltung({
+        themen: gewaehlt('gw-ex-v-thema'), formate: gewaehlt('gw-ex-v-fmt'), ausschnitt: gewaehlt('gw-ex-v-aus')[0] || 'orte',
+        namen: gewaehlt('gw-ex-v-namen').length > 0, messstandorte: gewaehlt('gw-ex-v-mess').length > 0, titel: titelFeld.value.trim(),
+        landeskarte: gewaehlt('gw-ex-v-lk').length > 0
+      }, fortschritt);
+    });
     // 1. Einzelbilder
     var a1 = abschnitt('Bilder', 'Karte und Kurve der aktuellen Ansicht. Mehrere Dateien kommen als ZIP.');
     zeile(a1, [exportWahl('checkbox', 'gw-ex-obj', 'karte', 'Karte', true), exportWahl('checkbox', 'gw-ex-obj', 'kurve', 'Kurve', true)], 'Objekte');
@@ -4432,6 +5307,8 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     if (!vorjahrOn && vorjahrAutomatisch === false && selection.type === 'site') aus.push('vorjahr');
     if (alleStandorteZeigen) an.push('alle-standorte');
     if (skalaAuto) an.push('skala');
+    if (orteAnzeigen && eigeneOrte.length) an.push('orte');
+    if (eigeneOrte.length && (orteAnzeigen || ortLinkAusHash)) setze('orte', eigeneOrte.map(ortToken).join(','));
     if (an.length) setze('an', an.join(','));
     if (aus.length) setze('aus', aus.join(','));
     var gd = kartenGd(), info = GWDatenexplorer.kartenInfo;
@@ -4504,6 +5381,11 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       if (aus.indexOf('vorjahr') !== -1) setzeSchalter(vorjahrToggleWrap, false);
       if (an.indexOf('alle-standorte') !== -1) alleStandorteZeigen = true;
       skalaAuto = an.indexOf('skala') !== -1;
+      if (q.orte) {
+        var ausLink = liste('orte').map(ortAusToken).filter(Boolean);
+        if (ausLink.length) { ortLinkAusHash = true; setzeEigeneOrte(ausLink, true); }
+      }
+      if (an.indexOf('orte') !== -1 || q.orte) setzeOrteAnzeigen(an.indexOf('orte') !== -1);
       if (q.ebene) {
         var radio = document.querySelector('input[name=gw-layer][value="' + q.ebene.replace(/[^a-z0-9_]/gi, '') + '"]');
         if (radio && !radio.disabled) { radio.checked = true; radio.dispatchEvent(new Event('change')); }

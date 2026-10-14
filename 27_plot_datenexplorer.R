@@ -2074,6 +2074,61 @@ speichere_ebenen_cache("gdd", Map(function(b, w) list(bild = b, werte = w), gdd_
 cat("Wachstumsgradtage-Hintergrundbilder erzeugt:", length(gdd_bild_je_woche),
     "(aus Cache:", gdd_aus_cache, "/ neu:", gdd_neu, ")\n")
 
+## Niederschlagssumme seit 1. Januar zum Stichtag (Montag) der Kalenderwoche -
+## wie die Wachstumsgradtage laufend aufsummiert (Tagesraster aus
+## niederschlag_raster_je_jahr oben), mit demselben Fallback auf den letzten
+## verfuegbaren Tag bis 6 Tage vor dem Stichtag. Fehlende Tage zaehlen als 0.
+niederschlag_kum_farben <- niederschlag_farben
+niederschlag_kum_bereich <- c(0, 2000)
+niederschlag_kum_quelle <- "Aufsummiert aus MeteoSchweiz RhiresD/RprelimD (1km-Raster) seit 1. Januar."
+niederschlag_kum_bild_je_woche <- list()
+niederschlag_kum_werte_je_woche <- list()
+niederschlag_kum_cache_alt <- lade_ebenen_cache("niederschlag_kum")
+niederschlag_kum_aus_cache <- 0L; niederschlag_kum_neu <- 0L
+for (jr in names(niederschlag_raster_je_jahr)) {
+  alte_schluessel_jahr <- Filter(function(k) startsWith(k, paste0(jr, " ")), names(niederschlag_kum_cache_alt))
+  if (jahr_aus_cache("niederschlag_kum", jr) && length(alte_schluessel_jahr) > 0) {
+    for (schluessel in alte_schluessel_jahr) {
+      niederschlag_kum_bild_je_woche[[schluessel]] <- niederschlag_kum_cache_alt[[schluessel]]$bild
+      niederschlag_kum_werte_je_woche[[schluessel]] <- niederschlag_kum_cache_alt[[schluessel]]$werte
+    }
+    niederschlag_kum_aus_cache <- niederschlag_kum_aus_cache + length(alte_schluessel_jahr)
+    next
+  }
+  r_jahr <- niederschlag_raster_je_jahr[[jr]]
+  tage_r <- as.Date(time(r_jahr))
+  # Nur Tage dieses Kalenderjahres, als Zahlenmatrix kumuliert (siehe GDD oben)
+  # Nur Jahre mit Daten ab Anfang Januar - sonst waere «seit 1. Januar» falsch
+  im_jahr <- which(format(tage_r, "%Y") == jr)
+  if (length(im_jahr) == 0 || min(tage_r[im_jahr]) > as.Date(paste0(jr, "-01-07"))) next
+  r_jahr <- r_jahr[[im_jahr]]; tage_r <- tage_r[im_jahr]
+  kum_mat <- terra::values(r_jahr)
+  kum_mat[is.na(kum_mat)] <- 0
+  for (i in seq_len(ncol(kum_mat))[-1]) kum_mat[, i] <- kum_mat[, i - 1] + kum_mat[, i]
+  maske <- is.na(terra::values(r_jahr[[1]]))[, 1]
+  kum_mat[maske, ] <- NA
+  r_kum <- rast(r_jahr)
+  values(r_kum) <- kum_mat
+  rm(kum_mat)
+  for (w in alle_wochen) {
+    stichtag <- montag_von_woche(jr, w)
+    if (stichtag > Sys.Date() + 1) next # noch nicht begonnene Woche nie anzeigen
+    passende_tage <- which(tage_r <= stichtag & tage_r >= stichtag - 6)
+    if (length(passende_tage) == 0) next
+    idx <- passende_tage[which.max(tage_r[passende_tage])]
+    ergebnis <- raster_zu_datauri(r_kum[[idx]], niederschlag_kum_farben, niederschlag_kum_bereich)
+    ergebnis$werte$bis <- format(tage_r[idx], "%d.%m.%Y")
+    schluessel <- paste(jr, w)
+    niederschlag_kum_bild_je_woche[[schluessel]] <- ergebnis$bild
+    niederschlag_kum_werte_je_woche[[schluessel]] <- ergebnis$werte
+    niederschlag_kum_neu <- niederschlag_kum_neu + 1L
+  }
+  rm(r_kum)
+}
+speichere_ebenen_cache("niederschlag_kum", Map(function(b, w) list(bild = b, werte = w), niederschlag_kum_bild_je_woche, niederschlag_kum_werte_je_woche))
+cat("Niederschlag-seit-1.-Januar-Hintergrundbilder erzeugt:", length(niederschlag_kum_bild_je_woche),
+    "(aus Cache:", niederschlag_kum_aus_cache, "/ neu:", niederschlag_kum_neu, ")\n")
+
 ## Optionale Hintergrund-Ebenen NICHT in die Haupt-HTML einbetten, sondern
 ## je Ebene in eine EIGENE JSON-Datei schreiben (outputs/ebenen/<name>.json) -
 ## wird clientseitig erst beim ERSTEN Auswaehlen der jeweiligen Ebene per
@@ -2159,6 +2214,7 @@ ebenen_schluessel <- list(
   sonnenschein = schreibe_fenster_ebenen_dateien("sonnenschein", sonnenschein_fenster_ergebnisse),
   et0 = schreibe_fenster_ebenen_dateien("et0", et0_fenster_ergebnisse),
   gdd = schreibe_ebene_datei("gdd", gdd_bild_je_woche, gdd_werte_je_woche),
+  niederschlag_kum = schreibe_ebene_datei("niederschlag_kum", niederschlag_kum_bild_je_woche, niederschlag_kum_werte_je_woche),
   wachstumspotenzial_rate = schreibe_fenster_ebenen_dateien("wachstumspotenzial_rate", wachstumspotenzial_ebenen$rate),
   wachstumspotenzial_kum = schreibe_fenster_ebenen_dateien("wachstumspotenzial_kum", wachstumspotenzial_ebenen$kum)
 )
@@ -2198,6 +2254,7 @@ layer_legenden <- list(
   sonnenschein = list(label = "Sonnenscheindauer", farben = farben_zu_hex(sonnenschein_farben), bereich = c(0, 100), fensterSkaliert = FALSE, symbol = "avg", einheit = "%", quelle = sonnenschein_quelle),
   et0 = list(label = "Verdunstung ET0", farben = farben_zu_hex(et0_farben), bereich = c(0, 25), fensterSkaliert = TRUE, symbol = "sum", einheit = "mm", quelle = et0_quelle),
   gdd = list(label = "Wachstumsgradtage", farben = farben_zu_hex(gdd_farben), bereich = c(0, 2500), fensterSkaliert = FALSE, symbol = NULL, einheit = "°C-Tage", quelle = gdd_quelle),
+  niederschlag_kum = list(label = "Niederschlag seit 1. Januar", farben = farben_zu_hex(niederschlag_kum_farben), bereich = niederschlag_kum_bereich, fensterSkaliert = FALSE, symbol = NULL, einheit = "mm", quelle = niederschlag_kum_quelle),
   # bereich empirisch aus dem ersten Testlauf kalibriert (siehe Plan) -
   # Rate erreicht spaet in der Saison (ungemaeht, LAI baut sich das ganze
   # Jahr ungebremst auf) bis gegen 200 kg TS/ha/Tag, Kumuliert bis gegen
