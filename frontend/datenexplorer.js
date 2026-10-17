@@ -2111,7 +2111,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   function aktualisiereTeaser() {
     if (!teaserEl || typeof Plotly === 'undefined') return;
     var plotEl = teaserEl.querySelector('.gw-teaser-plot');
-    if (teaserTitelEl) teaserTitelEl.textContent = 'Wachstumskurve ' + selectedYear;
+    if (teaserTitelEl) { teaserTitelEl.textContent = 'Kurve ' + selectedYear; teaserTitelEl.title = 'Wachstumskurve ' + selectedYear; }
     var strich = [{ type: 'line', x0: selectedWeek, x1: selectedWeek, yref: 'paper', y0: 0, y1: 1, line: { color: '#999', width: 1, dash: 'dot' } }];
     if (teaserJahr === selectedYear && plotEl.data) { Plotly.relayout(plotEl, { shapes: strich }); return; }
     if (!istMobil() || !el.data) return;
