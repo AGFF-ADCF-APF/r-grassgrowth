@@ -1235,7 +1235,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     alias: ['Bodenwasserbilanz'], stichworte: 'bodenwasser wasser eimer bucket trocken trockenheit duerre fuellstand speicher',
     legende: dokuFarbskala('boden'), quelle: dokuQuelle('boden'),
     text: ['Der Boden wird vereinfacht als Eimer betrachtet: Regen füllt ihn, Verdunstung leert ihn, ist er voll, läuft der Überschuss ab. Ein feuchter Boden verdunstet mehr als ein bereits trockener.',
-      'Der Wert zeigt den Füllstand am Stichtag: 100 mm = gut mit Wasser versorgt, 0 mm = ausgetrocknet. Die Ebene ist selbst berechnet und keine Messung.'] });
+      'Der Wert zeigt den Füllstand am Stichtag: 130 mm = gut mit Wasser versorgt, 0 mm = ausgetrocknet. Die Ebene ist selbst berechnet und keine Messung.'] });
   if (dokuExperimentell) {
     dokuEintrag({ id: 'potenzial', gruppe: 'Berechnete Ebenen', titel: 'Potenzielles Wachstum (experimentell)',
       alias: ['Potenzielles Wachstum'], stichworte: 'modvege growr modell potenzial erholung experimentell kumuliert',
@@ -3185,7 +3185,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     // dies eine SELBST BERECHNETE Groesse (Eimer-Modell aus Niederschlag +
     // ET0, siehe Erklaerung) - das Label macht das zusaetzlich explizit.
     radioBoden = makeLayerRadio('boden', layerLegenden.boden.label,
-      'Der Boden wird vereinfacht wie ein Eimer betrachtet: Regen fuellt ihn, Verdunstung leert ihn. Ist der Eimer voll, laeuft der Ueberschuss ungenutzt ab. Wie viel taeglich verdunstet, wird aus den Temperaturen geschaetzt - ein feuchter Boden verdunstet mehr als ein bereits trockener. Der Wert zeigt den aktuellen Fuellstand: 100 mm = Boden gut mit Wasser versorgt, 0 mm = ausgetrocknet.',
+      'Der Boden wird vereinfacht wie ein Eimer betrachtet: Regen fuellt ihn, Verdunstung leert ihn. Ist der Eimer voll, laeuft der Ueberschuss ungenutzt ab. Wie viel taeglich verdunstet, wird aus den Temperaturen geschaetzt - ein feuchter Boden verdunstet mehr als ein bereits trockener. Der Wert zeigt den aktuellen Fuellstand: 130 mm = Boden gut mit Wasser versorgt, 0 mm = ausgetrocknet.',
       'gw-layer-vor-boden');
     // Potenzielles Wachstum (ModVege/growR): experimentell, nur mit
     // ?experimentell in der URL sichtbar (siehe wachstumspotenzial_
@@ -4491,7 +4491,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   var METHODIK = {
     niederschlag_kum: ['Niederschlag: Tagessummen der 1-km-Gitterdaten von MeteoSchweiz (Radar und Messstationen), seit 1. Januar bzw. über die letzten 28 Tage bis zum Stichtag addiert. 1 mm = 1 Liter pro m².',
       'Der Wert gilt für das 1-km-Feld des Ortes. Einzelne Gewitter können lokal deutlich abweichen.'],
-    boden: ['Wasser im Boden: Der Boden wird als Speicher von 100 mm gerechnet. Ab 1. April (Speicher voll) füllt der Niederschlag ihn auf, die aus der Temperatur berechnete Verdunstung leert ihn.',
+    boden: ['Wasser im Boden: Der Boden wird als Speicher von 130 mm gerechnet (wie im Wachstumsmodell). Ab 1. April (Speicher voll) füllt der Niederschlag ihn auf, die aus der Temperatur berechnete Verdunstung leert ihn.',
       'Je tiefer der Wert, desto trockener. Bodenart, Gründigkeit, Hanglage und Bewässerung sind nicht berücksichtigt.'],
     wachstumspotenzial_kum: ['Das Modell ModVege/growR rechnet täglich aus Temperatur, Sonnenstrahlung und Bodenwasser, wie viel Gras unter guten Bedingungen wachsen könnte: ohne Nährstoffmangel, Schnitt und Beweidung.',
       'Es zeigt, was das Wetter hergibt, und ist keine Ertragsprognose. Echte Bestände wachsen meist weniger.']
@@ -5124,9 +5124,9 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       if (!letzte) return;
       var zusatz = '';
       if (t.thema.name === 'boden') {
-        var trocken = t.punkte.filter(function(p) { return p.gebiet !== null && p.gebiet < 30; });
+        var trocken = t.punkte.filter(function(p) { return p.gebiet !== null && p.gebiet < 40; });
         var tief = t.punkte.reduce(function(a, p) { return p.gebiet !== null && (!a || p.gebiet < a.gebiet) ? p : a; }, null);
-        zusatz = trocken.length ? trocken.length + ' Wochen unter 30 mm, am trockensten KW ' + tief.w + ' (' + Math.round(tief.gebiet) + ' mm)' : 'keine Woche unter 30 mm';
+        zusatz = trocken.length ? trocken.length + ' Wochen unter 40 mm, am trockensten KW ' + tief.w + ' (' + Math.round(tief.gebiet) + ' mm)' : 'keine Woche unter 40 mm';
         kacheln.push('<div class="gw-rb-kachel"><span>' + esc(t.thema.titel) + ', KW ' + letzte.w + '</span><b>' + Math.round(letzte.gebiet) + ' mm</b><em>' + esc(zusatz) + '</em></div>');
       } else {
         kacheln.push('<div class="gw-rb-kachel"><span>' + esc(t.thema.titel) + ' (bis KW ' + letzte.w + ')</span><b>' + tausender(Math.round(letzte.gebiet)) + ' ' + esc(ein) + '</b><em>' +

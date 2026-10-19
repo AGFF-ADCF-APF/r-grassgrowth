@@ -1373,11 +1373,13 @@ cat("Bodentemperatur-Hintergrundbilder erzeugt (Schaetzung):",
 ## Temperatur noetig.
 ##
 ## Bucket-Modell Bodenwasserspeicher: S(t) = clamp(S(t-1) + Niederschlag(t)
-## - ET0(t), 0, Smax). Smax = 100mm: grobe, gaengige Annahme fuer die
-## pflanzenverfuegbare Feldkapazitaet von Gruenlandboeden im Mittelland
-## (nicht kalibriert, einfach anpassbar). Start S = Smax am 1. April (nach
-## Winter i.d.R. aufgefuellter Bodenspeicher).
-Smax_boden <- 100
+## - ET0(t), 0, Smax). Smax = 130mm: wie der Wasserspeicher (WHC) des
+## Wachstumsmodells ModVege/growR (Posieux-Parametersatz), damit
+## Bodenwasserbilanz und potenzielles Wachstum denselben Speicher meinen
+## (bis 2026-10-19: 100 mm). Grobe Annahme fuer die pflanzenverfuegbare
+## Feldkapazitaet von Gruenlandboeden im Mittelland, nicht kalibriert.
+## Start S = Smax am 1. April (nach Winter i.d.R. aufgefuellter Speicher).
+Smax_boden <- 130
 # phi als reiner Zahlenvektor (nicht als SpatRaster) - siehe Aufrufstelle
 # unten: eine SpatRaster-Schicht PRO TAG waere bei einem vollen Jahr bis zu
 # ~365 gleichzeitig im Speicher gehaltene Rasterobjekte, nur um sie danach
@@ -1488,7 +1490,7 @@ for (jr in names(speicher_raster_je_jahr)) {
     passende_tage <- which(speicher_daten_tage <= stichtag & speicher_daten_tage >= stichtag - 6)
     if (length(passende_tage) == 0) next
     idx <- passende_tage[which.max(speicher_daten_tage[passende_tage])]
-    ergebnis <- raster_zu_datauri(speicher_r[[idx]], bodenwasser_farben, c(0, 100))
+    ergebnis <- raster_zu_datauri(speicher_r[[idx]], bodenwasser_farben, c(0, Smax_boden))
     ergebnis$werte$bis <- format(speicher_daten_tage[idx], "%d.%m.%Y")
     bodenwasser_bild_je_woche[[paste(jr, w)]] <- ergebnis$bild
     bodenwasser_werte_je_woche[[paste(jr, w)]] <- ergebnis$werte
@@ -2248,7 +2250,7 @@ layer_legenden <- list(
   # label OHNE Datum - das tatsaechliche Datum des Snapshots (siehe
   # bodenwasser_datum_je_woche, kann je nach Verfuegbarkeit vom Wochenbeginn
   # abweichen) wird in aktualisiereLayerLabels() live ergaenzt.
-  boden = list(label = "Bodenwasserbilanz", farben = farben_zu_hex(bodenwasser_farben), bereich = c(0, 100), fensterSkaliert = FALSE, symbol = NULL, einheit = "mm, von 100", quelle = bodenwasser_quelle),
+  boden = list(label = "Bodenwasserbilanz", farben = farben_zu_hex(bodenwasser_farben), bereich = c(0, Smax_boden), fensterSkaliert = FALSE, symbol = NULL, einheit = paste0("mm, von ", Smax_boden), quelle = bodenwasser_quelle),
   temperatur = list(label = "Temperatur 2m", farben = farben_zu_hex(temperatur_farben), bereich = c(0, 30), fensterSkaliert = FALSE, symbol = "avg", einheit = "°C", quelle = temperatur_quelle),
   bodentemperatur = list(label = "Bodentemperatur", farben = farben_zu_hex(temperatur_farben), bereich = c(0, 30), fensterSkaliert = FALSE, symbol = "avg", einheit = "°C", quelle = bodentemperatur_quelle),
   sonnenschein = list(label = "Sonnenscheindauer", farben = farben_zu_hex(sonnenschein_farben), bereich = c(0, 100), fensterSkaliert = FALSE, symbol = "avg", einheit = "%", quelle = sonnenschein_quelle),
