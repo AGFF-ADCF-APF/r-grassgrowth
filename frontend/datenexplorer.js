@@ -499,22 +499,24 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     if (!vorjahrOn) return;
 
     var vorjahr = String(parseInt(selectedYear, 10) - 1);
-    if (alleJahre.indexOf(vorjahr) === -1) return;
 
-    var grau = 'rgba(140,140,140,0.7)';
-    var traceIdxListe = [];
+    // Alle anderen Jahre in Grau: das Vorjahr dunkler, aeltere Jahre heller (Jahr steht im Tooltip)
+    var grauFuer = function(jahr) { return jahr === vorjahr ? 'rgba(120,120,120,0.75)' : 'rgba(150,150,150,0.45)'; };
+    var traceIdxListe = [], grauListe = [];
+    var anderesJahr = function(m) { return m.year !== selectedYear && alleJahre.indexOf(m.year) !== -1; };
     siteGrowthMeta.forEach(function(m) {
-      if (m.year !== vorjahr) return;
-      if (!siteInAuswahl(m.siteIdx)) return;
-      traceIdxListe.push(m.traceIdx);
+      // Gruppe: von den anderen Jahren nur das Mittel (sonst ein Gewirr grauer Linien)
+      if (!anderesJahr(m) || selection.type === 'group' || !siteInAuswahl(m.siteIdx)) return;
+      traceIdxListe.push(m.traceIdx); grauListe.push(grauFuer(m.year));
       vorjahrStyledTraceIdx.push({ traceIdx: m.traceIdx, color: siteColors[m.siteIdx] });
     });
     groupGrowthMeta.forEach(function(m) {
-      if (m.year !== vorjahr || !gruppeGewaehlt(m.groupIdx)) return;
-      traceIdxListe.push(m.traceIdx);
+      if (!anderesJahr(m) || !gruppeGewaehlt(m.groupIdx)) return;
+      traceIdxListe.push(m.traceIdx); grauListe.push(grauFuer(m.year));
       vorjahrStyledTraceIdx.push({ traceIdx: m.traceIdx, color: gruppenFarbe(m.groupIdx) });
     });
-    if (traceIdxListe.length > 0) Plotly.restyle(el, { visible: true, 'line.color': grau, 'marker.color': grau }, traceIdxListe);
+    if (traceIdxListe.length > 0) Plotly.restyle(el, { visible: true, 'line.color': grauListe, 'marker.color': grauListe }, traceIdxListe);
+    if (alleJahre.indexOf(vorjahr) === -1) return;
 
     // Niederschlag-Vorjahresbalken: schmalere, graue Saeule fuer das Vorjahr,
     // sichtbar HINTER dem (bereits halbtransparenten, breiteren) Balken des
@@ -1168,10 +1170,10 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       'In der Wachstumskurve wählt auch ein Klick auf die Achse unter der Grafik die Woche.'] });
   dokuEintrag({ id: 'kurve', gruppe: 'Erste Schritte', titel: 'Wachstumskurve',
     alias: ['Wachstumskurve', 'Graswachstumskurve'], stichworte: 'kurve linie mittel durchschnitt mittelland vorjahr niederschlag balken gruppe region hoehenlage jahr legende vergleichen kombinieren mehrere auswahl mehrfachauswahl skala achse ausreisser abgeschnitten ueber maximum anpassen',
-    legende: function() { return dokuLinien([['Standort (je eigene Farbe)', '#1D9E75', 'solid'], ['Mittleres Wachstum der Auswahl', 'black', 'dashed'], ['Durchschnitt Mittelland, langjährig', 'red', 'dotted'], ['Vorjahr zum Vergleich', 'rgba(140,140,140,0.9)', 'solid'], ['Niederschlag pro Woche', 'steelblue', 'balken']]); },
+    legende: function() { return dokuLinien([['Standort (je eigene Farbe)', '#1D9E75', 'solid'], ['Mittleres Wachstum der Auswahl', 'black', 'dashed'], ['Durchschnitt Mittelland, langjährig', 'red', 'dotted'], ['Andere Jahre zum Vergleich (Vorjahr dunkler)', 'rgba(120,120,120,0.9)', 'solid'], ['Niederschlag pro Woche', 'steelblue', 'balken']]); },
     text: ['Die Kurve zeigt das gemessene Graswachstum in kg TS/ha/Tag über die Saison. Im Auswahlfeld oben links lassen sich Standorte und Gruppen (alle Standorte, Region West/Mitte/Ost, Höhenlagen) suchen und beliebig kombinieren: Antippen setzt oder entfernt ein Häkchen, gewählte Einträge stehen als Kärtchen im Feld und lassen sich mit × entfernen. Daneben wählen Sie das Jahr.',
       'Eine einzelne Gruppe zeigt ihre Standorte und das Gruppenmittel, ein einzelner Standort seine Kurve mit Niederschlag. Bei Kombinationen erscheint je gewählter Standort eine Kurve und je Gruppe das Mittel (gestrichelt, bei mehreren Gruppen in eigenen Farben); Niederschlag wird dann nicht gezeigt. «Auswahl zurücksetzen» am Ende der Liste führt zurück zu allen Standorten.',
-      'Rechts steht die Legende. Ein Klick auf einen Standort zeigt nur noch diesen. Die Schalter darüber blenden Niederschlag (Balken, mm pro Woche) und die Kurven des Vorjahres ein, oder stellen die Achse von Kalenderwochen auf Datum um.',
+      'Rechts steht die Legende. Ein Klick auf einen Standort zeigt nur noch diesen. Die Schalter darüber blenden Niederschlag (Balken, mm pro Woche) und die Kurven der anderen Jahre (grau, das Vorjahr dunkler; das Jahr steht beim Darüberfahren) ein, oder stellen die Achse von Kalenderwochen auf Datum um.',
       'Beim Start erscheinen nur Standorte, die regelmässig messen (siehe dort). Die übrigen lassen sich in der Legende dazuschalten.',
       'Die Skala ist fest (Wachstum bis 150 kg TS/ha/Tag, Niederschlag bis 70 mm pro Woche), damit Jahre und Standorte vergleichbar bleiben. Höhere Werte laufen oben aus der Grafik: ein gezackter Riss am oberen Rand und ein Schild mit dem echten Wert (▲ 312) markieren sie. «… über der Skala · anpassen» oben links erweitert die Skala, bis alle Werte ganz sichtbar sind; «Feste Skala» stellt sie zurück.'] });
   dokuEintrag({ id: 'regelmaessig', gruppe: 'Erste Schritte', titel: 'Regelmässig messende Standorte',
@@ -3283,8 +3285,8 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   var precipToggleWrap = makeToggle('Niederschlag', true, function(checked) { precipOn = checked; applyState(); });
   var precipCheckbox = precipToggleWrap.checkbox;
   var xAxisToggleWrap = makeToggle('Kalenderwochen', true, function(checked) { datumOn = !checked; applyXAxis(); });
-  var vorjahrToggleWrap = makeToggle('Vorjahresdaten', false, function(checked) { vorjahrOn = checked; vorjahrAutomatisch = false; applyState(); });
-  vorjahrToggleWrap.title = 'Kurve(n) des Vorjahres zum Vergleich in Grau einblenden';
+  var vorjahrToggleWrap = makeToggle('Andere Jahre', false, function(checked) { vorjahrOn = checked; vorjahrAutomatisch = false; applyState(); });
+  vorjahrToggleWrap.title = 'Kurven der anderen Jahre zum Vergleich in Grau einblenden (Vorjahr dunkler)';
 
   controls.appendChild(comboWrap);
   controls.appendChild(yearSelect);
@@ -4510,9 +4512,10 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   // zeichnet der Export selbst (nicht Plotly), damit sie in allen Formaten
   // gleich aussehen und in HTML/SVG anklickbar bzw. bearbeitbar bleiben.
   var VERANSTALTUNG_THEMEN = [
-    { name: 'niederschlag_kum', titel: 'Niederschlag seit 1. Januar' },
-    { name: 'boden', titel: 'Bodenwasserbilanz', standard: [0, 130] },
-    { name: 'wachstumspotenzial_kum', titel: 'Potenzielles Graswachstum seit 1. Januar', experimentell: true, faktor: 0.01, einheit: 'dt TS/ha', standard: [0, 150] }
+    // art: 'summe' = aufsummiert seit 1.1. (Zeitraum = Differenz zweier Stichtage), 'zustand' = Stand je Woche (Zeitraum = Mittel/Tiefstwert)
+    { name: 'niederschlag_kum', titel: 'Niederschlag seit 1. Januar', kurz: 'Niederschlag', art: 'summe' },
+    { name: 'boden', titel: 'Bodenwasserbilanz', kurz: 'Bodenwasser', art: 'zustand', standard: [0, 130] },
+    { name: 'wachstumspotenzial_kum', titel: 'Potenzielles Graswachstum seit 1. Januar', kurz: 'Potenzielles Graswachstum', art: 'summe', experimentell: true, faktor: 0.01, einheit: 'dt TS/ha', standard: [0, 150] }
   ];
   // Erklaerungen der Methode (kurz, einfach): erscheinen auf der Seite, wenn neben der Karte Platz ist
   var METHODIK = {
@@ -4862,15 +4865,16 @@ GWDatenexplorer.kurve = function(el, x, daten) {
         skala: opt.skala === 'explorer' ? voll.slice() : auto,
         werte: eigeneOrte.map(function(o) { var x = gitterWert(gitter, o.lon, o.lat); return x === null ? null : x * f; })
       };
-      if (thema.name !== 'niederschlag_kum') return erg;
-      // Niederschlag: alle Wochen des Jahres (freier Zeitraum = Differenz zweier Stichtage)
+      // Alle Wochen des Jahres bis zum Stichtag: im HTML-Bericht laesst sich der Zeitraum waehlen
+      // (Summen: Differenz zweier Stichtage; Zustand: Mittel bzw. Tiefstwert der Wochen)
       erg.wochen = {}; erg.wochenStand = {};
       Object.keys(alleWerte).forEach(function(kk) {
         var p = kk.split(' ');
-        if (p[0] !== String(selectedYear) || +p[1] > w) return;
-        erg.wochen[p[1]] = zuschnitt(alleWerte[kk], aus, 1);
-        erg.wochenStand[p[1]] = alleWerte[kk].bis || '';
+        if (p[0] !== String(selectedYear) || +p[1] > w || !alleWerte[kk].m) return;
+        erg.wochen[p[1]] = zuschnitt(alleWerte[kk], aus, f);
+        erg.wochenStand[p[1]] = alleWerte[kk].bis || (d.datum && d.datum[kk]) || wochenDatumBereichText(+p[1]).split(' – ')[1] || '';
       });
+      if (thema.name !== 'niederschlag_kum') return erg;
       return ladeEbeneP('niederschlag_28').then(function(d2) {
         var g2 = (d2.werte || {})[k];
         if (g2 && g2.m) {
@@ -5009,7 +5013,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       teile.push('<text x="' + (x + b - 16) + '" y="' + (y + 3) + '" font-size="' + fs + '" font-weight="700" fill="#1e1e1e" text-anchor="end">seit 1.1.</text>');
       teile.push('<text class="gw-v-k2" x="' + (x + b) + '" y="' + (y + 3) + '" font-size="' + fs + '" font-weight="700" fill="#1e1e1e" text-anchor="end">28 Tage</text>');
     } else {
-      teile.push('<text x="' + (x + b) + '" y="' + (y + 3) + '" font-size="' + fs + '" font-weight="700" fill="#1e1e1e" text-anchor="end">Wert</text>');
+      teile.push('<text class="gw-v-k1" x="' + (x + b) + '" y="' + (y + 3) + '" font-size="' + fs + '" font-weight="700" fill="#1e1e1e" text-anchor="end">Wert</text>');
     }
     y += zeileH;
     var tabEnde = y + zeigen * zeileH + (zeigen < n ? zeileH : 0) + 3;
@@ -5022,7 +5026,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
         teile.push('<text x="' + (x + b - 16) + '" y="' + (yz + zeileH * 0.78) + '" font-size="' + fs + '" fill="#1e1e1e" text-anchor="end">' + esc(ohneEinheit(t.werte[i], t.info)) + '</text>');
         teile.push('<text class="gw-v-w2" data-i="' + i + '" x="' + (x + b) + '" y="' + (yz + zeileH * 0.78) + '" font-size="' + fs + '" fill="#1e1e1e" text-anchor="end">' + esc(ohneEinheit(t.werte2.werte[i], t.werte2.info)) + '</text></g>');
       } else {
-        teile.push('<text x="' + (x + b) + '" y="' + (yz + zeileH * 0.78) + '" font-size="' + fs + '" fill="#1e1e1e" text-anchor="end">' + esc(wertText(t.werte[i], t.info)) + '</text></g>');
+        teile.push('<text class="gw-v-w1" data-i="' + i + '" x="' + (x + b) + '" y="' + (yz + zeileH * 0.78) + '" font-size="' + fs + '" fill="#1e1e1e" text-anchor="end">' + esc(wertText(t.werte[i], t.info)) + '</text></g>');
       }
     });
     // QR-Code (Kurzlink: wenige Module, gut scanbar)
@@ -5213,11 +5217,12 @@ GWDatenexplorer.kurve = function(el, x, daten) {
         var n = siteNames[m.siteIdx], c = koord[n];
         if (!c) return;
         var d = km(mitte, c);
-        if (!best || d < best.km) best = { name: n, km: d, traceIdx: m.traceIdx };
+        if (!best || d < best.km) best = { name: n, km: d, traceIdx: m.traceIdx, siteIdx: m.siteIdx };
       });
-      var spur = function(idx) {
+      var spur = function(idx, bisW) {
         var t = el.data[idx];
-        return t ? t.x.map(function(x, i) { return [x, t.y[i]]; }).filter(function(p) { return p[1] !== null && isFinite(p[1]) && p[0] <= wocheBis; }) : [];
+        return t ? t.x.map(function(x, i) { return [x, t.y[i]]; }).filter(function(p) { return p[1] !== null && isFinite(p[1]) && p[0] <= (bisW || wocheBis); })
+          .map(function(p) { return [p[0], Math.round(p[1] * 10) / 10]; }) : [];
       };
       var alle = null;
       groupGrowthMeta.forEach(function(m) { if (m.year === selectedYear && m.groupIdx === 0) alle = m.traceIdx; });
@@ -5225,7 +5230,22 @@ GWDatenexplorer.kurve = function(el, x, daten) {
         standort: best, nah: best ? spur(best.traceIdx) : [], schweiz: alle !== null ? spur(alle) : [],
         referenz: spur(standardKurveTraceIdx).filter(function(p) { return p[0] <= 52; })
       };
-      return { themen: liste.filter(Boolean), messung: messung, bilanz: bilanz };
+      // Mehrjahresvergleich: je Jahr die Kurve des naechsten Standorts und das Mittel aller Standorte
+      // (gewaehltes Jahr bis zum Stichtag, die anderen ganz)
+      var jahresSpur = function(meta, passt) {
+        var j = {};
+        meta.forEach(function(m) { if (passt(m)) { var p = spur(m.traceIdx, m.year === selectedYear ? wocheBis : 53); if (p.length > 1) j[m.year] = p; } });
+        return j;
+      };
+      var bezuege = [];
+      if (best) {
+        var nahJ = jahresSpur(siteGrowthMeta, function(m) { return m.siteIdx === best.siteIdx; });
+        if (Object.keys(nahJ).length > 1) bezuege.push({ name: best.name, lang: 'Messstandort ' + best.name + ' (' + Math.round(best.km) + ' km)', jahre: nahJ });
+      }
+      var alleJ = jahresSpur(groupGrowthMeta, function(m) { return m.groupIdx === 0; });
+      if (Object.keys(alleJ).length > 1) bezuege.push({ name: 'Alle Standorte', lang: 'Mittel aller Messstandorte', jahre: alleJ });
+      var mehrjahr = bezuege.length ? { aktuell: String(selectedYear), wocheBis: wocheBis, bezuege: bezuege, referenz: messung.referenz.length ? spur(standardKurveTraceIdx, 52) : [] } : null;
+      return { themen: liste.filter(Boolean), messung: messung, bilanz: bilanz, mehrjahr: mehrjahr };
     });
   }
   function netteSchrittweite(roh) {
@@ -5363,6 +5383,10 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       var spitze = m.nah.reduce(function(a, p) { return !a || p[1] > a[1] ? p : a; }, null);
       kacheln.push('<div class="gw-rb-kachel"><span>Nächster Messstandort</span><b>' + esc(m.standort.name) + '</b><em>' + Math.round(m.standort.km) + ' km vom Mittelpunkt Ihrer Orte · Spitze ' + Math.round(spitze[1]) + ' kg TS/ha/Tag in KW ' + spitze[0] + '</em></div>');
     }
+    // Mehrjahresvergleich: zeichnet die Laufzeit (berichtLaufzeit, GWB.mj) - Jahr hervorheben, aufsummiert/je Tag, Bezug
+    if (rb.mehrjahr) {
+      diagramme.unshift('<figure class="gw-rb-karte gw-mj"><figcaption><span>Graswachstum im Jahresvergleich</span>' + VOLLBILD + '</figcaption><div class="gw-mj-inhalt"></div></figure>');
+    }
     return {
       html: '<section data-t="rb" hidden class="gw-rb"><div class="gw-rb-kacheln">' + kacheln.join('') + '</div><div class="gw-rb-gitter">' + diagramme.join('') + '</div>' +
         '<p class="gw-rb-hinweis">«Ihre Orte» = Mittel der Werte an den erfassten Orten; «Schweiz» = Mittel aller 1-km-Gitterzellen der Schweiz. Gemessenes Graswachstum: Messnetz der AGFF.</p></section>',
@@ -5454,41 +5478,191 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       var zur = svg.querySelector('.gw-v-auto');
       if (zur) zur.addEventListener('click', function() { lage.sk = lage.auto.slice(); zeichnen(); });
       zeichnen();
-      // Niederschlag: Zeitraum
-      var steuer = sec.querySelector('.gw-v-steuer'); if (!steuer) return;
-      var kum = z, z28 = dek(S.z28), wochen = {}, titel = svg.querySelector('.gw-v-titel'), k2 = svg.querySelector('.gw-v-k2');
-      Object.keys(S.wochen || {}).forEach(function(w) { wochen[w] = S.wochen[w]; });
-      var von = steuer.querySelector('[name=von]'), bis = steuer.querySelector('[name=bis]');
+      // Zeitraum: Summen (Niederschlag, Wachstumspotenzial) als Differenz zweier Stichtage,
+      // Zustand (Bodenwasser) als Mittel, Tiefst- oder Hoechstwert der Wochen
+      var steuer = sec.querySelector('.gw-v-steuer'); if (!steuer || !S.wochen) return;
+      var kum = z, zustand = S.art === 'zustand', titel = svg.querySelector('.gw-v-titel'), k1 = svg.querySelector('.gw-v-k1'), k2 = svg.querySelector('.gw-v-k2');
+      var wl = Object.keys(S.wochen).map(Number).sort(function(a, b) { return a - b; }), wc = {};
+      function woche(w) { return wc[w] || (wc[w] = dek(S.wochen[w])); }
+      var von = steuer.querySelector('[name=von]'), bis = steuer.querySelector('[name=bis]'), wie = steuer.querySelector('[name=wie]');
+      var tipI = k2 ? S.tip : S.tip1, tipTitel = null;
+      function leer() { var d = woche(wl[wl.length - 1]); return { x0: d.x0, x1: d.x1, y0: d.y0, y1: d.y1, ncol: d.ncol, nrow: d.nrow, v: new Float32Array(d.v.length) }; }
       function setzeZ(nz, t, kopf, werte) {
-        z = nz; lage.auto = auto(z, G.aus, S.voll); lage.sk = lage.auto.slice(); zeichnen();
+        z = nz;
+        if (nz === kum) { lage.auto = S.auto.slice(); lage.sk = S.skala.slice(); } else if (!zustand) { lage.auto = auto(z, G.aus, S.voll); lage.sk = lage.auto.slice(); }
+        zeichnen();
         titel.textContent = t;
-        if (k2 && kopf) {
-          k2.textContent = kopf;
-          svg.querySelectorAll('.gw-v-w2').forEach(function(el) { var v = werte[+el.getAttribute('data-i')]; el.textContent = v === null ? '–' : zahl(v); });
-          if (window.D && S.tip > -1) { D.themen[S.tip].titel = kopf === '28 Tage' ? 'Niederschlag letzte 28 Tage' : 'Niederschlag ' + kopf; D.themen[S.tip].werte = werte.map(function(v) { return v === null ? '–' : zahl(v) + ' mm'; }); }
+        var kk = k2 || k1;
+        if (kk) kk.textContent = kopf;
+        svg.querySelectorAll(k2 ? '.gw-v-w2' : '.gw-v-w1').forEach(function(el) { var v = werte[+el.getAttribute('data-i')]; el.textContent = v === null ? '–' : zahl(v) + (k2 ? '' : ' ' + S.einheit); });
+        if (window.D && tipI > -1 && D.themen[tipI]) {
+          if (tipTitel === null) tipTitel = D.themen[tipI].titel;
+          D.themen[tipI].titel = t === S.titel ? tipTitel : t;
+          D.themen[tipI].werte = werte.map(function(v) { return v === null ? '–' : zahl(v) + ' ' + S.einheit; });
         }
       }
+      function anOrten(d) { return G.orte.map(function(o) { return wert(d, o.lon, o.lat); }); }
+      function differenz(a, b) {
+        var zb = woche(b), za = a > 0 ? woche(a) : null, d = leer();
+        for (var i = 0; i < d.v.length; i++) d.v[i] = za ? zb.v[i] - za.v[i] : zb.v[i];
+        return d;
+      }
+      function zusammen(liste, art) {
+        var d = leer(), n = new Float32Array(d.v.length);
+        d.v.fill(art === 'mittel' ? 0 : NaN);
+        liste.forEach(function(w) {
+          var q = woche(w);
+          for (var i = 0; i < d.v.length; i++) {
+            var x = q.v[i]; if (isNaN(x)) continue;
+            if (art === 'mittel') { d.v[i] += x; n[i]++; }
+            else if (isNaN(d.v[i]) || (art === 'min' ? x < d.v[i] : x > d.v[i])) d.v[i] = x;
+          }
+        });
+        if (art === 'mittel') for (var i = 0; i < d.v.length; i++) d.v[i] = n[i] ? d.v[i] / n[i] : NaN;
+        return d;
+      }
+      var letzte = wl[wl.length - 1], ART = { mittel: 'Mittel', min: 'tiefster Wert', max: 'höchster Wert' }, ARTK = { mittel: 'Ø', min: 'min.', max: 'max.' };
       function anwenden() {
         var art = steuer.querySelector('[aria-pressed=true]').getAttribute('data-z');
         steuer.querySelector('.gw-v-frei').hidden = art !== 'frei';
-        if (art === 'kum') setzeZ(kum, S.titel, '28 Tage', S.werte28);
-        else if (art === '28') setzeZ(z28, 'Niederschlag letzte 28 Tage (bis ' + S.stand + ')', '28 Tage', S.werte28);
-        else {
-          var a = +von.value, b = +bis.value;
-          if (b <= a) { bis.value = String(a + 1); b = a + 1; }
-          var za = a > 0 ? dek(wochen[a]) : null, zb = dek(wochen[b]);
-          if (!zb) return;
-          var d = { x0: zb.x0, x1: zb.x1, y0: zb.y0, y1: zb.y1, ncol: zb.ncol, nrow: zb.nrow, v: new Float32Array(zb.v.length) };
-          for (var i = 0; i < d.v.length; i++) d.v[i] = za ? zb.v[i] - za.v[i] : zb.v[i];
-          var lbl = (a > 0 ? S.wochenStand[a] : '1.1.') + '–' + S.wochenStand[b];
-          setzeZ(d, 'Niederschlag ' + lbl, (a > 0 ? 'KW ' + a : '1.1.') + '–' + b, G.orte.map(function(o) { return wert(d, o.lon, o.lat); }));
+        if (art === 'kum') setzeZ(kum, S.titel, k2 ? '28 Tage' : 'Wert', k2 ? S.werte28 : S.werte);
+        else if (art === '28') {
+          if (zustand) {
+            var vier = wl.filter(function(w) { return w > letzte - 4; }), d4 = zusammen(vier, 'mittel');
+            setzeZ(d4, S.kurz + ', Mittel KW ' + vier[0] + '–' + letzte + ' (bis ' + S.stand + ')', 'Ø 4 Wochen', anOrten(d4));
+          } else if (S.z28) setzeZ(dek(S.z28), S.kurz + ' letzte 28 Tage (bis ' + S.stand + ')', '28 Tage', S.werte28);
+          else {
+            var a4 = wl.filter(function(w) { return w <= letzte - 4; }).pop() || 0, d28 = differenz(a4, letzte);
+            setzeZ(d28, S.kurz + ' letzte 28 Tage (bis ' + S.stand + ')', '28 Tage', anOrten(d28));
+          }
+        } else {
+          var a = +von.value, b = +bis.value, d, lbl, kopf;
+          if (zustand) {
+            if (b < a) { var t = a; a = b; b = t; von.value = String(a); bis.value = String(b); }
+            var w = wie ? wie.value : 'mittel', liste = wl.filter(function(x) { return x >= a && x <= b; });
+            d = zusammen(liste, w);
+            lbl = a === b ? S.kurz + ' KW ' + a + ' (Stand ' + S.wochenStand[a] + ')' : S.kurz + ', ' + ART[w] + ' KW ' + a + '–' + b;
+            kopf = a === b ? 'KW ' + a : ARTK[w] + ' KW ' + a + '–' + b;
+          } else {
+            if (b <= a) { var nb = wl.filter(function(x) { return x > a; })[0]; if (!nb) return; bis.value = String(nb); b = nb; }
+            d = differenz(a, b);
+            lbl = S.kurz + ' ' + (a > 0 ? S.wochenStand[a] : '1.1.') + '–' + S.wochenStand[b];
+            kopf = (a > 0 ? 'KW ' + a : '1.1.') + '–' + b;
+          }
+          setzeZ(d, lbl, kopf, anOrten(d));
         }
       }
       steuer.querySelectorAll('[data-z]').forEach(function(b) {
         b.addEventListener('click', function() { steuer.querySelectorAll('[data-z]').forEach(function(x) { x.setAttribute('aria-pressed', String(x === b)); }); anwenden(); });
       });
-      von.addEventListener('change', anwenden); bis.addEventListener('change', anwenden);
+      [von, bis, wie].forEach(function(s) { if (s) s.addEventListener('change', anwenden); });
     });
+    // Mehrjahresvergleich Graswachstum: gewaehltes Jahr kraeftig, die anderen grau, Mittelland gestrichelt;
+    // Satz oben vergleicht den Zuwachs im gleichen Zeitraum
+    (function(M) {
+      var fig = M && document.querySelector('.gw-mj'), box = fig && fig.querySelector('.gw-mj-inhalt');
+      if (!box) return;
+      var lage = { b: 0, jahr: M.aktuell, art: 'kum' }, SVGNS = 'http://www.w3.org/2000/svg';
+      function ganz(v) { return String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, '’'); }
+      // Linear verbundene Messwerte; Integral der Tageswerte (kg TS/ha/Tag) zwischen zwei Wochen in dt TS/ha
+      function an(p, w) {
+        if (!p.length || w < p[0][0] || w > p[p.length - 1][0]) return null;
+        for (var i = 1; i < p.length; i++) if (w <= p[i][0]) { var a = p[i - 1], b = p[i]; return a[1] + (b[1] - a[1]) * (w - a[0]) / ((b[0] - a[0]) || 1); }
+        return p[0][1];
+      }
+      function integral(p, von, bis) {
+        var s = 0;
+        for (var i = 1; i < p.length; i++) {
+          var a = Math.max(von, p[i - 1][0]), b = Math.min(bis, p[i][0]);
+          if (b > a) s += (an(p, a) + an(p, b)) / 2 * (b - a) * 7;
+        }
+        return s / 100;
+      }
+      function kumuliert(p) { return p.map(function(q) { return [q[0], integral(p, p[0][0], q[0])]; }); }
+      function reihe(p) { return lage.art === 'kum' ? kumuliert(p) : p; }
+      function zeichnen() {
+        var B = M.bezuege[lage.b], jahre = Object.keys(B.jahre).sort();
+        if (!B.jahre[lage.jahr]) lage.jahr = B.jahre[M.aktuell] ? M.aktuell : jahre[jahre.length - 1];
+        var hj = B.jahre[lage.jahr], ende = Math.min(hj[hj.length - 1][0], lage.jahr === M.aktuell ? M.wocheBis : 52);
+        // Satz: Zuwachs im gleichen Zeitraum (ab der spaetesten ersten Messung der verglichenen Jahre)
+        var start = hj[0][0];
+        var eigen = integral(hj, start, ende);
+        var vergleich = jahre.filter(function(j) { return j !== lage.jahr; }).map(function(j) {
+          // gemeinsamer Zeitraum beider Jahre
+          var p = B.jahre[j], s = Math.max(start, p[0][0]), e = Math.min(ende, p[p.length - 1][0]);
+          if (e - s < 4) return null;
+          return { name: j, wert: integral(p, s, e), eigen: integral(hj, s, e), s: s, e: e };
+        }).filter(Boolean);
+        if (M.referenz.length) vergleich.push({ name: 'Mittelland langjährig', wert: integral(M.referenz, start, ende), eigen: eigen, s: start, e: ende });
+        var satz = '<p class="gw-mj-satz"><b>' + lage.jahr + ': ' + ganz(eigen) + ' dt TS/ha</b> gewachsen von KW ' + start + ' bis ' + ende + ' <span>(' + B.lang + ')</span></p>';
+        if (vergleich.length) satz += '<ul class="gw-mj-vgl">' + vergleich.map(function(v) {
+          var pr = v.wert ? Math.round((v.eigen / v.wert - 1) * 100) : 0;
+          return '<li>' + (v.name === 'Mittelland langjährig' ? 'gegenüber Mittelland (langjährig): ' : 'gegenüber ' + v.name + ': ') + '<b>' + (pr === 0 ? 'gleich viel' : Math.abs(pr) + ' % ' + (pr > 0 ? 'mehr' : 'weniger')) + '</b>'
+            + ' <span>(' + ganz(v.eigen) + ' gegen ' + ganz(v.wert) + ' dt' + (v.s !== start || v.e !== ende ? ', verglichen KW ' + v.s + '–' + v.e : '') + ')</span></li>';
+        }).join('') + '</ul>';
+        // Diagramm
+        var W = 640, H = 270, l = 52, r = 64, o = 16, u = 34, pb = W - l - r, ph = H - o - u, yMax = 1;
+        var serien = jahre.map(function(j) { return { name: j, p: reihe(B.jahre[j]), an: j === lage.jahr }; });
+        var ref = M.referenz.length ? { name: 'Mittelland', p: lage.art === 'kum' ? kumuliert(M.referenz.filter(function(q) { return q[0] >= serien.filter(function(s) { return s.an; })[0].p[0][0]; })) : M.referenz, ref: true } : null;
+        serien.concat(ref ? [ref] : []).forEach(function(s) { s.p.forEach(function(q) { if (q[1] > yMax) yMax = q[1]; }); });
+        var st = schritt(yMax / 4); yMax = Math.ceil(yMax / st) * st;
+        var X = function(w) { return l + (w - 1) / 51 * pb; }, Y = function(v) { return o + ph - v / yMax * ph; };
+        var t = ['<svg class="gw-rb-svg" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Graswachstum je Jahr, ' + lage.jahr + ' hervorgehoben">'];
+        for (var v = 0; v <= yMax + 1e-9; v += st) {
+          t.push('<line x1="' + l + '" x2="' + (l + pb) + '" y1="' + Y(v).toFixed(1) + '" y2="' + Y(v).toFixed(1) + '" stroke="' + (v === 0 ? '#9a9a9a' : '#e6e6e6') + '"/>');
+          t.push('<text x="' + (l - 6) + '" y="' + (Y(v) + 4).toFixed(1) + '" font-size="11" fill="#52514e" text-anchor="end">' + ganz(v) + '</text>');
+        }
+        t.push('<text x="' + (l - 44) + '" y="11" font-size="11" fill="#52514e">' + (lage.art === 'kum' ? 'dt TS/ha' : 'kg TS/ha/Tag') + '</text>');
+        for (var w = 1; w <= 52; w += 4) t.push('<text x="' + X(w).toFixed(1) + '" y="' + (o + ph + 16) + '" font-size="11" fill="#52514e" text-anchor="middle">' + w + '</text>');
+        t.push('<text x="' + (l + pb / 2) + '" y="' + (H - 2) + '" font-size="11" fill="#52514e" text-anchor="middle">Kalenderwoche</text>');
+        function pfad(p) { var d = '', vor = null; p.forEach(function(q) { d += (vor === null || (lage.art !== 'kum' && q[0] - vor > 3) ? 'M' : 'L') + X(q[0]).toFixed(1) + ' ' + Y(q[1]).toFixed(1); vor = q[0]; }); return d; }
+        if (ref) t.push('<path d="' + pfad(ref.p) + '" fill="none" stroke="#eda100" stroke-width="2" stroke-dasharray="6 4"/>');
+        serien.filter(function(s) { return !s.an; }).forEach(function(s) { t.push('<path d="' + pfad(s.p) + '" fill="none" stroke="#a8a69e" stroke-width="1.6" stroke-linejoin="round"/>'); });
+        serien.filter(function(s) { return s.an; }).forEach(function(s) { t.push('<path d="' + pfad(s.p) + '" fill="none" stroke="#fff" stroke-width="6" stroke-linejoin="round"/><path d="' + pfad(s.p) + '" fill="none" stroke="#2a78d6" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>'); });
+        var enden = serien.concat(ref ? [ref] : []).map(function(s) { var q = s.p[s.p.length - 1]; return q ? { s: s, x: X(q[0]), y: Y(q[1]), yr: Y(q[1]) } : null; }).filter(Boolean).sort(function(a, b) { return a.y - b.y; });
+        enden.forEach(function(e, i) { if (i > 0 && e.y - enden[i - 1].y < 13) e.y = enden[i - 1].y + 13; });
+        // unten nicht ueber die Achse hinaus: von unten her wieder nach oben schieben
+        for (var ei = enden.length - 1; ei >= 0; ei--) { var grenze = ei === enden.length - 1 ? o + ph - 4 : enden[ei + 1].y - 13; if (enden[ei].y > grenze) enden[ei].y = grenze; }
+        enden.forEach(function(e) {
+          var f = e.s.ref ? '#eda100' : e.s.an ? '#2a78d6' : '#a8a69e';
+          t.push('<circle cx="' + e.x.toFixed(1) + '" cy="' + e.yr.toFixed(1) + '" r="' + (e.s.an ? 4 : 3) + '" fill="' + f + '" stroke="#fff" stroke-width="2"/>');
+          t.push('<text x="' + (Math.min(e.x, l + pb) + 7).toFixed(1) + '" y="' + (e.y + 4).toFixed(1) + '" font-size="11"' + (e.s.an ? ' font-weight="700"' : '') + ' fill="#1e1e1e">' + e.s.name + '</text>');
+        });
+        t.push('<line class="gw-rb-kreuz" x1="0" x2="0" y1="' + o + '" y2="' + (o + ph) + '" stroke="#52514e" visibility="hidden"/><rect x="' + l + '" y="' + o + '" width="' + pb + '" height="' + ph + '" fill="transparent"/></svg>');
+        var knopf = function(gruppe, wert, text, an) { return '<button type="button" data-' + gruppe + '="' + wert + '" aria-pressed="' + an + '">' + text + '</button>'; };
+        var leiste = '<div class="gw-mj-leiste"><div role="group" aria-label="Jahr hervorheben">' + jahre.map(function(j) { return knopf('jahr', j, j, j === lage.jahr); }).join('') + '</div>'
+          + '<div role="group" aria-label="Darstellung">' + knopf('art', 'kum', 'aufsummiert', lage.art === 'kum') + knopf('art', 'tag', 'je Tag', lage.art === 'tag') + '</div>'
+          + (M.bezuege.length > 1 ? '<div role="group" aria-label="Messung">' + M.bezuege.map(function(b, i) { return knopf('b', i, b.name, i === lage.b); }).join('') + '</div>' : '') + '</div>';
+        var legende = '<div class="gw-rb-legende"><span><i style="border-top:3px solid #2a78d6"></i>' + lage.jahr + '</span><span><i style="border-top:2px solid #a8a69e"></i>andere Jahre</span>' + (ref ? '<span><i style="border-top:2px dashed #eda100"></i>Durchschnitt Mittelland, langjährig</span>' : '') + '</div>';
+        var wochen = {}; serien.forEach(function(s) { s.p.forEach(function(q) { wochen[q[0]] = 1; }); });
+        var tabelle = '<details class="gw-rb-tabelle"><summary>Tabelle</summary><table><thead><tr><th>KW</th>' + jahre.map(function(j) { return '<th>' + j + '</th>'; }).join('') + '</tr></thead><tbody>'
+          + Object.keys(wochen).map(Number).sort(function(a, b) { return a - b; }).map(function(w) { return '<tr><td>' + w + '</td>' + serien.map(function(s) { var q = s.p.filter(function(x) { return x[0] === w; })[0]; return '<td>' + (q ? ganz(q[1]) : '–') + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table></details>';
+        box.innerHTML = leiste + satz + legende + '<div class="gw-rb-fig">' + t.join('') + '</div>' + tabelle
+          + '<p class="gw-rb-hinweis">Aufsummiert: Tageszuwachs zwischen den Messungen linear verbunden, ab der ersten Messung des Jahres. Vergleiche gelten für denselben Zeitraum. «Alle Standorte»: das Messnetz ist nicht jedes Jahr gleich.</p>';
+        [['jahr', String], ['art', String], ['b', Number]].forEach(function(g) {
+          box.querySelectorAll('[data-' + g[0] + ']').forEach(function(k) {
+            k.addEventListener('click', function() {
+              var wert = k.getAttribute('data-' + g[0]); lage[g[0]] = g[1](wert); zeichnen();
+              var neu = box.querySelector('[data-' + g[0] + '="' + wert + '"]'); if (neu) neu.focus();
+            });
+          });
+        });
+        // Fadenkreuz: Werte aller Jahre in der Woche
+        var svg = box.querySelector('svg'), kreuz = svg.querySelector('.gw-rb-kreuz'), tip = document.getElementById('tip');
+        function weg() { kreuz.setAttribute('visibility', 'hidden'); if (tip) tip.hidden = true; }
+        svg.addEventListener('pointerleave', weg);
+        svg.addEventListener('pointermove', function(e) {
+          var p = svg.createSVGPoint(); p.x = e.clientX; p.y = e.clientY; p = p.matrixTransform(svg.getScreenCTM().inverse());
+          var w = Math.round((p.x - l) / pb * 51 + 1); if (w < 1 || w > 52 || !tip) { weg(); return; }
+          var zeilen = serien.concat(ref ? [ref] : []).map(function(s) { var v = an(s.p, w); return v === null ? '' : '<br><i style="display:inline-block;width:10px;border-top:2px ' + (s.ref ? 'dashed #eda100' : 'solid ' + (s.an ? '#2a78d6' : '#a8a69e')) + ';vertical-align:middle;margin-right:5px"></i>' + (s.an ? '<b>' : '') + s.name + ': ' + ganz(v) + (s.an ? '</b>' : '') + (lage.art === 'kum' ? ' dt' : ' kg'); }).join('');
+          if (!zeilen) { weg(); return; }
+          var x = l + (w - 1) / 51 * pb; kreuz.setAttribute('x1', x); kreuz.setAttribute('x2', x); kreuz.setAttribute('visibility', 'visible');
+          tip.innerHTML = '<b>KW ' + w + '</b>' + zeilen; tip.hidden = false;
+          tip.style.left = Math.min(e.clientX + 14, innerWidth - tip.offsetWidth - 8) + 'px'; tip.style.top = Math.max(8, e.clientY - tip.offsetHeight - 14) + 'px';
+        });
+      }
+      zeichnen();
+    })(G.mj);
     // Vollbild fuer die Diagramme des Jahresrueckblicks
     var voll = null, platz = null;
     function zu() { if (!voll) return; platz.parentNode.replaceChild(voll.querySelector('figure'), platz); voll.remove(); voll = null; document.body.style.overflow = ''; }
@@ -5515,23 +5689,31 @@ GWDatenexplorer.kurve = function(el, x, daten) {
         return l;
       }, [])
     };
-    var tipIdx = 0, gwb = { orte: eigeneOrte.map(function(o) { return { lon: o.lon, lat: o.lat }; }), aus: seiten[0] && seiten[0].aus, seiten: [] };
+    var tipIdx = 0, gwb = { orte: eigeneOrte.map(function(o) { return { lon: o.lon, lat: o.lat }; }), aus: seiten[0] && seiten[0].aus, seiten: [], mj: rueckblick && rueckblick.mehrjahr || null };
     seiten.forEach(function(s) {
-      var t = s.t, e = { z: zKodieren(t.z), skala: t.skala, auto: t.auto, voll: t.voll, farben: t.info.farben, titel: t.thema.titel + ' ' + selectedYear, tip: -1 };
+      var t = s.t, e = { z: zKodieren(t.z), skala: t.skala, auto: t.auto, voll: t.voll, farben: t.info.farben, titel: t.thema.titel + ' ' + selectedYear, tip: -1,
+        art: t.thema.art, kurz: t.thema.kurz, einheit: String(t.info.einheit).split(',')[0], woche: t.woche, stand: t.stand, werte: t.werte, tip1: tipIdx };
       tipIdx++;
-      if (t.werte2) { e.tip = tipIdx; tipIdx++; e.werte28 = t.werte2.werte; e.z28 = zKodieren(t.z28); e.stand = t.stand; e.wochen = {}; e.wochenStand = t.wochenStand;
-        Object.keys(t.wochen || {}).forEach(function(w) { e.wochen[w] = zKodieren(t.wochen[w]); }); }
+      if (t.werte2) { e.tip = tipIdx; tipIdx++; e.werte28 = t.werte2.werte; e.z28 = zKodieren(t.z28); }
+      if (t.wochen && Object.keys(t.wochen).length > 1) {
+        e.wochen = {}; e.wochenStand = t.wochenStand;
+        Object.keys(t.wochen).forEach(function(w) { e.wochen[w] = zKodieren(t.wochen[w]); });
+      }
       gwb.seiten.push(e);
     });
     var tabs = seiten.map(function(s, i) { return '<button type="button" data-t="' + i + '"' + (i === 0 ? ' class="an"' : '') + '>' + esc(s.t.thema.titel) + '</button>'; }).join('') +
       (rb ? '<button type="button" data-t="rb">Jahresrückblick ' + selectedYear + '</button>' : '');
     var bloecke = seiten.map(function(s, i) {
-      var steuer = '';
-      if (s.t.wochen && s.t.z28) {
-        var wl = Object.keys(s.t.wochen).map(Number).sort(function(a, b) { return a - b; });
+      var steuer = '', wl = s.t.wochen ? Object.keys(s.t.wochen).map(Number).sort(function(a, b) { return a - b; }) : [];
+      if (wl.length > 1 && s.t.thema.art) {
+        var zustand = s.t.thema.art === 'zustand';
         var opts = function(sel) { return wl.map(function(w) { return '<option value="' + w + '"' + (w === sel ? ' selected' : '') + '>KW ' + w + ' (' + esc(s.t.wochenStand[w] || '') + ')</option>'; }).join(''); };
-        steuer = '<div class="gw-v-steuer" role="group" aria-label="Zeitraum"><span>Zeitraum:</span><button type="button" data-z="kum" aria-pressed="true">seit 1. Januar</button><button type="button" data-z="28" aria-pressed="false">letzte 28 Tage</button><button type="button" data-z="frei" aria-pressed="false">frei wählen</button>'
-          + '<span class="gw-v-frei" hidden><label>von <select name="von"><option value="0">1. Januar</option>' + opts(wl[Math.max(0, wl.length - 9)]) + '</select></label> <label>bis <select name="bis">' + opts(wl[wl.length - 1]) + '</select></label></span></div>';
+        steuer = '<div class="gw-v-steuer" role="group" aria-label="Zeitraum"><span>Zeitraum:</span>'
+          + (zustand ? '<button type="button" data-z="kum" aria-pressed="true">Stichtag</button><button type="button" data-z="28" aria-pressed="false">Mittel letzte 4 Wochen</button>'
+            : '<button type="button" data-z="kum" aria-pressed="true">seit 1. Januar</button><button type="button" data-z="28" aria-pressed="false">letzte 28 Tage</button>')
+          + '<button type="button" data-z="frei" aria-pressed="false">frei wählen</button>'
+          + '<span class="gw-v-frei" hidden><label>von <select name="von">' + (zustand ? '' : '<option value="0">1. Januar</option>') + opts(wl[Math.max(0, wl.length - (zustand ? 5 : 9))]) + '</select></label> <label>bis <select name="bis">' + opts(wl[wl.length - 1]) + '</select></label>'
+          + (zustand ? ' <label>Wert <select name="wie"><option value="mittel">Mittel</option><option value="min">tiefster</option><option value="max">höchster</option></select></label>' : '') + '</span></div>';
       }
       return '<section data-t="' + i + '"' + (i === 0 ? '' : ' hidden') + '>' + steuer + s.svg + '<p class="link"><a href="' + esc(s.link) + '" target="_blank" rel="noopener">Diese Karte im Datenexplorer öffnen</a></p></section>';
     }).join('');
@@ -5577,6 +5759,10 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       '.gw-rb-svg{width:100%;height:auto;display:block;touch-action:pan-y}.gw-rb-tabelle summary{cursor:pointer;font-size:12.5px;color:#2f6f5e;margin-top:4px}' +
       '.gw-rb-tabelle table{border-collapse:collapse;font-size:12px;margin-top:6px}.gw-rb-tabelle th,.gw-rb-tabelle td{padding:2px 8px;text-align:right;border-bottom:1px solid #eee}' +
       '.gw-rb-hinweis{font-size:12px;color:#52514e;margin-top:10px}' +
+      '.gw-mj{grid-column:1/-1}.gw-mj-leiste{display:flex;flex-wrap:wrap;gap:8px 16px;margin:4px 0 8px}.gw-mj-leiste div{display:flex;flex-wrap:wrap;gap:4px}' +
+      '.gw-mj-leiste button{font:inherit;font-size:14px;padding:6px 12px;min-height:36px;border:1px solid #9bb5a8;border-radius:16px;background:#fff;cursor:pointer}.gw-mj-leiste button[aria-pressed=true]{background:#2a78d6;border-color:#2a78d6;color:#fff;font-weight:700}' +
+      '.gw-mj-leiste div:nth-child(n+2) button[aria-pressed=true]{background:#2f6f5e;border-color:#2f6f5e}' +
+      '.gw-mj-satz{margin:2px 0;font-size:15px}.gw-mj-satz b{font-size:20px}.gw-mj-satz span,.gw-mj-vgl span{color:#52514e;font-size:13px}.gw-mj-vgl{margin:2px 0 6px;padding-left:18px;font-size:14px;line-height:1.5}' +
       '.gw-v-steuer{display:flex;flex-wrap:wrap;gap:6px;align-items:center;justify-content:center;margin:0 auto 8px;font-size:14px}.gw-v-steuer button{font:inherit;padding:7px 12px;border:1px solid #9bb5a8;border-radius:16px;background:#fff;cursor:pointer;min-height:36px}' +
       '.gw-v-steuer button[aria-pressed=true]{background:#2f6f5e;color:#fff;border-color:#2f6f5e}.gw-v-steuer select{font:inherit;padding:5px 6px;border-radius:6px;border:1px solid #9bb5a8;background:#fff}' +
       '.gw-v-griff:focus{outline:none}.gw-v-griff:focus path{fill:#c2185b}' +
