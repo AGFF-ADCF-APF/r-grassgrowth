@@ -7,6 +7,32 @@
  */
 window.GWDatenexplorer = window.GWDatenexplorer || {};
 
+// Geteilter Bericht (#…ber=1…): sofort eine ruhige Ladeanzeige ueber die ganze Seite, damit der
+// Aufbau des Datenexplorers (Ebenen, Karte) nicht sichtbar ist. berichtAnzeigen() uebernimmt sie.
+GWDatenexplorer.berichtLaden = function() {
+  if (!/[#&]ber=1(&|$)/.test(window.location.hash)) return null;
+  var d = document.querySelector('.gw-bericht');
+  if (d) return d;
+  if (!document.getElementById('gw-bericht-stil')) {
+    var st = document.createElement('style');
+    st.id = 'gw-bericht-stil';
+    st.textContent = '.gw-bericht{position:fixed;inset:0;z-index:2147483000;background:#eef1ee;display:flex;flex-direction:column;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}' +
+      '.gw-bericht-laden{margin:auto;display:flex;flex-direction:column;align-items:center;gap:18px;color:#2f4f47;font-size:16px}' +
+      '.gw-bericht-rad{position:relative;width:56px;height:56px;animation:gw-drehen 1.1s steps(8) infinite}' +
+      '.gw-bericht-rad i{position:absolute;left:24px;top:0;width:8px;height:8px;border-radius:50%;background:#2f6f5e;transform-origin:4px 28px}' +
+      '@keyframes gw-drehen{to{transform:rotate(360deg)}}@media (prefers-reduced-motion:reduce){.gw-bericht-rad{animation-duration:4s}}';
+    document.head.appendChild(st);
+  }
+  d = document.createElement('div');
+  d.className = 'gw-bericht';
+  var rad = '';
+  for (var i = 0; i < 8; i++) rad += '<i style="transform:rotate(' + (i * 45) + 'deg);opacity:' + (0.2 + i * 0.1).toFixed(1) + '"></i>';
+  d.innerHTML = '<div class="gw-bericht-laden" role="status"><div class="gw-bericht-rad" aria-hidden="true">' + rad + '</div><span>Bericht wird aufgebaut …</span></div>';
+  (document.body || document.documentElement).appendChild(d);
+  return d;
+};
+if (document.body) GWDatenexplorer.berichtLaden(); else document.addEventListener('DOMContentLoaded', function() { GWDatenexplorer.berichtLaden(); });
+
 GWDatenexplorer.karte = function(el, x, d) {
   // Feste Kartenausmasse aus R (lon_range_erweitert/lat_range/
   // karten_scaleratio) - fuer die Ansichts-Berechnung unten EXPLIZIT
@@ -1167,6 +1193,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     text: ['Unter «Export» › «Karte für eine Veranstaltung» lassen sich eigene Orte erfassen, z.B. die Betriebe der Teilnehmenden: PLZ oder Ortschaft eintippen und einen Vorschlag wählen, oder eine ganze Liste mit Komma oder Zeilenumbruch einfügen. Ein Klick auf einen Namen ändert ihn (z.B. in den Betriebsnamen). Der Schalter «Eigene Orte» zeigt sie als Marker auf der Karte; die Liste bleibt in diesem Browser gespeichert.',
       '«Karten erstellen» macht je Thema (Niederschlag seit 1. Januar und der letzten 28 Tage, Bodenwasserbilanz, potenzielles Graswachstum) eine Seite mit Kartenausschnitt auf der Landeskarte, nummerierten Orten, Legende und Wertetabelle; wo Platz bleibt, erklärt ein kurzer Text, wie die Werte entstehen. Als PDF zum Drucken, als SVG zum Weiterbearbeiten oder als HTML-Datei für Präsentation und Weitergabe: dort lassen sich die Themen umschalten, die Orte antippen und ein Jahresrückblick zeigt den Verlauf an Ihren Orten im Vergleich zur ganzen Schweiz.',
       'Auf jeder Seite führt ein QR-Code zur selben Ansicht im Datenexplorer, mit allen Orten. Der Code enthält einen Kurzlink (graswachstum.ch/g/…), damit er auch klein gedruckt gut scanbar bleibt. Die Orte stehen im Link; wer ihn erhält, sieht sie.',
+      'Die Farbskala ist an den Kartenausschnitt angepasst, damit Unterschiede zwischen den Orten sichtbar werden (wahlweise «wie im Datenexplorer»). In der HTML-Fassung lassen sich Tiefst- und Höchstwert mit den Pfeilen unter dem Zahlenstrahl verschieben; beim Niederschlag gibt es dort einen Umschalter: seit 1. Januar, letzte 28 Tage oder ein frei gewählter Zeitraum (von KW bis KW). Der Jahresrückblick zeigt zusätzlich die Wasserbilanz je Woche (Niederschlag minus Verdunstung); jedes Diagramm lässt sich im Vollbild zeigen.',
       '«Bericht als Link teilen» erzeugt einen Kurzlink auf den Bericht selbst: Wer ihn öffnet, sieht die interaktive Ansicht mit allen Orten sofort, ohne Datei und stets mit den aktuellen Daten. Dort lässt sich der Bericht auch als HTML-Datei speichern.'] });
   dokuEintrag({ id: 'graswachstum', gruppe: 'Messnetz', titel: 'Graswachstum',
     alias: ['Graswachstum (kg TS/ha/Tag)'], stichworte: 'zuwachs wachstum kreis zahl messung kg ts ha tag',
@@ -4484,8 +4511,8 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   // gleich aussehen und in HTML/SVG anklickbar bzw. bearbeitbar bleiben.
   var VERANSTALTUNG_THEMEN = [
     { name: 'niederschlag_kum', titel: 'Niederschlag seit 1. Januar' },
-    { name: 'boden', titel: 'Bodenwasserbilanz' },
-    { name: 'wachstumspotenzial_kum', titel: 'Potenzielles Graswachstum seit 1. Januar', experimentell: true }
+    { name: 'boden', titel: 'Bodenwasserbilanz', standard: [0, 130] },
+    { name: 'wachstumspotenzial_kum', titel: 'Potenzielles Graswachstum seit 1. Januar', experimentell: true, faktor: 0.01, einheit: 'dt TS/ha', standard: [0, 150] }
   ];
   // Erklaerungen der Methode (kurz, einfach): erscheinen auf der Seite, wenn neben der Karte Platz ist
   var METHODIK = {
@@ -4563,6 +4590,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     if (!opt.namen) p.push('bn=0');
     if (opt.messstandorte) p.push('bm=1');
     if (!opt.landeskarte) p.push('bk=0');
+    if (opt.skala === 'explorer') p.push('bs=explorer');
     return appBasisUrl() + (exp ? '?experimentell' : '') + '#' + p.join('&');
   }
   // Geteilter Bericht: Vollbildansicht ueber dem Datenexplorer (HTML-Bericht wird im Browser aufgebaut)
@@ -4570,16 +4598,15 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   function berichtAnzeigen(q) {
     if (berichtGezeigt) return;
     berichtGezeigt = true;
-    berichtHash = ['ber=1', 'bt=' + (q.bt || ''), 'karte=' + (q.karte || '')].concat(q.bti ? ['bti=' + encodeURIComponent(q.bti).replace(/%20/g, '+')] : [], q.bn === '0' ? ['bn=0'] : [], q.bm === '1' ? ['bm=1'] : [], q.bk === '0' ? ['bk=0'] : []);
+    berichtHash = ['ber=1', 'bt=' + (q.bt || ''), 'karte=' + (q.karte || '')].concat(q.bs === 'explorer' ? ['bs=explorer'] : [], q.bti ? ['bti=' + encodeURIComponent(q.bti).replace(/%20/g, '+')] : [], q.bn === '0' ? ['bn=0'] : [], q.bm === '1' ? ['bm=1'] : [], q.bk === '0' ? ['bk=0'] : []);
     var k = (q.karte || '').split(',').map(parseFloat);
     var opt = {
       themen: (q.bt || 'niederschlag_kum,boden').split(',').filter(Boolean), formate: ['html'], ausschnitt: 'orte',
-      namen: q.bn !== '0', messstandorte: q.bm === '1', titel: q.bti || '', landeskarte: q.bk !== '0', nurHtml: true,
+      namen: q.bn !== '0', messstandorte: q.bm === '1', titel: q.bti || '', landeskarte: q.bk !== '0', nurHtml: true, skala: q.bs === 'explorer' ? 'explorer' : 'ausschnitt',
       aus: k.length === 4 && k.every(isFinite) ? { xr: [k[0], k[1]], yr: [k[2], k[3]] } : null
     };
-    var d = document.createElement('div');
-    d.className = 'gw-bericht';
-    d.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:#eef1ee;display:flex;flex-direction:column;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif';
+    var d = GWDatenexplorer.berichtLaden() || document.createElement('div');
+    var laden = d.querySelector('.gw-bericht-laden');
     var leiste = document.createElement('div');
     leiste.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:8px 12px;background:#fff;border-bottom:1px solid #d5ddd8;font-size:14px';
     var status = document.createElement('span');
@@ -4600,16 +4627,20 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     leiste.appendChild(status);
     leiste.appendChild(knopf('Als Datei speichern', function() { if (html) herunterladen(new Blob([html], { type: 'text/html;charset=utf-8' }), 'graswachstum_bericht_' + selectedYear + '-KW' + zweistellig(selectedWeek) + '.html'); }));
     leiste.appendChild(knopf('Im Datenexplorer öffnen', function() { berichtHash = null; berichtGezeigt = false; d.remove(); schreibeUrlBald(); }));
+    leiste.style.display = 'none'; rahmen.style.display = 'none';
     d.appendChild(leiste); d.appendChild(rahmen);
-    document.body.appendChild(d);
+    if (!d.parentNode) document.body.appendChild(d);
+    var fertig = function() { if (laden) laden.remove(); leiste.style.display = 'flex'; rahmen.style.display = 'block'; };
     Promise.all([ladeBibliothek('qrcode')]).then(function() { return exportVeranstaltung(opt, function() {}); }).then(function(h) {
       html = h;
+      rahmen.addEventListener('load', fertig, { once: true });
       rahmen.srcdoc = h;
       status.textContent = (q.bti ? q.bti + ' · ' : '') + 'Bericht ' + wocheText(selectedWeek);
     }).catch(function(e) {
       console.error('Bericht:', e);
       status.textContent = 'Der Bericht konnte nicht aufgebaut werden: ' + (e && e.message ? e.message : e);
       status.style.color = '#b00020';
+      fertig();
     });
   }
   // Ausschnitt mit Seitenverhaeltnis verhaeltnis (Breite/Hoehe in Pixeln)
@@ -4659,33 +4690,116 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     var py = function(lat) { return (aus.yr[1] - lat) / (aus.yr[1] - aus.yr[0]) * hoehe; };
     ctx.drawImage(img, px(x0), py(y0), px(x0 + b.sizex) - px(x0), py(y0 - b.sizey) - py(y0));
   }
+  // --- Karten aus Rohwerten (statt fertiger Bilder): Ausschnitt, eigene Farbskala ---
+  // Gitter der Ebenen (werte: x0..x1, y0..y1, ncol x nrow, m = Zeilen von Norden) auf den
+  // Kartenausschnitt zuschneiden; faktor rechnet die Einheit um (kg -> dt: 0.01).
+  function zuschnitt(gitter, aus, faktor) {
+    if (!gitter || !gitter.m) return null;
+    var nc = gitter.ncol, nr = gitter.nrow, dx = (gitter.x1 - gitter.x0) / nc, dy = (gitter.y1 - gitter.y0) / nr;
+    var c0 = Math.max(0, Math.floor((aus.xr[0] - gitter.x0) / dx) - 1), c1 = Math.min(nc - 1, Math.ceil((aus.xr[1] - gitter.x0) / dx) + 1);
+    var r0 = Math.max(0, Math.floor((gitter.y1 - aus.yr[1]) / dy) - 1), r1 = Math.min(nr - 1, Math.ceil((gitter.y1 - aus.yr[0]) / dy) + 1);
+    if (c1 < c0 || r1 < r0) return null;
+    var w = c1 - c0 + 1, h = r1 - r0 + 1, v = new Float32Array(w * h), f = faktor || 1;
+    for (var r = 0; r < h; r++) {
+      var zeile = gitter.m[r0 + r] || [];
+      for (var c = 0; c < w; c++) { var x = zeile[c0 + c]; v[r * w + c] = (x === null || x === undefined || isNaN(x)) ? NaN : x * f; }
+    }
+    return { x0: gitter.x0 + c0 * dx, x1: gitter.x0 + (c1 + 1) * dx, y1: gitter.y1 - r0 * dy, y0: gitter.y1 - (r1 + 1) * dy, ncol: w, nrow: h, v: v };
+  }
+  function zWert(z, lon, lat) {
+    if (!z) return null;
+    var c = Math.floor((lon - z.x0) / (z.x1 - z.x0) * z.ncol), r = Math.floor((z.y1 - lat) / (z.y1 - z.y0) * z.nrow);
+    if (c < 0 || c >= z.ncol || r < 0 || r >= z.nrow) return null;
+    var w = z.v[r * z.ncol + c];
+    return isNaN(w) ? null : w;
+  }
+  // Farbskala an den Ausschnitt angepasst: 5.–95. Perzentil der Werte im Ausschnitt, auf runde Werte
+  function farbskalaAuto(z, aus, voll) {
+    var l = [];
+    if (z) {
+      for (var r = 0; r < z.nrow; r++) for (var c = 0; c < z.ncol; c++) {
+        var lon = z.x0 + (c + 0.5) * (z.x1 - z.x0) / z.ncol, lat = z.y1 - (r + 0.5) * (z.y1 - z.y0) / z.nrow, w = z.v[r * z.ncol + c];
+        if (!isNaN(w) && lon >= aus.xr[0] && lon <= aus.xr[1] && lat >= aus.yr[0] && lat <= aus.yr[1]) l.push(w);
+      }
+    }
+    if (l.length < 4) return voll.slice();
+    l.sort(function(a, b) { return a - b; });
+    var lo = l[Math.floor(l.length * 0.05)], hi = l[Math.ceil(l.length * 0.95) - 1];
+    if (hi - lo < (voll[1] - voll[0]) * 0.04) { var m = (lo + hi) / 2, h = (voll[1] - voll[0]) * 0.02; lo = m - h; hi = m + h; }
+    var schritt = netteSchrittweite((hi - lo) / 5);
+    lo = Math.max(Math.min(0, voll[0]), Math.floor(lo / schritt) * schritt);
+    hi = Math.ceil(hi / schritt) * schritt;
+    if (hi <= lo) hi = lo + schritt;
+    return [lo, hi];
+  }
+  // Beschriftung der Farbskala: Anfang, Ende und runde Zwischenwerte
+  function skalaMarken(lo, hi) {
+    var st = netteSchrittweite((hi - lo) / 4), l = [{ v: lo, f: 0 }];
+    for (var v = Math.ceil((lo + st * 0.35) / st) * st; v < hi - st * 0.35; v += st) l.push({ v: v, f: (v - lo) / (hi - lo) });
+    l.push({ v: hi, f: 1 });
+    return l;
+  }
+  function hexRgb(h) { h = String(h).replace('#', ''); if (h.length === 3) h = h.replace(/./g, '$&$&'); return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]; }
+  // Raster als Canvas (eine Zelle = ein Pixel), Farben linear zwischen den Stufen, Deckkraft 75 % wie im Datenexplorer
+  function rasterCanvas(z, lo, hi, farben) {
+    var c = document.createElement('canvas');
+    c.width = z.ncol; c.height = z.nrow;
+    var ctx = c.getContext('2d'), img = ctx.createImageData(z.ncol, z.nrow), rgb = farben.map(hexRgb), n = rgb.length - 1;
+    for (var i = 0; i < z.v.length; i++) {
+      var w = z.v[i];
+      if (isNaN(w)) continue;
+      var a = Math.max(0, Math.min(1, (w - lo) / ((hi - lo) || 1))) * n, k = Math.min(n - 1, Math.floor(a)), f = a - k, p = rgb[k], q = rgb[Math.min(n, k + 1)];
+      img.data[i * 4] = p[0] + (q[0] - p[0]) * f; img.data[i * 4 + 1] = p[1] + (q[1] - p[1]) * f; img.data[i * 4 + 2] = p[2] + (q[2] - p[2]) * f; img.data[i * 4 + 3] = 191;
+    }
+    ctx.putImageData(img, 0, 0);
+    return c;
+  }
+  function zeichneRaster(ctx, rc, z, aus, breite, hoehe) {
+    var px = function(lon) { return (lon - aus.xr[0]) / (aus.xr[1] - aus.xr[0]) * breite; };
+    var py = function(lat) { return (aus.yr[1] - lat) / (aus.yr[1] - aus.yr[0]) * hoehe; };
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(rc, px(z.x0), py(z.y1), px(z.x1) - px(z.x0), py(z.y0) - py(z.y1));
+  }
+  // Fuer die HTML-Ausgabe: Gitter kompakt (Int16, Wert x10, fehlend = -32768) als base64
+  function zKodieren(z) {
+    if (!z) return null;
+    var a = new Int16Array(z.v.length);
+    for (var i = 0; i < a.length; i++) a[i] = isNaN(z.v[i]) ? -32768 : Math.max(-32767, Math.min(32767, Math.round(z.v[i] * 10)));
+    var b = new Uint8Array(a.buffer), s = '';
+    for (var k = 0; k < b.length; k += 8192) s += String.fromCharCode.apply(null, b.subarray(k, k + 8192));
+    return { x0: z.x0, x1: z.x1, y0: z.y0, y1: z.y1, ncol: z.ncol, nrow: z.nrow, b: btoa(s) };
+  }
+
+  // Kartenbild des Ausschnitts: Ebene aus den Rohwerten (Farbskala t.skala), darueber die Landeskarte
+  // («multiplizieren»), oben die Messstandorte. Liefert auch die Teile einzeln (HTML: Skala aenderbar).
   function veranstaltungsKarte(aus, t, opt, breite, hoehe) {
     var mess = opt.messstandorte ? kartenBilderFuer(t.woche, null, true).slice(1) : [];
-    var ebene = t.bild ? [kartenBilderFuer(t.woche, t.bild, false)[1]] : [];
     return Promise.all([
       // doppelte Aufloesung: swisstopo zeichnet dann die detailliertere Stufe
       // mit verhaeltnismaessig kleineren Ortsnamen
       opt.landeskarte ? landeskarte(aus, breite * 2, hoehe * 2) : Promise.resolve(null),
-      Promise.all(ebene.map(function(b) { return bildLaden(b.source).then(function(i) { return { b: b, img: i }; }); })),
       Promise.all(mess.map(function(b) { return bildLaden(b.source).then(function(i) { return { b: b, img: i }; }); })),
       opt.landeskarte ? Promise.resolve(null) : bildLaden(kartenbildHintergrund.source).then(function(i) { return { b: kartenbildHintergrund, img: i }; })
     ]).then(function(r) {
-      var c = document.createElement('canvas');
-      c.width = breite; c.height = hoehe;
-      var ctx = c.getContext('2d');
-      ctx.fillStyle = 'white'; ctx.fillRect(0, 0, breite, hoehe);
+      var neu = function() { var c = document.createElement('canvas'); c.width = breite; c.height = hoehe; return c; };
       var karte = r[0];
-      if (!karte && r[3]) zeichneGeoBild(ctx, r[3].img, r[3].b, aus, breite, hoehe);
-      ctx.imageSmoothingEnabled = false;
-      r[1].forEach(function(e) { zeichneGeoBild(ctx, e.img, e.b, aus, breite, hoehe); });
-      ctx.imageSmoothingEnabled = true;
-      if (karte) {
-        ctx.globalCompositeOperation = 'multiply';
-        ctx.drawImage(karte, 0, 0, breite, hoehe);
-        ctx.globalCompositeOperation = 'source-over';
-      }
-      r[2].forEach(function(e) { zeichneGeoBild(ctx, e.img, e.b, aus, breite, hoehe); });
-      return { canvas: c, landeskarte: !!karte };
+      // Grundkarte (weiss + Landeskarte, sonst Kantone/Seen)
+      var basis = neu(), bctx = basis.getContext('2d');
+      bctx.fillStyle = 'white'; bctx.fillRect(0, 0, breite, hoehe);
+      if (karte) bctx.drawImage(karte, 0, 0, breite, hoehe);
+      else if (r[2]) zeichneGeoBild(bctx, r[2].img, r[2].b, aus, breite, hoehe);
+      // Messstandorte (durchsichtig)
+      var oben = null;
+      if (r[1].length) { oben = neu(); var octx = oben.getContext('2d'); r[1].forEach(function(e) { zeichneGeoBild(octx, e.img, e.b, aus, breite, hoehe); }); }
+      // zusammengesetzt (PDF, SVG-Datei)
+      var c = neu(), ctx = c.getContext('2d');
+      ctx.fillStyle = 'white'; ctx.fillRect(0, 0, breite, hoehe);
+      if (!karte) ctx.drawImage(basis, 0, 0);
+      if (t.z) zeichneRaster(ctx, rasterCanvas(t.z, t.skala[0], t.skala[1], t.info.farben), t.z, aus, breite, hoehe);
+      if (karte) { ctx.globalCompositeOperation = 'multiply'; ctx.drawImage(karte, 0, 0, breite, hoehe); ctx.globalCompositeOperation = 'source-over'; }
+      if (oben) ctx.drawImage(oben, 0, 0);
+      return { canvas: c, basis: basis, oben: oben, landeskarte: !!karte };
     });
   }
   // Beschriftungen ohne Ueberlappung: rechts, links, oben oder unten vom
@@ -4726,24 +4840,41 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     var z = Math.abs(w) >= 100 ? tausender(Math.round(Math.abs(w) >= 2000 ? w / 10 : w) * (Math.abs(w) >= 2000 ? 10 : 1)) : String(Math.round(w * 10) / 10);
     return z + ' ' + String(info.einheit).split(',')[0];
   }
-  // Daten je Thema: Bild und Werte der Woche (sonst der letzten Woche davor
-  // mit Daten), Stand, Werte an den Orten
-  function veranstaltungsThema(thema, woche) {
+  // Daten je Thema: Rohwerte der Woche (sonst der letzten Woche davor mit Daten) im Ausschnitt,
+  // Werte an den Orten, Farbskala (an den Ausschnitt angepasst oder Vorgabe); Niederschlag zusaetzlich
+  // 28 Tage und alle Wochen des Jahres (HTML: freier Zeitraum)
+  function veranstaltungsThema(thema, woche, aus, opt) {
+    opt = opt || {};
     return ladeEbeneP(ebeneDateiSchluessel(thema.name)).then(function(d) {
-      var info = layerLegenden[thema.name], bilder = d.bilder || {}, w = woche;
-      while (w > 0 && !bilder[selectedYear + ' ' + w]) w--;
+      var info0 = layerLegenden[thema.name], f = thema.faktor || 1, alleWerte = d.werte || {}, w = woche;
+      var info = thema.einheit ? Object.assign({}, info0, { einheit: thema.einheit, bereich: [info0.bereich[0] * f, info0.bereich[1] * f] }) : info0;
+      while (w > 0 && !alleWerte[selectedYear + ' ' + w]) w--;
       if (w === 0) throw new Error('Für «' + thema.titel + '» gibt es ' + selectedYear + ' noch keine Daten.');
-      var k = selectedYear + ' ' + w, gitter = (d.werte || {})[k];
+      var k = selectedYear + ' ' + w, gitter = alleWerte[k];
       var stand = (gitter && gitter.bis) || (d.datum && d.datum[k]) || wochenDatumBereichText(w).split(' – ')[0] + selectedYear;
+      var z = zuschnitt(gitter, aus, f), zmax = -Infinity;
+      if (z) for (var zi = 0; zi < z.v.length; zi++) if (z.v[zi] > zmax) zmax = z.v[zi];
+      var voll = [Math.min(0, info.bereich[0]), Math.max(info.bereich[1], isFinite(zmax) ? Math.ceil(zmax / netteSchrittweite(zmax / 5)) * netteSchrittweite(zmax / 5) : 0)];
+      var auto = thema.standard ? thema.standard.slice() : farbskalaAuto(z, aus, voll);
+      voll[1] = Math.max(voll[1], auto[1]);
       var erg = {
-        thema: thema, info: info, woche: w, bild: bilder[k], stand: stand,
-        werte: eigeneOrte.map(function(o) { return gitterWert(gitter, o.lon, o.lat); })
+        thema: thema, info: info, woche: w, stand: stand, z: z, auto: auto, voll: voll,
+        skala: opt.skala === 'explorer' ? voll.slice() : auto,
+        werte: eigeneOrte.map(function(o) { var x = gitterWert(gitter, o.lon, o.lat); return x === null ? null : x * f; })
       };
-      // Niederschlag: zusaetzlich die Summe der letzten 28 Tage (gleiche Woche)
       if (thema.name !== 'niederschlag_kum') return erg;
+      // Niederschlag: alle Wochen des Jahres (freier Zeitraum = Differenz zweier Stichtage)
+      erg.wochen = {}; erg.wochenStand = {};
+      Object.keys(alleWerte).forEach(function(kk) {
+        var p = kk.split(' ');
+        if (p[0] !== String(selectedYear) || +p[1] > w) return;
+        erg.wochen[p[1]] = zuschnitt(alleWerte[kk], aus, 1);
+        erg.wochenStand[p[1]] = alleWerte[kk].bis || '';
+      });
       return ladeEbeneP('niederschlag_28').then(function(d2) {
         var g2 = (d2.werte || {})[k];
         if (g2 && g2.m) {
+          erg.z28 = zuschnitt(g2, aus, 1);
           erg.werte2 = { kopf: '28 Tage', titel: 'Niederschlag letzte 28 Tage', info: layerLegenden.niederschlag || info,
             werte: eigeneOrte.map(function(o) { return gitterWert(g2, o.lon, o.lat); }) };
         }
@@ -4795,15 +4926,31 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   }
 
   // Eine Seite als SVG (mm-Koordinaten), Grundlage fuer SVG- und HTML-Ausgabe
-  function veranstaltungSeiteSvg(t, kartenBild, aus, opt, link) {
+  // karte: zusammengesetztes JPEG (Text) oder {jpg, basis, oben, landeskarte}; interaktiv (HTML): Ebene getrennt,
+  // Farbskala mit Pfeilen unter dem Zahlenstrahl verschiebbar
+  function veranstaltungSeiteSvg(t, karte, aus, opt, link, interaktiv) {
+    var kartenBild = typeof karte === 'string' ? karte : karte.jpg;
     var kurz = link.length < 80;
     var S = SEITE, pos = ortePositionen(aus), teile = [];
     var kx = S.rand, ky = 29, kb = S.karteB, kh = S.karteH;
     teile.push('<rect width="' + S.b + '" height="' + S.h + '" fill="#fff"/>');
-    teile.push('<text x="' + S.rand + '" y="16" font-size="6.2" font-weight="700" fill="#1e1e1e">' + esc(t.thema.titel + ' ' + selectedYear) + '</text>');
+    teile.push('<text class="gw-v-titel" x="' + S.rand + '" y="16" font-size="6.2" font-weight="700" fill="#1e1e1e">' + esc(t.thema.titel + ' ' + selectedYear) + '</text>');
     teile.push('<text x="' + S.rand + '" y="22" font-size="3.3" fill="#646464">' + esc(themaUntertitel(t, opt)) + '</text>');
     teile.push('<line x1="' + S.rand + '" y1="25" x2="' + (S.b - S.rand) + '" y2="25" stroke="#d2d2d2" stroke-width="0.3"/>');
-    teile.push('<image class="gw-v-karte" x="' + kx + '" y="' + ky + '" width="' + kb + '" height="' + kh + '" preserveAspectRatio="none" xlink:href="' + kartenBild + '"/>');
+    if (interaktiv && typeof karte !== 'string' && t.z) {
+      var clip = 'gw-v-clip-' + t.thema.name, z = t.z;
+      var zx = kx + (z.x0 - aus.xr[0]) / (aus.xr[1] - aus.xr[0]) * kb, zy = ky + (aus.yr[1] - z.y1) / (aus.yr[1] - aus.yr[0]) * kh;
+      var zb = (z.x1 - z.x0) / (aus.xr[1] - aus.xr[0]) * kb, zh = (z.y1 - z.y0) / (aus.yr[1] - aus.yr[0]) * kh;
+      teile.push('<defs><clipPath id="' + clip + '"><rect x="' + kx + '" y="' + ky + '" width="' + kb + '" height="' + kh + '"/></clipPath></defs><g clip-path="url(#' + clip + ')">');
+      if (!karte.landeskarte) teile.push('<image x="' + kx + '" y="' + ky + '" width="' + kb + '" height="' + kh + '" preserveAspectRatio="none" xlink:href="' + karte.basis + '"/>');
+      else teile.push('<rect x="' + kx + '" y="' + ky + '" width="' + kb + '" height="' + kh + '" fill="#fff"/>');
+      teile.push('<image class="gw-v-ebene" x="' + zx.toFixed(2) + '" y="' + zy.toFixed(2) + '" width="' + zb.toFixed(2) + '" height="' + zh.toFixed(2) + '" preserveAspectRatio="none" xlink:href=""/>');
+      if (karte.landeskarte) teile.push('<image x="' + kx + '" y="' + ky + '" width="' + kb + '" height="' + kh + '" preserveAspectRatio="none" style="mix-blend-mode:multiply" xlink:href="' + karte.basis + '"/>');
+      if (karte.oben) teile.push('<image x="' + kx + '" y="' + ky + '" width="' + kb + '" height="' + kh + '" preserveAspectRatio="none" xlink:href="' + karte.oben + '"/>');
+      teile.push('</g>');
+    } else {
+      teile.push('<image class="gw-v-karte" x="' + kx + '" y="' + ky + '" width="' + kb + '" height="' + kh + '" preserveAspectRatio="none" xlink:href="' + kartenBild + '"/>');
+    }
     teile.push('<rect x="' + kx + '" y="' + ky + '" width="' + kb + '" height="' + kh + '" fill="none" stroke="#bdbdbd" stroke-width="0.3"/>');
     // Marker
     teile.push('<g class="gw-v-orte">');
@@ -4822,14 +4969,30 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     var x = S.spalteX, b = S.spalteB, y = 33;
     teile.push('<text x="' + x + '" y="' + y + '" font-size="3.6" font-weight="700" fill="#1e1e1e">Legende <tspan font-weight="400" fill="#52514e">(' + esc(String(t.info.einheit).split(',')[0]) + ')</tspan></text>');
     y += 4;
-    var grad = 'gw-v-grad-' + t.thema.name;
-    teile.push('<defs><linearGradient id="' + grad + '">' + t.info.farben.map(function(f, i) { return '<stop offset="' + (t.info.farben.length > 1 ? i / (t.info.farben.length - 1) : 0) + '" stop-color="' + f + '"/>'; }).join('') + '</linearGradient></defs>');
-    teile.push('<rect x="' + x + '" y="' + y + '" width="' + b + '" height="3.6" fill="url(#' + grad + ')" stroke="#bebebe" stroke-width="0.2"/>');
-    var bereich = t.info.bereich;
-    for (var i = 0; i <= 4; i++) {
-      var wv = bereich[0] + (bereich[1] - bereich[0]) * i / 4, xt = x + b * i / 4;
-      teile.push('<line x1="' + xt + '" y1="' + (y + 3.6) + '" x2="' + xt + '" y2="' + (y + 4.6) + '" stroke="#999" stroke-width="0.2"/>');
-      teile.push('<text x="' + xt + '" y="' + (y + 7.6) + '" font-size="2.7" fill="#464646" text-anchor="' + (i === 0 ? 'start' : i === 4 ? 'end' : 'middle') + '">' + tausender(Math.round(wv)) + '</text>');
+    var grad = 'gw-v-grad-' + t.thema.name, sk = t.skala, stops = t.info.farben.map(function(f, i) { return { o: t.info.farben.length > 1 ? i / (t.info.farben.length - 1) : 0, f: f }; });
+    if (interaktiv) {
+      // Zahlenstrahl von 0 (bzw. Minimum) bis Maximum; Farbverlauf zwischen den beiden Pfeilen (Min/Max der Farbskala)
+      var voll = t.voll, an = function(v) { return x + b * (v - voll[0]) / (voll[1] - voll[0]); };
+      var o0 = (sk[0] - voll[0]) / (voll[1] - voll[0]), o1 = (sk[1] - voll[0]) / (voll[1] - voll[0]);
+      teile.push('<defs><linearGradient id="' + grad + '" class="gw-v-grad">' + stops.map(function(st) { return '<stop offset="' + (o0 + (o1 - o0) * st.o).toFixed(4) + '" stop-color="' + st.f + '" data-o="' + st.o + '"/>'; }).join('') + '</linearGradient></defs>');
+      teile.push('<rect class="gw-v-balken" x="' + x + '" y="' + y + '" width="' + b + '" height="3.6" fill="url(#' + grad + ')" stroke="#bebebe" stroke-width="0.2"/>');
+      teile.push('<text x="' + x + '" y="' + (y - 0.6) + '" font-size="2.2" fill="#8a8a8a" class="gw-v-ende">' + tausender(Math.round(voll[0])) + '</text><text x="' + (x + b) + '" y="' + (y - 0.6) + '" font-size="2.2" fill="#8a8a8a" text-anchor="end" class="gw-v-ende">' + tausender(Math.round(voll[1])) + '</text>');
+      ['lo', 'hi'].forEach(function(g, i) {
+        var xg = an(sk[i]);
+        teile.push('<g class="gw-v-griff" data-g="' + g + '" tabindex="0" role="slider" aria-label="' + (i ? 'Höchstwert' : 'Tiefstwert') + ' der Farbskala" aria-valuenow="' + sk[i] + '" transform="translate(' + xg.toFixed(2) + ' 0)" style="cursor:ew-resize">'
+          + '<rect x="-3" y="' + (y + 3.2) + '" width="6" height="6" fill="transparent"/><path d="M0 ' + (y + 3.8) + ' l-2 3.2 h4 z" fill="#2f6f5e"/>'
+          + '<text x="0" y="' + (y + 10.2) + '" font-size="2.7" fill="#1e1e1e" font-weight="700" text-anchor="middle" class="gw-v-gwert">' + tausender(Math.round(sk[i])) + '</text></g>');
+      });
+      teile.push('<text x="' + x + '" y="' + (y + 13.6) + '" font-size="2.3" fill="#52514e">Pfeile verschieben: Farbskala anpassen · <tspan class="gw-v-auto" fill="#2f6f5e" text-decoration="underline" style="cursor:pointer">zurücksetzen</tspan></text>');
+      y += 4;
+    } else {
+      teile.push('<defs><linearGradient id="' + grad + '">' + stops.map(function(st) { return '<stop offset="' + st.o + '" stop-color="' + st.f + '"/>'; }).join('') + '</linearGradient></defs>');
+      teile.push('<rect x="' + x + '" y="' + y + '" width="' + b + '" height="3.6" fill="url(#' + grad + ')" stroke="#bebebe" stroke-width="0.2"/>');
+      skalaMarken(sk[0], sk[1]).forEach(function(mk, i, l) {
+        var xt = x + b * mk.f, letzte = i === l.length - 1;
+        teile.push('<line x1="' + xt + '" y1="' + (y + 3.6) + '" x2="' + xt + '" y2="' + (y + 4.6) + '" stroke="#999" stroke-width="0.2"/>');
+        teile.push('<text x="' + xt + '" y="' + (y + 7.6) + '" font-size="2.7" fill="#464646" text-anchor="' + (i === 0 ? 'start' : letzte ? 'end' : 'middle') + '">' + (i === 0 && sk[0] > t.voll[0] ? '≤' : letzte && sk[1] < t.voll[1] ? '≥' : '') + tausender(Math.round(mk.v)) + '</text>');
+      });
     }
     y += 12;
     if (t.thema.experimentell) {
@@ -4844,7 +5007,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     teile.push('<text x="' + x + '" y="' + (y + 3) + '" font-size="' + fs + '" font-weight="700" fill="#1e1e1e">Nr. Ort</text>');
     if (zwei) {
       teile.push('<text x="' + (x + b - 16) + '" y="' + (y + 3) + '" font-size="' + fs + '" font-weight="700" fill="#1e1e1e" text-anchor="end">seit 1.1.</text>');
-      teile.push('<text x="' + (x + b) + '" y="' + (y + 3) + '" font-size="' + fs + '" font-weight="700" fill="#1e1e1e" text-anchor="end">28 Tage</text>');
+      teile.push('<text class="gw-v-k2" x="' + (x + b) + '" y="' + (y + 3) + '" font-size="' + fs + '" font-weight="700" fill="#1e1e1e" text-anchor="end">28 Tage</text>');
     } else {
       teile.push('<text x="' + (x + b) + '" y="' + (y + 3) + '" font-size="' + fs + '" font-weight="700" fill="#1e1e1e" text-anchor="end">Wert</text>');
     }
@@ -4857,7 +5020,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       teile.push('<g class="gw-v-zeile" data-i="' + i + '"><text x="' + x + '" y="' + (yz + zeileH * 0.78) + '" font-size="' + fs + '" fill="#1e1e1e">' + (i + 1) + '. ' + esc(o.name.length > nameMax ? o.name.slice(0, nameMax - 1) + '…' : o.name) + '</text>');
       if (zwei) {
         teile.push('<text x="' + (x + b - 16) + '" y="' + (yz + zeileH * 0.78) + '" font-size="' + fs + '" fill="#1e1e1e" text-anchor="end">' + esc(ohneEinheit(t.werte[i], t.info)) + '</text>');
-        teile.push('<text x="' + (x + b) + '" y="' + (yz + zeileH * 0.78) + '" font-size="' + fs + '" fill="#1e1e1e" text-anchor="end">' + esc(ohneEinheit(t.werte2.werte[i], t.werte2.info)) + '</text></g>');
+        teile.push('<text class="gw-v-w2" data-i="' + i + '" x="' + (x + b) + '" y="' + (yz + zeileH * 0.78) + '" font-size="' + fs + '" fill="#1e1e1e" text-anchor="end">' + esc(ohneEinheit(t.werte2.werte[i], t.werte2.info)) + '</text></g>');
       } else {
         teile.push('<text x="' + (x + b) + '" y="' + (yz + zeileH * 0.78) + '" font-size="' + fs + '" fill="#1e1e1e" text-anchor="end">' + esc(wertText(t.werte[i], t.info)) + '</text></g>');
       }
@@ -4919,11 +5082,11 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     doc.addImage(farbBalkenPng(t.info.farben, 400, 12), 'PNG', x, y, b, 3.6);
     doc.setDrawColor(190); doc.setLineWidth(0.2); doc.rect(x, y, b, 3.6);
     doc.setFontSize(7.5); doc.setTextColor(70);
-    for (var li = 0; li <= 4; li++) {
-      var lw = t.info.bereich[0] + (t.info.bereich[1] - t.info.bereich[0]) * li / 4;
-      doc.line(x + b * li / 4, y + 3.6, x + b * li / 4, y + 4.6);
-      doc.text(tausender(Math.round(lw)), x + b * li / 4, y + 8, { align: li === 0 ? 'left' : li === 4 ? 'right' : 'center' });
-    }
+    skalaMarken(t.skala[0], t.skala[1]).forEach(function(mk, li, l) {
+      var letzte = li === l.length - 1;
+      doc.line(x + b * mk.f, y + 3.6, x + b * mk.f, y + 4.6);
+      doc.text((li === 0 && t.skala[0] > t.voll[0] ? '<' : letzte && t.skala[1] < t.voll[1] ? '>' : '') + tausender(Math.round(mk.v)), x + b * mk.f, y + 8, { align: li === 0 ? 'left' : letzte ? 'right' : 'center' });
+    });
     y += 12;
     if (t.thema.experimentell) {
       doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(178, 59, 0);
@@ -5020,11 +5183,28 @@ GWDatenexplorer.kurve = function(el, x, daten) {
         for (var w = 1; w <= wocheBis; w++) {
           var g = (d.werte || {})[selectedYear + ' ' + w];
           if (!g || !g.m) continue;
-          punkte.push({ w: w, gebiet: mittel(eigeneOrte.map(function(o) { return gitterWert(g, o.lon, o.lat); })), schweiz: gitterMittel(g) });
+          var f = th.faktor || 1, gm = mittel(eigeneOrte.map(function(o) { return gitterWert(g, o.lon, o.lat); })), sm = gitterMittel(g);
+          punkte.push({ w: w, gebiet: gm === null ? null : gm * f, schweiz: sm === null ? null : sm * f });
         }
-        return { thema: th, info: layerLegenden[th.info || th.name], punkte: punkte };
+        var info = layerLegenden[th.info || th.name];
+        if (th.einheit) info = Object.assign({}, info, { einheit: th.einheit });
+        return { thema: th, info: info, punkte: punkte };
       }, function() { return null; });
-    })).then(function(liste) {
+    }).concat([
+      // Wasserbilanz je Woche: Niederschlag 7 Tage minus Verdunstung ET0 7 Tage
+      Promise.all([ladeEbeneP('niederschlag_7'), ladeEbeneP('et0_7')]).then(function(r) {
+        var punkte = [];
+        for (var w = 1; w <= wocheBis; w++) {
+          var k = selectedYear + ' ' + w, n = (r[0].werte || {})[k], e = (r[1].werte || {})[k];
+          if (!n || !e || !n.m || !e.m) continue;
+          var gb = mittel(eigeneOrte.map(function(o) { var a = gitterWert(n, o.lon, o.lat), b = gitterWert(e, o.lon, o.lat); return a === null || b === null ? null : a - b; }));
+          var sn = gitterMittel(n), se = gitterMittel(e);
+          punkte.push({ w: w, gebiet: gb, schweiz: sn === null || se === null ? null : sn - se });
+        }
+        return { bilanz: punkte };
+      }, function() { return null; })
+    ])).then(function(liste) {
+      var bilanz = (liste.pop() || {}).bilanz || [];
       // Gemessenes Graswachstum: naechster Messstandort mit Daten im Jahr
       var koord = messstandortKoordinaten(), mitte = { lon: mittel(eigeneOrte.map(function(o) { return o.lon; })), lat: mittel(eigeneOrte.map(function(o) { return o.lat; })) };
       var best = null;
@@ -5045,7 +5225,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
         standort: best, nah: best ? spur(best.traceIdx) : [], schweiz: alle !== null ? spur(alle) : [],
         referenz: spur(standardKurveTraceIdx).filter(function(p) { return p[0] <= 52; })
       };
-      return { themen: liste.filter(Boolean), messung: messung };
+      return { themen: liste.filter(Boolean), messung: messung, bilanz: bilanz };
     });
   }
   function netteSchrittweite(roh) {
@@ -5109,6 +5289,37 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     var p = Math.round((a / b - 1) * 100);
     return p === 0 ? 'wie das Schweizer Mittel' : (Math.abs(p) + ' % ' + (p > 0 ? 'über' : 'unter') + ' dem Schweizer Mittel');
   }
+  var VOLLBILD = '<button type="button" class="gw-rb-gross" aria-label="Diagramm im Vollbild zeigen" title="Vollbild">⤢</button>';
+  // Wasserbilanz je Woche (Niederschlag minus Verdunstung ET0, je 7 Tage): Balken fuer Ihre Orte
+  // (blau Ueberschuss, orange Defizit), gestrichelt das Mittel der Schweiz
+  function rueckblickBalken(id, punkte) {
+    var B = 640, H = 250, l = 52, r = 78, o = 26, u = 34, pb = B - l - r, ph = H - o - u;
+    var m = 1;
+    punkte.forEach(function(p) { [p.gebiet, p.schweiz].forEach(function(v) { if (v !== null && Math.abs(v) > m) m = Math.abs(v); }); });
+    var st = netteSchrittweite(m / 2); m = Math.ceil(m / st) * st;
+    var X = function(w) { return l + (w - 1) / 51 * pb; }, Y = function(v) { return o + ph / 2 - v / m * ph / 2; }, bw = pb / 52 * 0.7;
+    var t = ['<svg class="gw-rb-svg" viewBox="0 0 ' + B + ' ' + H + '" role="img" aria-label="Wasserbilanz je Woche: Niederschlag minus Verdunstung">'];
+    for (var v = -m; v <= m + 1e-9; v += st) {
+      t.push('<line x1="' + l + '" x2="' + (l + pb) + '" y1="' + Y(v).toFixed(1) + '" y2="' + Y(v).toFixed(1) + '" stroke="' + (Math.abs(v) < 1e-9 ? '#7a7a7a' : '#e6e6e6') + '" stroke-width="1"/>');
+      t.push('<text x="' + (l - 6) + '" y="' + (Y(v) + 4).toFixed(1) + '" font-size="11" fill="#52514e" text-anchor="end">' + (v > 0 ? '+' : '') + tausender(Math.round(v)) + '</text>');
+    }
+    t.push('<text x="' + (l - 44) + '" y="11" font-size="11" fill="#52514e">mm/Woche</text>');
+    for (var w = 1; w <= 52; w += 4) t.push('<text x="' + X(w).toFixed(1) + '" y="' + (o + ph + 16) + '" font-size="11" fill="#52514e" text-anchor="middle">' + w + '</text>');
+    t.push('<text x="' + (l + pb / 2) + '" y="' + (H - 2) + '" font-size="11" fill="#52514e" text-anchor="middle">Kalenderwoche</text>');
+    punkte.forEach(function(p) {
+      if (p.gebiet === null) return;
+      var y0 = Y(0), y1 = Y(p.gebiet), pos = p.gebiet >= 0;
+      t.push('<rect x="' + (X(p.w) - bw / 2).toFixed(1) + '" y="' + Math.min(y0, y1).toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + Math.max(1, Math.abs(y1 - y0)).toFixed(1) + '" rx="2" fill="' + (pos ? '#2a78d6' : '#d97706') + '"><title>KW ' + p.w + ': ' + (pos ? '+' : '') + Math.round(p.gebiet) + ' mm (Ihre Orte)' + (p.schweiz !== null ? ', Schweiz ' + (p.schweiz >= 0 ? '+' : '') + Math.round(p.schweiz) + ' mm' : '') + '</title></rect>');
+    });
+    var d = '', vorher = null;
+    punkte.forEach(function(p) { if (p.schweiz === null) { vorher = null; return; } d += (vorher === null ? 'M' : 'L') + X(p.w).toFixed(1) + ' ' + Y(p.schweiz).toFixed(1); vorher = p.w; });
+    t.push('<path d="' + d + '" fill="none" stroke="#52514e" stroke-width="1.5" stroke-dasharray="5 4"/>');
+    t.push('</svg>');
+    var legende = '<div class="gw-rb-legende"><span><i style="border-top:8px solid #2a78d6;width:12px"></i>Ihre Orte: Überschuss</span><span><i style="border-top:8px solid #d97706;width:12px"></i>Ihre Orte: Defizit</span><span><i style="border-top:2px dashed #52514e"></i>Schweiz (Mittel)</span></div>';
+    var tabelle = '<details class="gw-rb-tabelle"><summary>Tabelle</summary><table><thead><tr><th>KW</th><th>Ihre Orte (mm)</th><th>Schweiz (mm)</th></tr></thead><tbody>' +
+      punkte.map(function(p) { return '<tr><td>' + p.w + '</td><td>' + (p.gebiet === null ? '–' : Math.round(p.gebiet)) + '</td><td>' + (p.schweiz === null ? '–' : Math.round(p.schweiz)) + '</td></tr>'; }).join('') + '</tbody></table></details>';
+    return legende + '<div class="gw-rb-fig" data-id="' + id + '">' + t.join('') + '</div>' + tabelle;
+  }
   function jahresrueckblickHtml(rb) {
     var diagramme = [], kacheln = [], daten = {};
     rb.themen.forEach(function(t, i) {
@@ -5119,7 +5330,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       ];
       var d = rueckblickDiagramm('rb' + i, serien, ein);
       daten['rb' + i] = d.daten;
-      diagramme.push('<figure class="gw-rb-karte"><figcaption>' + esc(t.thema.titel) + (t.thema.experimentell ? ' <small>(Modellrechnung, experimentell)</small>' : '') + '</figcaption>' + d.html + '</figure>');
+      diagramme.push('<figure class="gw-rb-karte"><figcaption><span>' + esc(t.thema.titel) + (t.thema.experimentell ? ' <small>(Modellrechnung, experimentell)</small>' : '') + '</span>' + VOLLBILD + '</figcaption>' + d.html + '</figure>');
       var letzte = t.punkte.filter(function(p) { return p.gebiet !== null; }).pop();
       if (!letzte) return;
       var zusatz = '';
@@ -5133,6 +5344,12 @@ GWDatenexplorer.kurve = function(el, x, daten) {
           esc(prozentText(letzte.gebiet, letzte.schweiz)) + (letzte.schweiz !== null ? ' (' + tausender(Math.round(letzte.schweiz)) + ' ' + esc(ein) + ')' : '') + '</em></div>');
       }
     });
+    if (rb.bilanz && rb.bilanz.length) {
+      diagramme.push('<figure class="gw-rb-karte"><figcaption><span>Wasserbilanz je Woche: Niederschlag minus Verdunstung</span>' + VOLLBILD + '</figcaption>' + rueckblickBalken('rbw', rb.bilanz) + '</figure>');
+      var ab = rb.bilanz.filter(function(p) { return p.w >= 14 && p.gebiet !== null; }), summe = ab.reduce(function(a, p) { return a + p.gebiet; }, 0);
+      var defizit = ab.filter(function(p) { return p.gebiet < 0; }).length;
+      if (ab.length) kacheln.push('<div class="gw-rb-kachel"><span>Wasserbilanz seit April (KW 14–' + ab[ab.length - 1].w + ')</span><b>' + (summe >= 0 ? '+' : '–') + tausender(Math.round(Math.abs(summe))) + ' mm</b><em>' + defizit + ' von ' + ab.length + ' Wochen mit mehr Verdunstung als Regen</em></div>');
+    }
     var m = rb.messung;
     if (m.standort && m.nah.length) {
       var serien = [
@@ -5142,7 +5359,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       ];
       var d = rueckblickDiagramm('rbm', serien, 'kg TS/ha/Tag');
       daten.rbm = d.daten;
-      diagramme.push('<figure class="gw-rb-karte"><figcaption>Gemessenes Graswachstum ' + selectedYear + '</figcaption>' + d.html + '</figure>');
+      diagramme.push('<figure class="gw-rb-karte"><figcaption><span>Gemessenes Graswachstum ' + selectedYear + '</span>' + VOLLBILD + '</figcaption>' + d.html + '</figure>');
       var spitze = m.nah.reduce(function(a, p) { return !a || p[1] > a[1] ? p : a; }, null);
       kacheln.push('<div class="gw-rb-kachel"><span>Nächster Messstandort</span><b>' + esc(m.standort.name) + '</b><em>' + Math.round(m.standort.km) + ' km vom Mittelpunkt Ihrer Orte · Spitze ' + Math.round(spitze[1]) + ' kg TS/ha/Tag in KW ' + spitze[0] + '</em></div>');
     }
@@ -5151,6 +5368,141 @@ GWDatenexplorer.kurve = function(el, x, daten) {
         '<p class="gw-rb-hinweis">«Ihre Orte» = Mittel der Werte an den erfassten Orten; «Schweiz» = Mittel aller 1-km-Gitterzellen der Schweiz. Gemessenes Graswachstum: Messnetz der AGFF.</p></section>',
       daten: daten
     };
+  }
+
+
+  // Laufzeit im HTML-Bericht: Farbskala per Pfeil verschieben, Niederschlag-Zeitraum umschalten,
+  // Diagramme im Vollbild. Wird als Quelltext in den Bericht kopiert (berichtLaufzeit.toString()).
+  function berichtLaufzeit() {
+    var G = window.GWB, NS = 'http://www.w3.org/1999/xlink';
+    function dek(e) {
+      if (!e) return null;
+      var bin = atob(e.b), u = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+      var a = new Int16Array(u.buffer), v = new Float32Array(a.length);
+      for (var k = 0; k < a.length; k++) v[k] = a[k] === -32768 ? NaN : a[k] / 10;
+      return { x0: e.x0, x1: e.x1, y0: e.y0, y1: e.y1, ncol: e.ncol, nrow: e.nrow, v: v };
+    }
+    function wert(z, lon, lat) {
+      var c = Math.floor((lon - z.x0) / (z.x1 - z.x0) * z.ncol), r = Math.floor((z.y1 - lat) / (z.y1 - z.y0) * z.nrow);
+      if (c < 0 || c >= z.ncol || r < 0 || r >= z.nrow) return null;
+      var w = z.v[r * z.ncol + c]; return isNaN(w) ? null : w;
+    }
+    function schritt(roh) { var e = Math.pow(10, Math.floor(Math.log10(Math.max(roh, 1e-9)))), f = roh / e; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * e; }
+    function auto(z, aus, voll) {
+      var l = [];
+      for (var r = 0; r < z.nrow; r++) for (var c = 0; c < z.ncol; c++) {
+        var lon = z.x0 + (c + 0.5) * (z.x1 - z.x0) / z.ncol, lat = z.y1 - (r + 0.5) * (z.y1 - z.y0) / z.nrow, w = z.v[r * z.ncol + c];
+        if (!isNaN(w) && lon >= aus.xr[0] && lon <= aus.xr[1] && lat >= aus.yr[0] && lat <= aus.yr[1]) l.push(w);
+      }
+      if (l.length < 4) return voll.slice();
+      l.sort(function(a, b) { return a - b; });
+      var lo = l[Math.floor(l.length * 0.05)], hi = l[Math.ceil(l.length * 0.95) - 1], st = schritt(Math.max(hi - lo, (voll[1] - voll[0]) * 0.04) / 5);
+      lo = Math.max(Math.min(0, voll[0]), Math.floor(lo / st) * st); hi = Math.ceil(hi / st) * st;
+      return [lo, hi > lo ? hi : lo + st];
+    }
+    function rgb(h) { h = h.replace('#', ''); return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]; }
+    function bild(z, lo, hi, farben) {
+      var c = document.createElement('canvas'); c.width = z.ncol; c.height = z.nrow;
+      var ctx = c.getContext('2d'), img = ctx.createImageData(z.ncol, z.nrow), f = farben.map(rgb), n = f.length - 1;
+      for (var i = 0; i < z.v.length; i++) {
+        var w = z.v[i]; if (isNaN(w)) continue;
+        var a = Math.max(0, Math.min(1, (w - lo) / ((hi - lo) || 1))) * n, k = Math.min(n - 1, Math.floor(a)), t = a - k, p = f[k], q = f[Math.min(n, k + 1)];
+        img.data[i * 4] = p[0] + (q[0] - p[0]) * t; img.data[i * 4 + 1] = p[1] + (q[1] - p[1]) * t; img.data[i * 4 + 2] = p[2] + (q[2] - p[2]) * t; img.data[i * 4 + 3] = 191;
+      }
+      ctx.putImageData(img, 0, 0); return c.toDataURL('image/png');
+    }
+    function zahl(v) { var r = Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 10) / 10; return String(r).replace(/\B(?=(\d{3})+(?!\d))/g, '’'); }
+    G.seiten.forEach(function(S, i) {
+      var sec = document.querySelector('main section[data-t="' + i + '"]'); if (!sec || !S.z) return;
+      var svg = sec.querySelector('svg'), img = svg.querySelector('.gw-v-ebene'), balken = svg.querySelector('.gw-v-balken');
+      var bx = +balken.getAttribute('x'), bw = +balken.getAttribute('width');
+      var z = dek(S.z), lage = { sk: S.skala.slice(), auto: S.auto.slice() }, rf = 0;
+      function zeichnen() {
+        if (rf) return;
+        rf = setTimeout(function() {
+          rf = 0;
+          var u = bild(z, lage.sk[0], lage.sk[1], S.farben); img.setAttribute('href', u); img.setAttributeNS(NS, 'xlink:href', u);
+          var o0 = (lage.sk[0] - S.voll[0]) / (S.voll[1] - S.voll[0]), o1 = (lage.sk[1] - S.voll[0]) / (S.voll[1] - S.voll[0]);
+          svg.querySelectorAll('.gw-v-grad stop').forEach(function(st) { st.setAttribute('offset', (o0 + (o1 - o0) * +st.getAttribute('data-o')).toFixed(4)); });
+          ['lo', 'hi'].forEach(function(g, k) {
+            var el = svg.querySelector('.gw-v-griff[data-g="' + g + '"]');
+            el.setAttribute('transform', 'translate(' + (bx + bw * (lage.sk[k] - S.voll[0]) / (S.voll[1] - S.voll[0])).toFixed(2) + ' 0)');
+            el.setAttribute('aria-valuenow', lage.sk[k]); el.querySelector('.gw-v-gwert').textContent = zahl(lage.sk[k]);
+          });
+        }, 30);
+      }
+      var st = schritt((S.voll[1] - S.voll[0]) / 100);
+      function setzen(k, v) {
+        v = Math.round(v / st) * st;
+        if (k === 0) lage.sk[0] = Math.max(S.voll[0], Math.min(v, lage.sk[1] - st)); else lage.sk[1] = Math.min(S.voll[1], Math.max(v, lage.sk[0] + st));
+        zeichnen();
+      }
+      svg.querySelectorAll('.gw-v-griff').forEach(function(el) {
+        var k = el.getAttribute('data-g') === 'lo' ? 0 : 1;
+        el.addEventListener('pointerdown', function(e) {
+          e.preventDefault(); el.setPointerCapture(e.pointerId);
+          function mv(ev) { var p = svg.createSVGPoint(); p.x = ev.clientX; p.y = ev.clientY; p = p.matrixTransform(svg.getScreenCTM().inverse()); setzen(k, S.voll[0] + (p.x - bx) / bw * (S.voll[1] - S.voll[0])); }
+          function ende() { el.removeEventListener('pointermove', mv); el.removeEventListener('pointerup', ende); el.removeEventListener('pointercancel', ende); }
+          el.addEventListener('pointermove', mv); el.addEventListener('pointerup', ende); el.addEventListener('pointercancel', ende);
+        });
+        el.addEventListener('keydown', function(e) {
+          var d = e.key === 'ArrowLeft' || e.key === 'ArrowDown' ? -1 : e.key === 'ArrowRight' || e.key === 'ArrowUp' ? 1 : 0;
+          if (d) { e.preventDefault(); setzen(k, lage.sk[k] + d * st * (e.shiftKey ? 10 : 2)); }
+        });
+      });
+      var zur = svg.querySelector('.gw-v-auto');
+      if (zur) zur.addEventListener('click', function() { lage.sk = lage.auto.slice(); zeichnen(); });
+      zeichnen();
+      // Niederschlag: Zeitraum
+      var steuer = sec.querySelector('.gw-v-steuer'); if (!steuer) return;
+      var kum = z, z28 = dek(S.z28), wochen = {}, titel = svg.querySelector('.gw-v-titel'), k2 = svg.querySelector('.gw-v-k2');
+      Object.keys(S.wochen || {}).forEach(function(w) { wochen[w] = S.wochen[w]; });
+      var von = steuer.querySelector('[name=von]'), bis = steuer.querySelector('[name=bis]');
+      function setzeZ(nz, t, kopf, werte) {
+        z = nz; lage.auto = auto(z, G.aus, S.voll); lage.sk = lage.auto.slice(); zeichnen();
+        titel.textContent = t;
+        if (k2 && kopf) {
+          k2.textContent = kopf;
+          svg.querySelectorAll('.gw-v-w2').forEach(function(el) { var v = werte[+el.getAttribute('data-i')]; el.textContent = v === null ? '–' : zahl(v); });
+          if (window.D && S.tip > -1) { D.themen[S.tip].titel = kopf === '28 Tage' ? 'Niederschlag letzte 28 Tage' : 'Niederschlag ' + kopf; D.themen[S.tip].werte = werte.map(function(v) { return v === null ? '–' : zahl(v) + ' mm'; }); }
+        }
+      }
+      function anwenden() {
+        var art = steuer.querySelector('[aria-pressed=true]').getAttribute('data-z');
+        steuer.querySelector('.gw-v-frei').hidden = art !== 'frei';
+        if (art === 'kum') setzeZ(kum, S.titel, '28 Tage', S.werte28);
+        else if (art === '28') setzeZ(z28, 'Niederschlag letzte 28 Tage (bis ' + S.stand + ')', '28 Tage', S.werte28);
+        else {
+          var a = +von.value, b = +bis.value;
+          if (b <= a) { bis.value = String(a + 1); b = a + 1; }
+          var za = a > 0 ? dek(wochen[a]) : null, zb = dek(wochen[b]);
+          if (!zb) return;
+          var d = { x0: zb.x0, x1: zb.x1, y0: zb.y0, y1: zb.y1, ncol: zb.ncol, nrow: zb.nrow, v: new Float32Array(zb.v.length) };
+          for (var i = 0; i < d.v.length; i++) d.v[i] = za ? zb.v[i] - za.v[i] : zb.v[i];
+          var lbl = (a > 0 ? S.wochenStand[a] : '1.1.') + '–' + S.wochenStand[b];
+          setzeZ(d, 'Niederschlag ' + lbl, (a > 0 ? 'KW ' + a : '1.1.') + '–' + b, G.orte.map(function(o) { return wert(d, o.lon, o.lat); }));
+        }
+      }
+      steuer.querySelectorAll('[data-z]').forEach(function(b) {
+        b.addEventListener('click', function() { steuer.querySelectorAll('[data-z]').forEach(function(x) { x.setAttribute('aria-pressed', String(x === b)); }); anwenden(); });
+      });
+      von.addEventListener('change', anwenden); bis.addEventListener('change', anwenden);
+    });
+    // Vollbild fuer die Diagramme des Jahresrueckblicks
+    var voll = null, platz = null;
+    function zu() { if (!voll) return; platz.parentNode.replaceChild(voll.querySelector('figure'), platz); voll.remove(); voll = null; document.body.style.overflow = ''; }
+    document.querySelectorAll('.gw-rb-gross').forEach(function(b) {
+      b.addEventListener('click', function() {
+        var fig = b.closest('figure'); platz = document.createComment('vollbild');
+        fig.parentNode.replaceChild(platz, fig);
+        voll = document.createElement('div'); voll.className = 'gw-voll'; voll.setAttribute('role', 'dialog'); voll.setAttribute('aria-modal', 'true'); voll.setAttribute('aria-label', 'Diagramm im Vollbild');
+        voll.innerHTML = '<button type="button" class="gw-voll-zu" aria-label="Vollbild schliessen">×</button>';
+        voll.appendChild(fig); document.body.appendChild(voll); document.body.style.overflow = 'hidden';
+        voll.querySelector('.gw-voll-zu').addEventListener('click', zu); voll.querySelector('.gw-voll-zu').focus();
+      });
+    });
+    document.addEventListener('keydown', function(e) { if (e.key === 'Escape') zu(); });
   }
 
   function veranstaltungHtml(seiten, opt, rueckblick) {
@@ -5163,12 +5515,27 @@ GWDatenexplorer.kurve = function(el, x, daten) {
         return l;
       }, [])
     };
+    var tipIdx = 0, gwb = { orte: eigeneOrte.map(function(o) { return { lon: o.lon, lat: o.lat }; }), aus: seiten[0] && seiten[0].aus, seiten: [] };
+    seiten.forEach(function(s) {
+      var t = s.t, e = { z: zKodieren(t.z), skala: t.skala, auto: t.auto, voll: t.voll, farben: t.info.farben, titel: t.thema.titel + ' ' + selectedYear, tip: -1 };
+      tipIdx++;
+      if (t.werte2) { e.tip = tipIdx; tipIdx++; e.werte28 = t.werte2.werte; e.z28 = zKodieren(t.z28); e.stand = t.stand; e.wochen = {}; e.wochenStand = t.wochenStand;
+        Object.keys(t.wochen || {}).forEach(function(w) { e.wochen[w] = zKodieren(t.wochen[w]); }); }
+      gwb.seiten.push(e);
+    });
     var tabs = seiten.map(function(s, i) { return '<button type="button" data-t="' + i + '"' + (i === 0 ? ' class="an"' : '') + '>' + esc(s.t.thema.titel) + '</button>'; }).join('') +
       (rb ? '<button type="button" data-t="rb">Jahresrückblick ' + selectedYear + '</button>' : '');
     var bloecke = seiten.map(function(s, i) {
-      return '<section data-t="' + i + '"' + (i === 0 ? '' : ' hidden') + '>' + s.svg + '<p class="link"><a href="' + esc(s.link) + '" target="_blank" rel="noopener">Diese Karte im Datenexplorer öffnen</a></p></section>';
+      var steuer = '';
+      if (s.t.wochen && s.t.z28) {
+        var wl = Object.keys(s.t.wochen).map(Number).sort(function(a, b) { return a - b; });
+        var opts = function(sel) { return wl.map(function(w) { return '<option value="' + w + '"' + (w === sel ? ' selected' : '') + '>KW ' + w + ' (' + esc(s.t.wochenStand[w] || '') + ')</option>'; }).join(''); };
+        steuer = '<div class="gw-v-steuer" role="group" aria-label="Zeitraum"><span>Zeitraum:</span><button type="button" data-z="kum" aria-pressed="true">seit 1. Januar</button><button type="button" data-z="28" aria-pressed="false">letzte 28 Tage</button><button type="button" data-z="frei" aria-pressed="false">frei wählen</button>'
+          + '<span class="gw-v-frei" hidden><label>von <select name="von"><option value="0">1. Januar</option>' + opts(wl[Math.max(0, wl.length - 9)]) + '</select></label> <label>bis <select name="bis">' + opts(wl[wl.length - 1]) + '</select></label></span></div>';
+      }
+      return '<section data-t="' + i + '"' + (i === 0 ? '' : ' hidden') + '>' + steuer + s.svg + '<p class="link"><a href="' + esc(s.link) + '" target="_blank" rel="noopener">Diese Karte im Datenexplorer öffnen</a></p></section>';
     }).join('');
-    var skript = 'var D=' + JSON.stringify(daten).replace(/</g, '\\u003c') + ';var R=' + JSON.stringify(rb ? rb.daten : {}).replace(/</g, '\\u003c') + ';' +
+    var skript = 'var GWB=' + JSON.stringify(gwb).replace(/</g, '\\u003c') + ';window.GWB=GWB;(' + berichtLaufzeit.toString() + ')();' + 'var D=' + JSON.stringify(daten).replace(/</g, '\\u003c') + ';var R=' + JSON.stringify(rb ? rb.daten : {}).replace(/</g, '\\u003c') + ';' +
       'var tip=document.getElementById("tip");' +
       'document.querySelectorAll("nav button").forEach(function(b){b.addEventListener("click",function(){' +
       'document.querySelectorAll("nav button").forEach(function(x){x.classList.toggle("an",x===b)});' +
@@ -5210,6 +5577,12 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       '.gw-rb-svg{width:100%;height:auto;display:block;touch-action:pan-y}.gw-rb-tabelle summary{cursor:pointer;font-size:12.5px;color:#2f6f5e;margin-top:4px}' +
       '.gw-rb-tabelle table{border-collapse:collapse;font-size:12px;margin-top:6px}.gw-rb-tabelle th,.gw-rb-tabelle td{padding:2px 8px;text-align:right;border-bottom:1px solid #eee}' +
       '.gw-rb-hinweis{font-size:12px;color:#52514e;margin-top:10px}' +
+      '.gw-v-steuer{display:flex;flex-wrap:wrap;gap:6px;align-items:center;justify-content:center;margin:0 auto 8px;font-size:14px}.gw-v-steuer button{font:inherit;padding:7px 12px;border:1px solid #9bb5a8;border-radius:16px;background:#fff;cursor:pointer;min-height:36px}' +
+      '.gw-v-steuer button[aria-pressed=true]{background:#2f6f5e;color:#fff;border-color:#2f6f5e}.gw-v-steuer select{font:inherit;padding:5px 6px;border-radius:6px;border:1px solid #9bb5a8;background:#fff}' +
+      '.gw-v-griff:focus{outline:none}.gw-v-griff:focus path{fill:#c2185b}' +
+      '.gw-rb-karte figcaption{display:flex;align-items:center;gap:8px}.gw-rb-gross{margin-left:auto;font:inherit;font-size:18px;line-height:1;width:34px;height:34px;border:1px solid #c8d3cd;border-radius:8px;background:#fff;cursor:pointer}' +
+      '.gw-voll{position:fixed;inset:0;z-index:50;background:#fff;padding:16px 16px 24px;overflow:auto;display:flex;flex-direction:column;box-sizing:border-box}.gw-voll *{box-sizing:border-box}.gw-voll figure{margin:0 auto;width:100%;max-width:1400px;box-shadow:none}.gw-voll .gw-rb-gross{display:none}' +
+      '.gw-voll .gw-rb-svg{max-height:calc(100vh - 140px)}.gw-voll-zu{position:fixed;top:10px;right:12px;z-index:51;width:44px;height:44px;font-size:28px;line-height:1;border:1px solid #c8d3cd;border-radius:50%;background:#fff;cursor:pointer}' +
       '@media (max-width:600px){header,nav,main{padding-left:10px;padding-right:10px}.gw-rb-fig{overflow-x:auto}.gw-rb-svg{min-width:560px}}' +
       '@media print{nav,.link,#tip{display:none}main section{display:block!important;page-break-after:always}section svg{box-shadow:none;max-height:none}}' +
       '</style></head><body><header><h1>' + esc(titel) + '</h1><p>Stichtag ' + esc(wocheText(seiten[0].t.woche)) + ' · erstellt am ' + heuteText() + ' · Orte antippen für die Werte aller Themen</p></header>' +
@@ -5228,7 +5601,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     var weiter = function() { fortschritt(++schritt, schritte); };
     return Promise.all([ladeBibliothek('qrcode'), opt.formate.indexOf('pdf') !== -1 ? ladeBibliothek('jspdf') : null,
       opt.formate.length > 1 || (opt.formate.indexOf('svg') !== -1 && themen.length > 1) ? ladeBibliothek('jszip') : null]).then(function() {
-      return Promise.all([Promise.all(themen.map(function(th) { return veranstaltungsThema(th, selectedWeek); })),
+      return Promise.all([Promise.all(themen.map(function(th) { return veranstaltungsThema(th, selectedWeek, aus, opt); })),
         opt.formate.indexOf('html') !== -1 ? jahresrueckblickDaten(selectedWeek).catch(function(e) { console.warn('Jahresrückblick:', e); return null; }) : null]);
     }).then(function(ergebnis) {
       var daten = ergebnis[0], rueckblick = ergebnis[1];
@@ -5254,7 +5627,8 @@ GWDatenexplorer.kurve = function(el, x, daten) {
               weiter();
             }
             if (opt.formate.indexOf('html') !== -1) {
-              seitenHtml.push({ t: t, link: link, svg: veranstaltungSeiteSvg(t, jpg, aus, opt, link).replace(/ width="297mm" height="210mm"/, '') });
+              var teile = { jpg: jpg, basis: k.basis.toDataURL('image/jpeg', 0.82), oben: k.oben ? k.oben.toDataURL('image/png') : null, landeskarte: k.landeskarte };
+              seitenHtml.push({ t: t, link: link, aus: aus, svg: veranstaltungSeiteSvg(t, teile, aus, opt, link, true).replace(/ width="297mm" height="210mm"/, '') });
               weiter();
             }
           });
@@ -5374,6 +5748,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     }), 'Themen');
     zeile(aV, [exportWahl('radio', 'gw-ex-v-aus', 'orte', 'um die Orte', true), exportWahl('radio', 'gw-ex-v-aus', 'aktuell', 'aktueller Ausschnitt', false),
       exportWahl('radio', 'gw-ex-v-aus', 'voll', 'ganze Schweiz', false)], 'Ausschnitt');
+    zeile(aV, [exportWahl('radio', 'gw-ex-v-skala', 'ausschnitt', 'an den Ausschnitt angepasst', true), exportWahl('radio', 'gw-ex-v-skala', 'explorer', 'wie im Datenexplorer', false)], 'Farbskala');
     zeile(aV, [exportWahl('checkbox', 'gw-ex-v-lk', 'ja', 'Landeskarte (swisstopo)', true), exportWahl('checkbox', 'gw-ex-v-namen', 'ja', 'Namen an der Karte', true),
       exportWahl('checkbox', 'gw-ex-v-mess', 'ja', 'Messstandorte', false)], 'Karte');
     zeile(aV, [exportWahl('checkbox', 'gw-ex-v-fmt', 'pdf', 'PDF', true), exportWahl('checkbox', 'gw-ex-v-fmt', 'svg', 'SVG', false),
@@ -5382,7 +5757,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       return {
         themen: gewaehlt('gw-ex-v-thema'), formate: gewaehlt('gw-ex-v-fmt'), ausschnitt: gewaehlt('gw-ex-v-aus')[0] || 'orte',
         namen: gewaehlt('gw-ex-v-namen').length > 0, messstandorte: gewaehlt('gw-ex-v-mess').length > 0, titel: titelFeld.value.trim(),
-        landeskarte: gewaehlt('gw-ex-v-lk').length > 0
+        landeskarte: gewaehlt('gw-ex-v-lk').length > 0, skala: gewaehlt('gw-ex-v-skala')[0] || 'ausschnitt'
       };
     };
     losKnopf(aV, 'Karten erstellen', function(fortschritt) { return exportVeranstaltung(veranstaltungsOpt(), fortschritt); });
