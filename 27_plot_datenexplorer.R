@@ -351,7 +351,14 @@ lade_jahresstapel <- function(variable, jr, produktcode_monat, produktcode_tag =
     teile <- c(teile, lapply(tage_dateien, rast))
   }
   if (length(teile) == 0) return(NULL)
-  rast(teile)
+  r <- rast(teile)
+  # Ist ein Monat schon konsolidiert, liegen seine Tage zusaetzlich noch als
+  # Tagesdateien vor - ohne Bereinigung zaehlten sie doppelt (Summen seit
+  # 1. Januar, Fenster, Wasserbilanz). Die Monatsdatei steht vorne und gewinnt.
+  tage <- as.Date(time(r))
+  behalten <- which(!duplicated(tage))
+  r <- r[[behalten[order(tage[behalten])]]]
+  r
 }
 
 ## Niederschlag: nur fuer Jahre mit lokal vorhandenen MeteoSchweiz-Rasterdaten.
@@ -2131,6 +2138,101 @@ speichere_ebenen_cache("niederschlag_kum", Map(function(b, w) list(bild = b, wer
 cat("Niederschlag-seit-1.-Januar-Hintergrundbilder erzeugt:", length(niederschlag_kum_bild_je_woche),
     "(aus Cache:", niederschlag_kum_aus_cache, "/ neu:", niederschlag_kum_neu, ")\n")
 
+## Vergleich mit dem Normal 1991-2020 ------------------------------------------
+## Normalwerte je Rasterzelle und Kalenderwoche aus 28_klimanormale.R (einmalig
+## gerechnet, ../geodata/klimanormale/normale_*.rds, gleiche Stichtage wie hier:
+## Montag der Woche). Zwei Ebenen, nur fuer Jahre mit Daten ab 1. Januar:
+##   niederschlag_kum_normal  Niederschlag seit 1. Januar in % des Medians 1991-2020
+##   gdd_normal               Vorsprung der Waermesumme in Tagen: wie viele Tage
+##                            spaeter (+) bzw. frueher (-) der mittlere Verlauf
+##                            1991-2020 die heutige Waermesumme erreicht
+## Fehlen die Normale (Server ohne Dateien), entfallen die beiden Ebenen.
+normale_dir <- Sys.getenv("GRASSGROWTH_NORMALE_DIR", "../geodata/klimanormale")
+lade_normale <- function(g) {
+  f <- file.path(normale_dir, paste0("normale_", g, ".rds"))
+  if (file.exists(f)) readRDS(f) else NULL
+}
+normal_passt <- function(n, r) {
+  !is.null(n) && n$raster$nrow == nrow(r) && n$raster$ncol == ncol(r) && isTRUE(all.equal(unname(n$raster$ext), unname(as.vector(ext(r)))))
+}
+niederschlag_normal_farben <- c("#543005", "#8c510a", "#bf812d", "#dfc27d", "#f5f5f5", "#80cdc1", "#35978f", "#01665e", "#003c30")
+gdd_normal_farben <- c("#2166ac", "#67a9cf", "#d1e5f0", "#f7f7f7", "#fddbc7", "#ef8a62", "#b2182b")
+gdd_normal_bereich <- c(-30, 30)
+# Tage seit dem Montag der KW 1, an dem der Median-Verlauf (Wochenwerte P50 je
+# Zelle, aufsteigend) den Wert v erreicht - linear zwischen den Wochen
+tage_bis_normal <- function(P, v) {
+  n <- nrow(P); k <- rowSums(P <= v, na.rm = TRUE)
+  lo <- pmax(k, 1); hi <- pmin(k + 1, ncol(P))
+  plo <- P[cbind(seq_len(n), lo)]; phi <- P[cbind(seq_len(n), hi)]
+  anteil <- ifelse(hi > lo & phi > plo, pmin(pmax((v - plo) / (phi - plo), 0), 1), 0)
+  ifelse(k == 0, NA, (lo - 1) * 7 + anteil * 7)
+}
+# erzeuge(jr) liefert list(raster = <kumulierter Tagesstapel ab 1.1.>, tage) oder NULL;
+# vergleich(v, normal, w, tag_seit_kw1) liefert den Vergleichswert je Zelle
+baue_normal_ebene <- function(name, normal, jahre, erzeuge, vergleich, farben, bereich) {
+  bilder <- list(); werte <- list()
+  if (is.null(normal)) return(list(bilder = bilder, werte = werte))
+  cache_alt <- lade_ebenen_cache(name)
+  for (jr in jahre) {
+    alte <- Filter(function(k) startsWith(k, paste0(jr, " ")), names(cache_alt))
+    if (jahr_aus_cache(name, jr) && length(alte) > 0) {
+      for (s in alte) { bilder[[s]] <- cache_alt[[s]]$bild; werte[[s]] <- cache_alt[[s]]$werte }
+      next
+    }
+    e <- erzeuge(jr)
+    if (is.null(e) || !normal_passt(normal, e$raster)) next
+    for (w in intersect(alle_wochen, normal$wochen)) {
+      stichtag <- montag_von_woche(jr, w)
+      if (stichtag > Sys.Date() + 1) next
+      passende <- which(e$tage <= stichtag & e$tage >= stichtag - 6)
+      if (length(passende) == 0) next
+      idx <- passende[which.max(e$tage[passende])]
+      r <- e$raster[[idx]]
+      values(r) <- vergleich(values(r)[, 1], normal, w, as.numeric(e$tage[idx] - montag_woche1_jahr(jr)))
+      ergebnis <- raster_zu_datauri(r, farben, bereich)
+      ergebnis$werte$bis <- format(e$tage[idx], "%d.%m.%Y")
+      bilder[[paste(jr, w)]] <- ergebnis$bild
+      werte[[paste(jr, w)]] <- ergebnis$werte
+    }
+  }
+  speichere_ebenen_cache(name, Map(function(b, w) list(bild = b, werte = w), bilder, werte))
+  cat("Vergleich mit dem Normal,", name, ":", length(bilder), "Wochen\n")
+  list(bilder = bilder, werte = werte)
+}
+ab_januar <- function(r) {
+  tage <- as.Date(time(r))
+  jr <- format(max(tage), "%Y")
+  im_jahr <- which(format(tage, "%Y") == jr)
+  if (length(im_jahr) == 0 || min(tage[im_jahr]) > as.Date(paste0(jr, "-01-07"))) return(NULL)
+  list(raster = r[[im_jahr]], tage = tage[im_jahr])
+}
+niederschlag_normal <- lade_normale("niederschlag_kum")
+niederschlag_kum_normal_ebene <- baue_normal_ebene(
+  "niederschlag_kum_normal", niederschlag_normal, names(niederschlag_raster_je_jahr),
+  function(jr) {
+    e <- ab_januar(niederschlag_raster_je_jahr[[jr]]); if (is.null(e)) return(NULL)
+    m <- terra::values(e$raster); maske <- is.na(m[, 1]); m[is.na(m)] <- 0
+    for (i in seq_len(ncol(m))[-1]) m[, i] <- m[, i - 1] + m[, i]
+    m[maske, ] <- NA
+    r <- rast(e$raster); values(r) <- m
+    list(raster = r, tage = e$tage)
+  },
+  function(v, n, w, tag) { p50 <- n$perzentile[, w, "p50"]; ifelse(!is.na(p50) & p50 >= 5, 100 * v / p50, NA) },
+  niederschlag_normal_farben, c(0, 200))
+gdd_normal <- lade_normale("gdd")
+gdd_normal_ebene <- baue_normal_ebene(
+  "gdd_normal", gdd_normal, names(gdd_kumuliert_je_jahr),
+  function(jr) ab_januar(gdd_kumuliert_je_jahr[[jr]]),
+  function(v, n, w, tag) {
+    P <- n$perzentile[, , "p50"]
+    d <- tage_bis_normal(P, v) - tag
+    # zu wenig Waerme fuer eine Aussage (Winter, Hochlagen)
+    d[is.na(P[, w]) | P[, w] < 30] <- NA
+    pmin(pmax(d, gdd_normal_bereich[1]), gdd_normal_bereich[2])
+  },
+  gdd_normal_farben, gdd_normal_bereich)
+normal_quelle <- "Vergleich mit 1991-2020 (MeteoSchweiz-Archiv RhiresD/TabsD, gleiche Rechnung je Jahr)"
+
 ## Optionale Hintergrund-Ebenen NICHT in die Haupt-HTML einbetten, sondern
 ## je Ebene in eine EIGENE JSON-Datei schreiben (outputs/ebenen/<name>.json) -
 ## wird clientseitig erst beim ERSTEN Auswaehlen der jeweiligen Ebene per
@@ -2220,6 +2322,8 @@ ebenen_schluessel <- list(
   wachstumspotenzial_rate = schreibe_fenster_ebenen_dateien("wachstumspotenzial_rate", wachstumspotenzial_ebenen$rate),
   wachstumspotenzial_kum = schreibe_fenster_ebenen_dateien("wachstumspotenzial_kum", wachstumspotenzial_ebenen$kum)
 )
+if (length(niederschlag_kum_normal_ebene$bilder)) ebenen_schluessel$niederschlag_kum_normal <- schreibe_ebene_datei("niederschlag_kum_normal", niederschlag_kum_normal_ebene$bilder, niederschlag_kum_normal_ebene$werte)
+if (length(gdd_normal_ebene$bilder)) ebenen_schluessel$gdd_normal <- schreibe_ebene_datei("gdd_normal", gdd_normal_ebene$bilder, gdd_normal_ebene$werte)
 cat("Ebenen-Dateien geschrieben in:", ebenen_dir, "\n")
 
 # Farbnamen -> Hex, fuer die JS-Farbverlauf-Legende (CSS linear-gradient):
@@ -2269,6 +2373,15 @@ layer_legenden <- list(
   # bereits im Label/der i-Button-Erklaerung.
   wachstumspotenzial_kum = list(label = "Potenzielles Wachstum, kumuliert", farben = farben_zu_hex(wachstumspotenzial_kum_farben), bereich = c(0, 18000), fensterSkaliert = FALSE, symbol = NULL, einheit = "kg TS/ha", quelle = wachstumspotenzial_quelle)
 )
+
+# Grobe Normalwerte fuer den Bericht im Browser (28_klimanormale.R)
+if (file.exists(file.path(normale_dir, "normale.json"))) file.copy(file.path(normale_dir, "normale.json"), file.path(ebenen_dir, "normale.json"), overwrite = TRUE)
+if (!is.null(ebenen_schluessel$niederschlag_kum_normal)) layer_legenden$niederschlag_kum_normal <- list(
+  label = "Niederschlag seit 1. Januar im Vergleich", farben = niederschlag_normal_farben, bereich = c(0, 200), fensterSkaliert = FALSE, symbol = NULL,
+  einheit = "% des Normals", quelle = paste0(normal_quelle, ". 100 % = Median, braun trockener, blau nasser."))
+if (!is.null(ebenen_schluessel$gdd_normal)) layer_legenden$gdd_normal <- list(
+  label = "Wärmesumme: Vorsprung", farben = gdd_normal_farben, bereich = gdd_normal_bereich, fensterSkaliert = FALSE, symbol = NULL,
+  einheit = "Tage", quelle = paste0(normal_quelle, ". Wachstumsgradtage (Basis 5 Grad C): rot = Tage voraus, blau = im Rückstand gegenüber dem mittleren Verlauf."))
 
 # Schnittanalyse Testgebiet (experimentell): Bilder/Werte schreibt
 # 47_ertrag_qualitaet.R einmalig nach outputs/ebenen/ (nicht naechtlich);

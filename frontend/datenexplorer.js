@@ -199,6 +199,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   // ebenenCache haelt sie danach im Speicher (kein wiederholtes Nachladen).
   var ebenenSchluessel = daten.EBENEN_SCHLUESSEL;
   var schnittanalyseGebiet = daten.SCHNITTANALYSE_GEBIET;
+  // Radios, deren Verfuegbarkeit nur aus ebenenSchluessel folgt (Schnittanalyse, Vergleich mit dem Normal)
   var schnittRadios = [];
   function istSchnittEbene(name) { return name.indexOf('schnittanalyse_') === 0; }
   var ebenenCache = {};
@@ -3216,6 +3217,18 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     radioBoden = makeLayerRadio('boden', layerLegenden.boden.label,
       'Der Boden wird vereinfacht wie ein Eimer betrachtet: Regen fuellt ihn, Verdunstung leert ihn. Ist der Eimer voll, laeuft der Ueberschuss ungenutzt ab. Wie viel taeglich verdunstet, wird aus den Temperaturen geschaetzt - ein feuchter Boden verdunstet mehr als ein bereits trockener. Der Wert zeigt den aktuellen Fuellstand: 130 mm = Boden gut mit Wasser versorgt, 0 mm = ausgetrocknet.',
       'gw-layer-vor-boden');
+    // Vergleich mit dem Normal 1991-2020 (R: 28_klimanormale.R, nur wenn die Normale vorliegen)
+    if (layerLegenden.niederschlag_kum_normal || layerLegenden.gdd_normal) {
+      var normalHeading = document.createElement('div');
+      normalHeading.className = 'gw-layer-heading';
+      normalHeading.style.marginTop = '10px';
+      normalHeading.textContent = 'Vergleich mit 1991–2020';
+      layerPanel.appendChild(normalHeading);
+      if (layerLegenden.niederschlag_kum_normal) schnittRadios.push(makeLayerRadio('niederschlag_kum_normal', 'Niederschlag seit 1. Januar, % des Normals',
+        'Niederschlag seit 1. Januar bis zum Stichtag, verglichen mit demselben Stichtag in den Jahren 1991 bis 2020 (Median = 100 %). Braun: trockener als üblich, blau: nasser. 70 % heisst: 30 % weniger Regen als in einem mittleren Jahr.'));
+      if (layerLegenden.gdd_normal) schnittRadios.push(makeLayerRadio('gdd_normal', 'Wärmesumme: Tage voraus/zurück',
+        'Wie weit die Vegetation wärmemässig voraus ist: Die Wachstumsgradtage seit 1. Januar (Tagesmittel minus 5 Grad C) werden mit dem mittleren Verlauf 1991 bis 2020 verglichen. +10 Tage heisst: So viel Wärme hatte es in einem mittleren Jahr erst 10 Tage später. Im Winter und in Hochlagen (zu wenig Wärme) bleibt die Karte leer.'));
+    }
     // Potenzielles Wachstum (ModVege/growR): experimentell, nur mit
     // ?experimentell in der URL sichtbar (siehe wachstumspotenzial_
     // freigeschaltet im R-Teil fuer die bekannten Schwaechen).
@@ -5175,13 +5188,49 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     var r = Math.PI / 180, dx = (a.lon - b.lon) * Math.cos((a.lat + b.lat) / 2 * r) * 111.32, dy = (a.lat - b.lat) * 110.57;
     return Math.sqrt(dx * dx + dy * dy);
   }
+  // Normalwerte 1991-2020 fuer den Bericht (R: 28_klimanormale.R, grob je Woche): fehlt die Datei, ohne Band
+  var normaleP = null;
+  function ladeNormale() {
+    if (!normaleP) normaleP = fetch(gwBasis + 'ebenen/normale.json').then(function(r) { return r.ok ? r.json() : null; }).catch(function() { return null; });
+    return normaleP;
+  }
+  // Perzentile P10, P30, P50, P70, P90 im Mittel der eigenen Orte fuer eine Woche
+  var NORMAL_P = [10, 30, 50, 70, 90];
+  function normalAnOrten(N, groesse, w) {
+    var g = N && N[groesse];
+    if (!g || !g.werte || !g.werte.p50 || !g.werte.p50[w - 1]) return null;
+    var d = [];
+    for (var pi = 0; pi < NORMAL_P.length; pi++) {
+      var gitter = { x0: g.x0, x1: g.x1, y0: g.y0, y1: g.y1, ncol: g.ncol, nrow: g.nrow, m: (g.werte['p' + NORMAL_P[pi]] || [])[w - 1] };
+      var v = mittel(eigeneOrte.map(function(o) { return gitterWert(gitter, o.lon, o.lat); }));
+      if (v === null) return null;
+      d.push(v);
+    }
+    return { d: d, periode: g.periode };
+  }
+  // Anteil der Normjahre mit weniger als v (0..1), linear zwischen den Perzentilen
+  function rangImNormal(v, d) {
+    if (v === null || !d) return null;
+    var n = d.length;
+    if (v <= d[0]) return v < d[0] ? 0.05 : 0.1;
+    if (v >= d[n - 1]) return v > d[n - 1] ? 0.95 : 0.9;
+    for (var i = 1; i < n; i++) if (v <= d[i]) return (NORMAL_P[i - 1] + (NORMAL_P[i] - NORMAL_P[i - 1]) * (v - d[i - 1]) / ((d[i] - d[i - 1]) || 1)) / 100;
+    return 0.5;
+  }
+  // «trockener als 8 von 10 Jahren»; worte: [weniger, mehr] z.B. ['trockener', 'nasser']
+  function rangText(anteil, worte) {
+    if (anteil === null) return '';
+    if (anteil > 0.35 && anteil < 0.65) return 'im üblichen Bereich (wie die Hälfte der Jahre)';
+    return anteil >= 0.65 ? worte[1] + ' als ' + Math.min(9, Math.round(anteil * 10)) + ' von 10 Jahren' : worte[0] + ' als ' + Math.min(9, Math.round((1 - anteil) * 10)) + ' von 10 Jahren';
+  }
   function jahresrueckblickDaten(wocheBis) {
     var themen = [];
     VERANSTALTUNG_THEMEN.filter(function(t) { return layerLegenden[t.name]; }).forEach(function(t) {
-      themen.push(t);
-      if (t.name === 'niederschlag_kum' && layerLegenden.niederschlag) themen.push({ name: 'niederschlag_28', titel: 'Niederschlag letzte 28 Tage', datei: 'niederschlag_28', info: 'niederschlag' });
+      themen.push(Object.assign({ normal: t.name === 'niederschlag_kum' ? 'niederschlag_kum' : null }, t));
+      if (t.name === 'niederschlag_kum' && layerLegenden.niederschlag) themen.push({ name: 'niederschlag_28', titel: 'Niederschlag letzte 28 Tage', datei: 'niederschlag_28', info: 'niederschlag', normal: 'niederschlag_28' });
     });
-    return Promise.all(themen.map(function(th) {
+    if (layerLegenden.gdd) themen.push({ name: 'gdd', titel: 'Wärmesumme seit 1. Januar', datei: 'gdd', normal: 'gdd', nurMitNormal: true });
+    return ladeNormale().then(function(N) { return Promise.all(themen.filter(function(th) { return !th.nurMitNormal || (N && N[th.normal]); }).map(function(th) {
       return ladeEbeneP(th.datei || ebeneDateiSchluessel(th.name)).then(function(d) {
         var punkte = [];
         for (var w = 1; w <= wocheBis; w++) {
@@ -5192,7 +5241,14 @@ GWDatenexplorer.kurve = function(el, x, daten) {
         }
         var info = layerLegenden[th.info || th.name];
         if (th.einheit) info = Object.assign({}, info, { einheit: th.einheit });
-        return { thema: th, info: info, punkte: punkte };
+        // Normalband 1991-2020 ueber das ganze Jahr (Mittel der eigenen Orte)
+        var normal = null;
+        if (th.normal && N && N[th.normal]) {
+          normal = { periode: N[th.normal].periode, wochen: [] };
+          for (var nw = 1; nw <= 52; nw++) { var nv = normalAnOrten(N, th.normal, nw); if (nv) normal.wochen.push({ w: nw, d: nv.d }); }
+          if (!normal.wochen.length) normal = null;
+        }
+        return { thema: th, info: info, punkte: punkte, normal: normal };
       }, function() { return null; });
     }).concat([
       // Wasserbilanz je Woche: Niederschlag 7 Tage minus Verdunstung ET0 7 Tage
@@ -5207,7 +5263,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
         }
         return { bilanz: punkte };
       }, function() { return null; })
-    ])).then(function(liste) {
+    ])); }).then(function(liste) {
       var bilanz = (liste.pop() || {}).bilanz || [];
       // Gemessenes Graswachstum: naechster Messstandort mit Daten im Jahr
       var koord = messstandortKoordinaten(), mitte = { lon: mittel(eigeneOrte.map(function(o) { return o.lon; })), lat: mittel(eigeneOrte.map(function(o) { return o.lat; })) };
@@ -5253,10 +5309,12 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * e;
   }
   // Liniendiagramm als SVG; serien: [{ name, farbe, strich, punkte: [[woche, wert], ...] }]
-  function rueckblickDiagramm(id, serien, einheit) {
+  // band (optional): { name, punkte: [[woche, unten, oben], ...] } - grau hinter den Linien (Normal 1991-2020)
+  function rueckblickDiagramm(id, serien, einheit, band) {
     var B = 640, H = 250, l = 52, r = 78, o = 26, u = 34, pb = B - l - r, ph = H - o - u, xMax = 52;
     var yMax = 0;
     serien.forEach(function(s) { s.punkte.forEach(function(p) { if (p[1] > yMax) yMax = p[1]; }); });
+    if (band) band.punkte.forEach(function(p) { if (p[2] > yMax) yMax = p[2]; });
     var schritt = netteSchrittweite((yMax || 1) / 4);
     yMax = Math.max(schritt, Math.ceil(yMax / schritt) * schritt);
     var X = function(w) { return l + (w - 1) / (xMax - 1) * pb; }, Y = function(v) { return o + ph - v / yMax * ph; };
@@ -5270,6 +5328,11 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       t.push('<text x="' + X(w).toFixed(1) + '" y="' + (o + ph + 16) + '" font-size="11" fill="#52514e" text-anchor="middle">' + w + '</text>');
     }
     t.push('<text x="' + (l + pb / 2) + '" y="' + (H - 2) + '" font-size="11" fill="#52514e" text-anchor="middle">Kalenderwoche</text>');
+    if (band && band.punkte.length > 1) {
+      var oben = band.punkte.map(function(p) { return X(p[0]).toFixed(1) + ' ' + Y(p[2]).toFixed(1); });
+      var unten = band.punkte.slice().reverse().map(function(p) { return X(p[0]).toFixed(1) + ' ' + Y(p[1]).toFixed(1); });
+      t.push('<path d="M' + oben.join('L') + 'L' + unten.join('L') + 'Z" fill="#b4b2a9" fill-opacity="0.35" stroke="none"/>');
+    }
     serien.forEach(function(s) {
       var d = '', vorher = null;
       s.punkte.forEach(function(p) {
@@ -5296,7 +5359,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       serien: serien.map(function(s) { var m = {}; s.punkte.forEach(function(p) { if (p[1] !== null) m[p[0]] = Math.round(p[1] * 10) / 10; }); return { name: s.name, farbe: s.farbe, werte: m }; }) };
     var legende = '<div class="gw-rb-legende">' + serien.map(function(s) {
       return '<span><i style="border-top:2px ' + (s.strich === 'dash' ? 'dashed' : 'solid') + ' ' + s.farbe + '"></i>' + esc(s.name) + '</span>';
-    }).join('') + '</div>';
+    }).join('') + (band ? '<span><i style="border-top:10px solid rgba(180,178,169,.55);width:14px"></i>' + esc(band.name) + '</span>' : '') + '</div>';
     var wochen = [];
     serien.forEach(function(s) { s.punkte.forEach(function(p) { if (p[1] !== null && wochen.indexOf(p[0]) === -1) wochen.push(p[0]); }); });
     wochen.sort(function(a, b) { return a - b; });
@@ -5348,7 +5411,12 @@ GWDatenexplorer.kurve = function(el, x, daten) {
         { name: 'Ihre Orte (Mittel)', kurz: 'Ihre Orte', farbe: RB_FARBEN.gebiet, punkte: t.punkte.map(function(p) { return [p.w, p.gebiet]; }) },
         { name: 'Schweiz (Mittel)', kurz: 'Schweiz', farbe: RB_FARBEN.schweiz, punkte: t.punkte.map(function(p) { return [p.w, p.schweiz]; }) }
       ];
-      var d = rueckblickDiagramm('rb' + i, serien, ein);
+      var band = null;
+      if (t.normal) {
+        serien.push({ name: 'Ihre Orte, Normal ' + t.normal.periode + ' (Median)', kurz: 'Normal', farbe: '#6b6a65', strich: 'dash', punkte: t.normal.wochen.map(function(x) { return [x.w, x.d[2]]; }) });
+        band = { name: 'Ihre Orte: 8 von 10 Jahren ' + t.normal.periode, punkte: t.normal.wochen.map(function(x) { return [x.w, x.d[0], x.d[4]]; }) };
+      }
+      var d = rueckblickDiagramm('rb' + i, serien, ein, band);
       daten['rb' + i] = d.daten;
       diagramme.push('<figure class="gw-rb-karte"><figcaption><span>' + esc(t.thema.titel) + (t.thema.experimentell ? ' <small>(Modellrechnung, experimentell)</small>' : '') + '</span>' + VOLLBILD + '</figcaption>' + d.html + '</figure>');
       var letzte = t.punkte.filter(function(p) { return p.gebiet !== null; }).pop();
@@ -5360,7 +5428,22 @@ GWDatenexplorer.kurve = function(el, x, daten) {
         zusatz = trocken.length ? trocken.length + ' Wochen unter 40 mm, am trockensten KW ' + tief.w + ' (' + Math.round(tief.gebiet) + ' mm)' : 'keine Woche unter 40 mm';
         kacheln.push('<div class="gw-rb-kachel"><span>' + esc(t.thema.titel) + ', KW ' + letzte.w + '</span><b>' + Math.round(letzte.gebiet) + ' mm</b><em>' + esc(zusatz) + '</em></div>');
       } else {
-        kacheln.push('<div class="gw-rb-kachel"><span>' + esc(t.thema.titel) + ' (bis KW ' + letzte.w + ')</span><b>' + tausender(Math.round(letzte.gebiet)) + ' ' + esc(ein) + '</b><em>' +
+        var imNormal = '';
+        var nw = t.normal && t.normal.wochen.filter(function(x) { return x.w === letzte.w; })[0];
+        if (nw) {
+          var gdd = t.thema.name === 'gdd';
+          imNormal = rangText(rangImNormal(letzte.gebiet, nw.d), gdd ? ['kühler', 'wärmer'] : ['trockener', 'nasser']) + ' ' + t.normal.periode + ' (Median ' + tausender(Math.round(nw.d[2])) + ' ' + ein + ')';
+          if (gdd) {
+            // Vorsprung: wann erreicht der mittlere Verlauf die heutige Waermesumme?
+            var med = t.normal.wochen, ziel = letzte.gebiet, tag = null;
+            for (var k = 1; k < med.length; k++) if (med[k].d[2] >= ziel && med[k - 1].d[2] <= ziel) { tag = (med[k - 1].w - 1) * 7 + 7 * (ziel - med[k - 1].d[2]) / ((med[k].d[2] - med[k - 1].d[2]) || 1); break; }
+            if (tag !== null && nw.d[2] >= 30) {
+              var vor = Math.round(tag - (letzte.w - 1) * 7);
+              imNormal += ' · ' + (Math.abs(vor) < 2 ? 'Vegetation im Zeitplan' : 'Vegetation ' + Math.abs(vor) + ' Tage ' + (vor > 0 ? 'voraus' : 'im Rückstand'));
+            }
+          }
+        }
+        kacheln.push('<div class="gw-rb-kachel"><span>' + esc(t.thema.titel) + ' (bis KW ' + letzte.w + ')</span><b>' + tausender(Math.round(letzte.gebiet)) + ' ' + esc(ein) + '</b>' + (imNormal ? '<em class="gw-rb-normal">' + esc(imNormal) + '</em>' : '') + '<em>' +
           esc(prozentText(letzte.gebiet, letzte.schweiz)) + (letzte.schweiz !== null ? ' (' + tausender(Math.round(letzte.schweiz)) + ' ' + esc(ein) + ')' : '') + '</em></div>');
       }
     });
@@ -5389,7 +5472,8 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     }
     return {
       html: '<section data-t="rb" hidden class="gw-rb"><div class="gw-rb-kacheln">' + kacheln.join('') + '</div><div class="gw-rb-gitter">' + diagramme.join('') + '</div>' +
-        '<p class="gw-rb-hinweis">«Ihre Orte» = Mittel der Werte an den erfassten Orten; «Schweiz» = Mittel aller 1-km-Gitterzellen der Schweiz. Gemessenes Graswachstum: Messnetz der AGFF.</p></section>',
+        '<p class="gw-rb-hinweis">«Ihre Orte» = Mittel der Werte an den erfassten Orten; «Schweiz» = Mittel aller 1-km-Gitterzellen der Schweiz. Gemessenes Graswachstum: Messnetz der AGFF.' +
+          (rb.themen.some(function(t) { return t.normal; }) ? ' «Normal»: dieselbe Rechnung für jedes Jahr 1991–2020 (MeteoSchweiz-Archiv, ca. 5-km-Raster); der graue Bereich zeigt, wo 8 von 10 Jahren lagen.' : '') + '</p></section>',
       daten: daten
     };
   }
@@ -5758,7 +5842,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       '.gw-rb-legende{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12.5px;color:#1e1e1e;margin:2px 0 4px}.gw-rb-legende i{display:inline-block;width:18px;vertical-align:middle;margin-right:5px}' +
       '.gw-rb-svg{width:100%;height:auto;display:block;touch-action:pan-y}.gw-rb-tabelle summary{cursor:pointer;font-size:12.5px;color:#2f6f5e;margin-top:4px}' +
       '.gw-rb-tabelle table{border-collapse:collapse;font-size:12px;margin-top:6px}.gw-rb-tabelle th,.gw-rb-tabelle td{padding:2px 8px;text-align:right;border-bottom:1px solid #eee}' +
-      '.gw-rb-hinweis{font-size:12px;color:#52514e;margin-top:10px}' +
+      '.gw-rb-hinweis{font-size:12px;color:#52514e;margin-top:10px}.gw-rb-kachel em.gw-rb-normal{color:#1e1e1e;font-weight:600;margin-bottom:2px}' +
       '.gw-mj{grid-column:1/-1}.gw-mj-leiste{display:flex;flex-wrap:wrap;gap:8px 16px;margin:4px 0 8px}.gw-mj-leiste div{display:flex;flex-wrap:wrap;gap:4px}' +
       '.gw-mj-leiste button{font:inherit;font-size:14px;padding:6px 12px;min-height:36px;border:1px solid #9bb5a8;border-radius:16px;background:#fff;cursor:pointer}.gw-mj-leiste button[aria-pressed=true]{background:#2a78d6;border-color:#2a78d6;color:#fff;font-weight:700}' +
       '.gw-mj-leiste div:nth-child(n+2) button[aria-pressed=true]{background:#2f6f5e;border-color:#2f6f5e}' +
