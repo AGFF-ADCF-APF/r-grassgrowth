@@ -2462,6 +2462,9 @@ js_ersetzungen <- list(
   "__KARTENBILD_HINTERGRUND__" = jsonlite::toJSON(webp_bild(kartenbild_hintergrund, verlustfrei = TRUE), auto_unbox = TRUE),
   "__HEUTIGE_WOCHE__" = as.character(heutige_woche),
   "__GRAFIK_DATUM__" = format(Sys.Date(), "%d.%m.%Y"),
+  # Neueste Messung je Jahr: der Kopf zeigt sie neben dem Erstellungsdatum,
+  # damit klar ist, wie aktuell die Messdaten sind
+  "__MESS_DATUM_JE_JAHR__" = jsonlite::toJSON(lapply(split(daten_korr$date, daten_korr$year), function(d) format(max(d, na.rm = TRUE), "%d.%m.%Y")), auto_unbox = TRUE),
   "__START_WOCHE__" = as.character(start_woche)
 )
 # Daten fuer GWDatenexplorer.kurve() als Objekt-Literal: Schluessel ohne die

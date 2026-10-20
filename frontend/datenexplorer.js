@@ -273,6 +273,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   var kartenbildHintergrund = daten.KARTENBILD_HINTERGRUND;
   var heutigeWoche = daten.HEUTIGE_WOCHE;
   var grafikDatum = daten.GRAFIK_DATUM;
+  var messDatumJeJahr = daten.MESS_DATUM_JE_JAHR || {};
   var standardKurveTraceIdx = daten.STANDARD_KURVE_TRACE_IDX;
 
   var selection = { type: 'group', idx: 0 };
@@ -2413,7 +2414,9 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     if (!growthMapGd) return;
     // Kurz (auch fuer Mobile): fester Titel, darunter Woche und Grafikdatum,
     // bei aktiver Meteo-Ebene eine dritte Zeile mit Ebene und Datenstand.
-    var unterzeile = 'KW ' + selectedWeek + ' ' + selectedYear + ' · Grafik vom ' + grafikDatum;
+    // Erstellungsdatum allein wirkt aktueller als die Messdaten: neueste Messung des Jahres dazu
+    var messDatum = messDatumJeJahr[selectedYear];
+    var unterzeile = 'KW ' + selectedWeek + ' ' + selectedYear + (messDatum ? ' · letzte Messung ' + messDatum.slice(0, 6) + ' · aktualisiert ' + grafikDatum : ' · Grafik vom ' + grafikDatum);
     var ebenenZeile = '';
     var titel = '<b>Graswachstum</b><br><span style="font-size:12px">' + unterzeile + '</span>';
     var zeilen = 2;
