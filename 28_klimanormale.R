@@ -8,6 +8,11 @@
 ##   niederschlag_kum  Niederschlag seit 1. Januar bis zum Montag der Woche
 ##   niederschlag_28   Niederschlag der 28 Tage vor dem Montag der Woche
 ##   gdd               Wachstumsgradtage (Tagesmittel - 5 Grad, >= 0) seit 1. Januar bis zum Montag
+##   boden             Bodenwasserbilanz (Eimer 130 mm ab 1. April) am Montag
+##   wachstumspotenzial_kum  potenzielles Graswachstum (ModVege, Erholung 14 Tage) seit 1. Januar, kg TS/ha
+## Bodenwasser und Wachstumspotenzial rechnen mit den Funktionen und Parametern
+## aus 27_plot_datenexplorer.R (dieselbe Rechnung wie in der App) und brauchen
+## zusaetzlich TmaxD, TminD und SrelD (ab 1971).
 ## Zwischenergebnis je Jahr: <ziel>/jahre/<groesse>_<jahr>.rds (Zelle x Woche).
 ## Am Schluss je Groesse <ziel>/normale_<groesse>.rds mit Mittel und den
 ## Perzentilen P10..P90 je Zelle und Woche (fuer «nasser als x von 10 Jahren»).
@@ -24,6 +29,8 @@ ziel_dir <- Sys.getenv("GRASSGROWTH_NORMALE_DIR", "../geodata/klimanormale")
 dir.create(file.path(ziel_dir, "jahre"), recursive = TRUE, showWarnings = FALSE)
 archiv_url <- "https://data.geo.admin.ch/ch.meteoschweiz.ogd-surface-derived-grid/archive-ch/ogd-surface-derived-grid-archive.%s_%s.swiss.lv95_%d0101000000_%d1231000000.nc"
 groessen <- c("niederschlag_kum", "niederschlag_28", "gdd")
+modell_groessen <- c("boden", "wachstumspotenzial_kum")
+erholung_normal <- 14 # Vorgabe der App (JS: erholung)
 wochen <- 1:52
 
 # wie in 27_plot_datenexplorer.R
@@ -93,7 +100,6 @@ rechne_jahr <- function(jr) {
     saveRDS(round(nk, 1), jahr_datei("niederschlag_kum", jr))
     saveRDS(round(n28, 1), jahr_datei("niederschlag_28", jr))
     rm(m, kum, nk, n28); gc(verbose = FALSE)
-    unlink(f)
   }
   # Temperatursumme
   if ("gdd" %in% fehlend) {
@@ -105,11 +111,80 @@ rechne_jahr <- function(jr) {
     g <- wochen_stand(kumulieren(m), tage, jr); g[maske, ] <- NA
     saveRDS(round(g, 1), jahr_datei("gdd", jr))
     rm(m, g); gc(verbose = FALSE)
-    unlink(f)
   }
   cat(jr, "fertig in", round(as.numeric(difftime(Sys.time(), t0, units = "mins")), 1), "min\n")
   invisible(TRUE)
 }
+
+# Funktionen und Parameter des Eimer-Modells und von ModVege aus
+# 27_plot_datenexplorer.R uebernehmen (nur die Zuweisungen dieser Namen,
+# auch modvege_P$... <- ...), damit beide Skripte gleich rechnen
+lade_modell_code <- function(datei = "27_plot_datenexplorer.R") {
+  namen <- c("Smax_boden", "berechne_ra", "angstrom_a_s", "angstrom_b_s", "modvege_fT", "modvege_fW", "modvege_fPAR",
+             "modvege_SEA", "modvege_atmospheric_CO2", "modvege_fCO2_growth", "modvege_fCO2_transpiration", "modvege_P",
+             "modvege_schnitt_hoehen", "modvege_schnitt_anzahl", "modvege_init", "simuliere_wachstumspotenzial")
+  for (e in parse(datei, keep.source = FALSE)) {
+    if (!is.call(e) || !identical(e[[1]], as.name("<-"))) next
+    ziel <- e[[2]]
+    while (is.call(ziel)) ziel <- ziel[[2]]
+    if (as.character(ziel) %in% namen) eval(e, globalenv())
+  }
+  fehlt <- namen[!vapply(namen, exists, logical(1), envir = globalenv())]
+  if (length(fehlt)) stop("Aus ", datei, " nicht gefunden: ", paste(fehlt, collapse = ", "))
+}
+
+# Bodenwasser und Wachstumspotenzial eines Jahres (Temperaturraster; der
+# Niederschlag wird wie in 27 auf dessen Ausdehnung zugeschnitten)
+rechne_modell_jahr <- function(jr) {
+  fehlend <- modell_groessen[!file.exists(jahr_datei(modell_groessen, jr))]
+  if (length(fehlend) == 0) return(invisible(TRUE))
+  if (!exists("simuliere_wachstumspotenzial")) lade_modell_code()
+  t0 <- Sys.time()
+  dateien <- lapply(c(precip = "rhiresd", tabs = "tabsd", tmax = "tmaxd", tmin = "tmind", srel = "sreld"), lade_archiv, jr = jr)
+  if (any(vapply(dateien, is.null, logical(1)))) return(invisible(FALSE))
+  r <- lapply(dateien, rast)
+  r$precip <- crop(r$precip, ext(r$tmax))
+  tage <- sort(Reduce(intersect, lapply(r, function(x) as.Date(time(x)))))
+  tage <- as.Date(tage, origin = "1970-01-01")
+  merke_raster(r$tmax, "boden")
+  wahl <- function(x) values(x[[match(tage, as.Date(time(x)))]])
+  xy <- xyFromCell(r$tmax, 1:ncell(r$tmax))
+  lat_vec <- project(xy, from = crs(r$tmax), to = "EPSG:4326")[, 2] * pi / 180
+  ra <- vapply(as.integer(format(tage, "%j")), function(J) berechne_ra(J, lat_vec), numeric(length(lat_vec))) # MJ/m2/Tag
+  precip <- wahl(r$precip); tmax <- wahl(r$tmax); tmin <- wahl(r$tmin)
+  dT_wurzel <- sqrt(pmax(tmax - tmin, 0))
+  maske <- is.na(tmax[, 1])
+  # Bodenwasserbilanz: Hargreaves-ET0 mit (Tmax+Tmin)/2, Eimer ab 1. April voll
+  if ("boden" %in% fehlend) {
+    et0 <- 0.0023 * ((tmax + tmin) / 2 + 17.8) * dT_wurzel * ra * 0.408
+    ab <- which(tage >= as.Date(paste0(jr, "-04-01")))
+    s <- rep(Smax_boden, nrow(precip)); speicher <- matrix(NA_real_, nrow(precip), length(tage))
+    for (i in ab) { s <- pmin(pmax(s + precip[, i] - et0[, i], 0), Smax_boden); speicher[, i] <- s }
+    b <- sapply(wochen, function(w) {
+      i <- max(which(tage <= montag_von_woche(jr, w) & tage >= as.Date(paste0(jr, "-04-01"))), 0)
+      if (i == 0) rep(NA_real_, nrow(speicher)) else speicher[, i]
+    })
+    b[maske, ] <- NA
+    saveRDS(round(b, 1), jahr_datei("boden", jr))
+    rm(et0, speicher, b)
+  }
+  rm(tmax, tmin); gc(verbose = FALSE)
+  # Potenzielles Wachstum: ET0 mit TabsD, Strahlung per Angstroem-Prescott aus SrelD
+  if ("wachstumspotenzial_kum" %in% fehlend) {
+    Ta <- wahl(r$tabs)
+    ET0 <- 0.0023 * (Ta + 17.8) * dT_wurzel * ra * 0.408
+    PAR <- (angstrom_a_s + angstrom_b_s * (wahl(r$srel) / 100)) * ra * 11.574 * 0.0406
+    rm(ra, dT_wurzel); gc(verbose = FALSE)
+    erg <- simuliere_wachstumspotenzial(Ta = Ta, precip = precip, PAR = PAR, ET0 = ET0, jahr = jr, erholung_tage = erholung_normal)
+    k <- wochen_stand(erg$cBM, tage, jr); k[maske, ] <- NA
+    saveRDS(round(k), jahr_datei("wachstumspotenzial_kum", jr))
+    rm(erg, Ta, ET0, PAR, k)
+  }
+  rm(precip, r); gc(verbose = FALSE)
+  cat(jr, "Modell fertig in", round(as.numeric(difftime(Sys.time(), t0, units = "mins")), 1), "min\n")
+  invisible(TRUE)
+}
+aufraeumen <- function(jr) unlink(Sys.glob(file.path(ziel_dir, paste0("*_", jr, ".nc"))))
 
 # Perzentile je Zeile (Typ 7 wie quantile()), vektorisiert ueber alle Zellen
 zeilen_quantile <- function(m, probs) {
@@ -153,7 +228,7 @@ fasse_zusammen <- function(groesse) {
 # (Band «8 von 10 Jahren», Rang des Jahres)
 schreibe_bericht_json <- function(ziel_ncol = 70) {
   aus <- list()
-  for (g in groessen) {
+  for (g in c(groessen, modell_groessen)) {
     f <- file.path(ziel_dir, paste0("normale_", g, ".rds"))
     if (!file.exists(f)) next
     n <- readRDS(f)
@@ -185,6 +260,6 @@ schreibe_bericht_json <- function(ziel_ncol = 70) {
 
 args <- commandArgs(trailingOnly = TRUE)
 jahre <- if (length(args)) as.integer(args) else normperiode
-for (jr in jahre) rechne_jahr(jr)
-for (g in groessen) fasse_zusammen(g)
+for (jr in jahre) { rechne_jahr(jr); rechne_modell_jahr(jr); aufraeumen(jr) }
+for (g in c(groessen, modell_groessen)) fasse_zusammen(g)
 schreibe_bericht_json()

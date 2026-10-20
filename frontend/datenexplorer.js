@@ -3221,7 +3221,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       'Der Boden wird vereinfacht wie ein Eimer betrachtet: Regen fuellt ihn, Verdunstung leert ihn. Ist der Eimer voll, laeuft der Ueberschuss ungenutzt ab. Wie viel taeglich verdunstet, wird aus den Temperaturen geschaetzt - ein feuchter Boden verdunstet mehr als ein bereits trockener. Der Wert zeigt den aktuellen Fuellstand: 130 mm = Boden gut mit Wasser versorgt, 0 mm = ausgetrocknet.',
       'gw-layer-vor-boden');
     // Vergleich mit dem Normal 1991-2020 (R: 28_klimanormale.R, nur wenn die Normale vorliegen)
-    if (layerLegenden.niederschlag_kum_normal || layerLegenden.gdd_normal) {
+    if (layerLegenden.niederschlag_kum_normal || layerLegenden.gdd_normal || layerLegenden.boden_normal) {
       var normalHeading = document.createElement('div');
       normalHeading.className = 'gw-layer-heading';
       normalHeading.style.marginTop = '10px';
@@ -3231,6 +3231,10 @@ GWDatenexplorer.kurve = function(el, x, daten) {
         'Niederschlag seit 1. Januar bis zum Stichtag, verglichen mit demselben Stichtag in den Jahren 1991 bis 2020 (Median = 100 %). Braun: trockener als üblich, blau: nasser. 70 % heisst: 30 % weniger Regen als in einem mittleren Jahr.'));
       if (layerLegenden.gdd_normal) schnittRadios.push(makeLayerRadio('gdd_normal', 'Wärmesumme: Tage voraus/zurück',
         'Wie weit die Vegetation wärmemässig voraus ist: Die Wachstumsgradtage seit 1. Januar (Tagesmittel minus 5 Grad C) werden mit dem mittleren Verlauf 1991 bis 2020 verglichen. +10 Tage heisst: So viel Wärme hatte es in einem mittleren Jahr erst 10 Tage später. Im Winter und in Hochlagen (zu wenig Wärme) bleibt die Karte leer.'));
+      if (layerLegenden.boden_normal) schnittRadios.push(makeLayerRadio('boden_normal', 'Bodenwasser: mm mehr/weniger',
+        'Bodenwasserbilanz (Eimer-Modell, 130 mm) am Stichtag, verglichen mit demselben Stichtag in den Jahren 1991 bis 2020 (gleiche Rechnung je Jahr). Braun: weniger Wasser im Boden als im Median, blau: mehr. Ab April, weil der Eimer am 1. April voll startet.'));
+      if (experimentellerModus && layerLegenden.wachstumspotenzial_kum_normal) schnittRadios.push(makeLayerRadio('wachstumspotenzial_kum_normal', 'Potenzielles Wachstum, % des Normals',
+        'EXPERIMENTELL. Potenzielles Graswachstum seit 1. Januar (ModVege, Erholungsverzögerung 14 Tage), verglichen mit derselben Rechnung für 1991 bis 2020 (Median = 100 %).'));
     }
     // Potenzielles Wachstum (ModVege/growR): experimentell, nur mit
     // ?experimentell in der URL sichtbar (siehe wachstumspotenzial_
@@ -5229,10 +5233,12 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   function jahresrueckblickDaten(wocheBis) {
     var themen = [];
     VERANSTALTUNG_THEMEN.filter(function(t) { return layerLegenden[t.name]; }).forEach(function(t) {
-      themen.push(Object.assign({ normal: t.name === 'niederschlag_kum' ? 'niederschlag_kum' : null }, t));
-      if (t.name === 'niederschlag_kum' && layerLegenden.niederschlag) themen.push({ name: 'niederschlag_28', titel: 'Niederschlag letzte 28 Tage', datei: 'niederschlag_28', info: 'niederschlag', normal: 'niederschlag_28' });
+      // Normal 1991-2020 je Thema (R: 28_klimanormale.R), Worte fuer den Rang: [weniger, mehr]
+      var NORMAL_JE_THEMA = { niederschlag_kum: ['trockener', 'nasser'], boden: ['trockener', 'feuchter'], wachstumspotenzial_kum: ['tiefer', 'höher'] };
+      themen.push(Object.assign({ normal: NORMAL_JE_THEMA[t.name] ? t.name : null, worte: NORMAL_JE_THEMA[t.name] }, t));
+      if (t.name === 'niederschlag_kum' && layerLegenden.niederschlag) themen.push({ name: 'niederschlag_28', titel: 'Niederschlag letzte 28 Tage', datei: 'niederschlag_28', info: 'niederschlag', normal: 'niederschlag_28', worte: ['trockener', 'nasser'] });
     });
-    if (layerLegenden.gdd) themen.push({ name: 'gdd', titel: 'Wärmesumme seit 1. Januar', datei: 'gdd', normal: 'gdd', nurMitNormal: true });
+    if (layerLegenden.gdd) themen.push({ name: 'gdd', titel: 'Wärmesumme seit 1. Januar', datei: 'gdd', normal: 'gdd', nurMitNormal: true, worte: ['kühler', 'wärmer'] });
     return ladeNormale().then(function(N) { return Promise.all(themen.filter(function(th) { return !th.nurMitNormal || (N && N[th.normal]); }).map(function(th) {
       return ladeEbeneP(th.datei || ebeneDateiSchluessel(th.name)).then(function(d) {
         var punkte = [];
@@ -5248,7 +5254,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
         var normal = null;
         if (th.normal && N && N[th.normal]) {
           normal = { periode: N[th.normal].periode, wochen: [] };
-          for (var nw = 1; nw <= 52; nw++) { var nv = normalAnOrten(N, th.normal, nw); if (nv) normal.wochen.push({ w: nw, d: nv.d }); }
+          for (var nw = 1; nw <= 52; nw++) { var nv = normalAnOrten(N, th.normal, nw); if (nv) normal.wochen.push({ w: nw, d: nv.d.map(function(x) { return x * (th.faktor || 1); }) }); }
           if (!normal.wochen.length) normal = null;
         }
         return { thema: th, info: info, punkte: punkte, normal: normal };
@@ -5429,13 +5435,15 @@ GWDatenexplorer.kurve = function(el, x, daten) {
         var trocken = t.punkte.filter(function(p) { return p.gebiet !== null && p.gebiet < 40; });
         var tief = t.punkte.reduce(function(a, p) { return p.gebiet !== null && (!a || p.gebiet < a.gebiet) ? p : a; }, null);
         zusatz = trocken.length ? trocken.length + ' Wochen unter 40 mm, am trockensten KW ' + tief.w + ' (' + Math.round(tief.gebiet) + ' mm)' : 'keine Woche unter 40 mm';
-        kacheln.push('<div class="gw-rb-kachel"><span>' + esc(t.thema.titel) + ', KW ' + letzte.w + '</span><b>' + Math.round(letzte.gebiet) + ' mm</b><em>' + esc(zusatz) + '</em></div>');
+        var nb = t.normal && t.normal.wochen.filter(function(x) { return x.w === letzte.w; })[0];
+        var bodenNormal = nb ? (nb.d[0] === nb.d[4] ? 'wie in den meisten Jahren ' + t.normal.periode : rangText(rangImNormal(letzte.gebiet, nb.d), t.thema.worte) + ' ' + t.normal.periode) + ' (Median ' + Math.round(nb.d[2]) + ' mm)' : '';
+        kacheln.push('<div class="gw-rb-kachel"><span>' + esc(t.thema.titel) + ', KW ' + letzte.w + '</span><b>' + Math.round(letzte.gebiet) + ' mm</b>' + (bodenNormal ? '<em class="gw-rb-normal">' + esc(bodenNormal) + '</em>' : '') + '<em>' + esc(zusatz) + '</em></div>');
       } else {
         var imNormal = '';
         var nw = t.normal && t.normal.wochen.filter(function(x) { return x.w === letzte.w; })[0];
         if (nw) {
           var gdd = t.thema.name === 'gdd';
-          imNormal = rangText(rangImNormal(letzte.gebiet, nw.d), gdd ? ['kühler', 'wärmer'] : ['trockener', 'nasser']) + ' ' + t.normal.periode + ' (Median ' + tausender(Math.round(nw.d[2])) + ' ' + ein + ')';
+          imNormal = rangText(rangImNormal(letzte.gebiet, nw.d), t.thema.worte || ['tiefer', 'höher']) + ' ' + t.normal.periode + ' (Median ' + tausender(Math.round(nw.d[2])) + ' ' + ein + ')';
           if (gdd) {
             // Vorsprung: wann erreicht der mittlere Verlauf die heutige Waermesumme?
             var med = t.normal.wochen, ziel = letzte.gebiet, tag = null;

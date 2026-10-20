@@ -1955,6 +1955,8 @@ for (art in c("rate", "kum")) for (stufe in erholung_stufen_tage) {
   wsp_cache_alt[[art]][[sk]] <- lade_ebenen_cache(paste0("wachstumspotenzial_", art, "_", sk))
 }
 wsp_aus_cache <- 0L; wsp_neu <- 0L
+# Kumulierter Tagesstapel der Vorgabestufe (14 Tage, wie die App) je Jahr - fuer den Vergleich mit dem Normal
+wsp_kum_normalstufe <- list()
 for (jr in if (wachstumspotenzial_freigeschaltet) jahre_mit_temperatur else character(0)) {
   # Aus dem Cache, wenn ALLE Stufen dort vorhanden sind - abgeschlossene Jahre
   # immer, das laufende Jahr nur im Schnellmodus bei unveraendertem Stand.
@@ -1982,6 +1984,7 @@ for (jr in if (wachstumspotenzial_freigeschaltet) jahre_mit_temperatur else char
                                         jahr = as.integer(jr), erholung_tage = stufe)
     gro <- rast(ein$vorlage, nlyrs = length(ein$tage)); values(gro) <- erg$GRO
     kum <- rast(ein$vorlage, nlyrs = length(ein$tage)); values(kum) <- erg$cBM
+    if (stufe == 14) wsp_kum_normalstufe[[jr]] <- list(raster = kum, tage = ein$tage)
     rm(erg)
     bilder <- wachstumspotenzial_wochenbilder(gro, kum, ein$tage, jr, ein$strahlung_geschaetzt_ab)
     rm(gro, kum); invisible(gc())
@@ -2231,7 +2234,22 @@ gdd_normal_ebene <- baue_normal_ebene(
     pmin(pmax(d, gdd_normal_bereich[1]), gdd_normal_bereich[2])
   },
   gdd_normal_farben, gdd_normal_bereich)
-normal_quelle <- "Vergleich mit 1991-2020 (MeteoSchweiz-Archiv RhiresD/TabsD, gleiche Rechnung je Jahr)"
+boden_normal_bereich <- c(-80, 80)
+boden_normal <- lade_normale("boden")
+boden_normal_ebene <- baue_normal_ebene(
+  "boden_normal", boden_normal, names(speicher_raster_je_jahr),
+  function(jr) list(raster = speicher_raster_je_jahr[[jr]], tage = as.Date(time(speicher_raster_je_jahr[[jr]]))),
+  # mm mehr (+) bzw. weniger (-) Wasser im Boden als im Median 1991-2020
+  function(v, n, w, tag) pmin(pmax(v - n$perzentile[, w, "p50"], boden_normal_bereich[1]), boden_normal_bereich[2]),
+  niederschlag_normal_farben, boden_normal_bereich)
+wachstumspotenzial_normal <- lade_normale("wachstumspotenzial_kum")
+wachstumspotenzial_kum_normal_ebene <- baue_normal_ebene(
+  "wachstumspotenzial_kum_normal", wachstumspotenzial_normal, names(wsp_kum_normalstufe),
+  function(jr) wsp_kum_normalstufe[[jr]],
+  function(v, n, w, tag) { p50 <- n$perzentile[, w, "p50"]; ifelse(!is.na(p50) & p50 >= 300, pmin(100 * v / p50, 200), NA) },
+  niederschlag_normal_farben, c(0, 200))
+rm(wsp_kum_normalstufe); invisible(gc())
+normal_quelle <- "Vergleich mit 1991-2020 (MeteoSchweiz-Archiv, gleiche Rechnung je Jahr)"
 
 ## Optionale Hintergrund-Ebenen NICHT in die Haupt-HTML einbetten, sondern
 ## je Ebene in eine EIGENE JSON-Datei schreiben (outputs/ebenen/<name>.json) -
@@ -2324,6 +2342,8 @@ ebenen_schluessel <- list(
 )
 if (length(niederschlag_kum_normal_ebene$bilder)) ebenen_schluessel$niederschlag_kum_normal <- schreibe_ebene_datei("niederschlag_kum_normal", niederschlag_kum_normal_ebene$bilder, niederschlag_kum_normal_ebene$werte)
 if (length(gdd_normal_ebene$bilder)) ebenen_schluessel$gdd_normal <- schreibe_ebene_datei("gdd_normal", gdd_normal_ebene$bilder, gdd_normal_ebene$werte)
+if (length(boden_normal_ebene$bilder)) ebenen_schluessel$boden_normal <- schreibe_ebene_datei("boden_normal", boden_normal_ebene$bilder, boden_normal_ebene$werte)
+if (length(wachstumspotenzial_kum_normal_ebene$bilder)) ebenen_schluessel$wachstumspotenzial_kum_normal <- schreibe_ebene_datei("wachstumspotenzial_kum_normal", wachstumspotenzial_kum_normal_ebene$bilder, wachstumspotenzial_kum_normal_ebene$werte)
 cat("Ebenen-Dateien geschrieben in:", ebenen_dir, "\n")
 
 # Farbnamen -> Hex, fuer die JS-Farbverlauf-Legende (CSS linear-gradient):
@@ -2379,6 +2399,12 @@ if (file.exists(file.path(normale_dir, "normale.json"))) file.copy(file.path(nor
 if (!is.null(ebenen_schluessel$niederschlag_kum_normal)) layer_legenden$niederschlag_kum_normal <- list(
   label = "Niederschlag seit 1. Januar im Vergleich", farben = niederschlag_normal_farben, bereich = c(0, 200), fensterSkaliert = FALSE, symbol = NULL,
   einheit = "% des Normals", quelle = paste0(normal_quelle, ". 100 % = Median, braun trockener, blau nasser."))
+if (!is.null(ebenen_schluessel$boden_normal)) layer_legenden$boden_normal <- list(
+  label = "Bodenwasser im Vergleich", farben = niederschlag_normal_farben, bereich = boden_normal_bereich, fensterSkaliert = FALSE, symbol = NULL,
+  einheit = "mm", quelle = paste0(normal_quelle, ". Bodenwasserbilanz (Eimer 130 mm): mm mehr (blau) bzw. weniger (braun) als im Median."))
+if (!is.null(ebenen_schluessel$wachstumspotenzial_kum_normal)) layer_legenden$wachstumspotenzial_kum_normal <- list(
+  label = "Potenzielles Wachstum im Vergleich", farben = niederschlag_normal_farben, bereich = c(0, 200), fensterSkaliert = FALSE, symbol = NULL,
+  einheit = "% des Normals", quelle = paste0(normal_quelle, ". ModVege, Erholung 14 Tage, seit 1. Januar; 100 % = Median. Experimentell."))
 if (!is.null(ebenen_schluessel$gdd_normal)) layer_legenden$gdd_normal <- list(
   label = "Wärmesumme: Vorsprung", farben = gdd_normal_farben, bereich = gdd_normal_bereich, fensterSkaliert = FALSE, symbol = NULL,
   einheit = "Tage", quelle = paste0(normal_quelle, ". Wachstumsgradtage (Basis 5 Grad C): rot = Tage voraus, blau = im Rückstand gegenüber dem mittleren Verlauf."))
