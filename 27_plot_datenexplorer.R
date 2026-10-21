@@ -692,10 +692,15 @@ kartenbild_hintergrund <- local({
 ########################################################################
 
 alle_wochen <- 1:52
+# Stand der Karte: Ende der Woche (Sonntag), in der laufenden Woche heute - so
+# zeigt die Karte einer Woche auch deren Messungen, wie Kurve und Startwoche
+# (bis 2026-10-21: Montag, Messungen ab Dienstag erschienen erst eine Woche spaeter)
+karten_stand <- function(jr, w) min(montag_von_woche(jr, w) + 6, Sys.Date())
 map_snapshots <- bind_rows(lapply(alle_jahre, function(jr) {
   dj <- daten_korr %>% filter(year == jr)
   bind_rows(lapply(alle_wochen, function(w) {
-    refdate <- montag_von_woche(jr, w)
+    if (montag_von_woche(jr, w) > Sys.Date()) return(NULL) # Woche hat noch nicht begonnen
+    refdate <- karten_stand(jr, w)
     # Vor Saisonbeginn (keine Messung <= refdate) ist d_bis leer - max(date)
     # auf einem leeren Vektor liefert -Inf samt Warnung; das anschliessende
     # filter(daysold <= 14) wuerde die Zeile ohnehin verwerfen, der Check
@@ -975,7 +980,7 @@ graswachstum_bild_je_woche <- list()
 afc_ring_bild_je_woche <- list()
 afc_fenster_je_woche <- list()
 
-graswachstum_afc_cache_alt <- lade_ebenen_cache("graswachstum_afc")
+graswachstum_afc_cache_alt <- lade_ebenen_cache("graswachstum_afc_wochenende")
 graswachstum_afc_cache_neu <- list()
 ga_aus_cache <- 0L; ga_neu <- 0L
 for (i in seq_len(nrow(map_wochen))) {
@@ -990,7 +995,7 @@ for (i in seq_len(nrow(map_wochen))) {
   fig_wachstum <- baue_kartenwerte_trace(fig_wachstum, snap, "growth", "kg TS/ha/Tag",
                                           paste("Wachstum", jr, "KW", w))
   map_point_orts[[i]] <- as.character(snap$Ort)
-  cached <- cache_eintrag_holen(graswachstum_afc_cache_alt, jr, w, "graswachstum_afc", "daten")
+  cached <- cache_eintrag_holen(graswachstum_afc_cache_alt, jr, w, "graswachstum_afc_wochenende", "daten")
   if (!is.null(cached)) {
     graswachstum_bild_je_woche[[schluessel]] <- cached$graswachstum
     afc_ring_bild_je_woche[[schluessel]] <- cached$afc_bild
@@ -998,7 +1003,7 @@ for (i in seq_len(nrow(map_wochen))) {
     ga_aus_cache <- ga_aus_cache + 1L
   } else {
     graswachstum_bild_je_woche[[schluessel]] <- baue_graswachstum_bild(snap)
-    afc_ergebnis <- baue_afc_ring_bild(snap, montag_von_woche(jr, w))
+    afc_ergebnis <- baue_afc_ring_bild(snap, karten_stand(jr, w))
     afc_ring_bild_je_woche[[schluessel]] <- afc_ergebnis$bild
     afc_fenster_je_woche[[schluessel]] <- afc_ergebnis$fensterIdx
     ga_neu <- ga_neu + 1L
@@ -1009,7 +1014,7 @@ for (i in seq_len(nrow(map_wochen))) {
     afc_fenster = afc_fenster_je_woche[[schluessel]]
   )
 }
-speichere_ebenen_cache("graswachstum_afc", graswachstum_afc_cache_neu, art = "daten")
+speichere_ebenen_cache("graswachstum_afc_wochenende", graswachstum_afc_cache_neu, art = "daten")
 cat("Graswachstums-Hintergrundbilder erzeugt:", sum(!vapply(graswachstum_bild_je_woche, is.null, logical(1))),
     "(aus Cache:", ga_aus_cache, "/ neu:", ga_neu, ")\n")
 cat("AFC-Ring-Hintergrundbilder erzeugt:", sum(!vapply(afc_ring_bild_je_woche, is.null, logical(1))), "\n")
