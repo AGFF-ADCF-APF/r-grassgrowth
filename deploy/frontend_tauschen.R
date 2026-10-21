@@ -8,7 +8,7 @@
 # laden), stellt die Verweise in den Ausgabedateien um und entfernt den alten
 # Ordner. Der naechste volle Lauf erzeugt dasselbe Ergebnis.
 out_dir <- "outputs"
-frontend_dateien <- file.path("frontend", c("datenexplorer.js", "datenexplorer.css"))
+frontend_dateien <- file.path("frontend", c("datenexplorer.js", "datenexplorer.css", "kurzansicht.js", "kurzansicht.css"))
 neu <- paste0("1.", strtoi(substr(digest::digest(
   paste(unlist(lapply(frontend_dateien, readLines, warn = FALSE)), collapse = "\n"), algo = "md5"), 1, 7), 16L))
 alt_ordner <- Sys.glob(file.path(out_dir, "lib", "gw-datenexplorer-*"))
@@ -21,7 +21,7 @@ if (identical(alt, neu)) {
   cat("Frontend-Version unveraendert (", neu, "), Dateien aktualisiert\n", sep = "")
   quit(save = "no", status = 0)
 }
-ausgaben <- file.path(out_dir, c("Datenexplorer_app.html", "Datenexplorer_einbettung.json", "Datenexplorer.html"))
+ausgaben <- file.path(out_dir, c("Datenexplorer_app.html", "Datenexplorer_einbettung.json", "Datenexplorer.html", "Datenexplorer_kurz.json"))
 for (f in ausgaben[file.exists(ausgaben)]) {
   text <- readLines(f, warn = FALSE, encoding = "UTF-8")
   for (a in setdiff(alt, neu)) text <- gsub(paste0("gw-datenexplorer-", a), paste0("gw-datenexplorer-", neu), text, fixed = TRUE)

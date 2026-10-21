@@ -2512,7 +2512,7 @@ fig_kurve <- htmlwidgets::onRender(fig_kurve, paste0("function(el, x) { GWDatene
 # nach lib/gw-datenexplorer-<version>/, die Einbettung listet es mit. Die
 # Version folgt dem Inhalt, damit Browser nach Aenderungen neu laden.
 # Gleiche Formel in deploy/frontend_tauschen.R (Frontend-Deploy ohne Neuaufbau).
-frontend_dateien <- file.path("frontend", c("datenexplorer.js", "datenexplorer.css"))
+frontend_dateien <- file.path("frontend", c("datenexplorer.js", "datenexplorer.css", "kurzansicht.js", "kurzansicht.css"))
 frontend_version <- paste0("1.", strtoi(substr(digest::digest(
   paste(unlist(lapply(frontend_dateien, readLines, warn = FALSE)), collapse = "\n"), algo = "md5"), 1, 7), 16L))
 gw_frontend <- htmltools::htmlDependency("gw-datenexplorer", frontend_version,
@@ -2590,6 +2590,71 @@ einbettung <- list(
 )
 jsonlite::write_json(einbettung, file.path(out_dir, "Datenexplorer_einbettung.json"), auto_unbox = TRUE)
 cat("Datenexplorer-Einbettung gespeichert in:", file.path(out_dir, "Datenexplorer_einbettung.json"), "\n")
+
+## Startansicht (Grav-Plugin: Konfiguration «kurzansicht»): schlichte Karte und
+## Kurve des neuesten Jahres, ohne Plotly, wenige KB. Gezeichnet von
+## frontend/kurzansicht.js; der volle Datenexplorer laedt erst auf Klick.
+## Gezeigt werden die Standorte mit Messung in der Startwoche (Zahl im Kreis)
+## und die regelmaessig messenden des Jahres (ohne aktuelle Messung: «?»).
+kurz_jahr <- neuestes_jahr
+kurz_snap <- map_snapshots %>% filter(jahr == kurz_jahr, week == start_woche) %>% arrange(Ort)
+kurz_dj <- daten_korr %>% filter(year == kurz_jahr, !is.na(growth)) %>% arrange(date)
+kurz_regel <- alle_orte[as.integer(regelmaessig_je_jahr[[kurz_jahr]]) + 1L]
+kurz_orte <- sort(union(as.character(kurz_snap$Ort), kurz_regel))
+kurz_tag <- function(d) format(d, "%d.%m.%Y")
+kurz_punkte <- lapply(kurz_orte, function(o) {
+  s <- kurz_snap[as.character(kurz_snap$Ort) == o, ]
+  d <- kurz_dj[as.character(kurz_dj$Ort) == o, ]
+  pos <- if (nrow(s)) s[1, ] else if (nrow(d)) d[nrow(d), ] else standorte_alle[standorte_alle$Ort == o, ][1, ]
+  letzte <- if (nrow(d)) d[nrow(d), ] else NULL
+  list(ort = o, lon = round(pos$lon, 4), lat = round(pos$lat, 4),
+       wert = if (nrow(s)) round(s$growth[1]) else NULL,
+       tage = if (nrow(s)) s$daysold[1] else NULL,
+       afc = if (nrow(s) && !is.na(s$afc[1])) round(s$afc[1]) else NULL,
+       letzte_datum = if (!is.null(letzte)) kurz_tag(letzte$date) else NULL,
+       letzte_wert = if (!is.null(letzte)) round(letzte$growth) else NULL)
+})
+kurz_kurven <- lapply(kurz_orte, function(o) {
+  d <- kurz_dj[as.character(kurz_dj$Ort) == o, ] %>% arrange(weeknum, date)
+  list(ort = o, farbe = unname(site_farben[[o]]),
+       punkte = unname(lapply(seq_len(nrow(d)), function(k) list(d$weeknum[k], round(d$growth[k]), format(d$date[k], "%d.%m.")))))
+})
+kurz_mittel <- kurz_dj %>% group_by(weeknum) %>% summarise(m = mean(growth, na.rm = TRUE), n = n(), .groups = "drop")
+kurz_monate <- lapply(1:12, function(m) {
+  tag1 <- as.Date(sprintf("%s-%02d-01", kurz_jahr, m))
+  list(round(as.numeric(tag1 - montag_woche1_jahr(kurz_jahr)) / 7 + 1, 2), format(tag1, "%m"))
+})
+# Kartengrund (Kantone, Seen) als eigene Datei mit Inhaltskennung im Namen: der
+# Browser behaelt sie im Cache, die JSON-Datei bleibt klein
+kurz_grund <- webp_bild(kartenbild_hintergrund, verlustfrei = TRUE)$source
+kurz_grund_typ <- sub("^data:image/([a-z]+);base64,.*$", "\\1", kurz_grund)
+kurz_grund_bytes <- base64enc::base64decode(sub("^data:[^,]+,", "", kurz_grund))
+kurz_grund_name <- paste0("kurz_karte_", substr(digest::digest(kurz_grund_bytes, algo = "md5", serialize = FALSE), 1, 10), ".", kurz_grund_typ)
+unlink(setdiff(Sys.glob(file.path(out_dir, "kurz_karte_*")), file.path(out_dir, kurz_grund_name)))
+writeBin(kurz_grund_bytes, file.path(out_dir, kurz_grund_name))
+kurz_lib <- paste0("lib/gw-datenexplorer-", frontend_version, "/")
+kurzansicht <- list(
+  stand = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z"),
+  css = I(paste0(kurz_lib, "kurzansicht.css")),
+  js = I(paste0(kurz_lib, "kurzansicht.js")),
+  daten = list(
+    jahr = kurz_jahr, kw = start_woche, heute_kw = heutige_woche,
+    von = kurz_tag(montag_von_woche(kurz_jahr, start_woche)),
+    bis = kurz_tag(karten_stand(kurz_jahr, start_woche)),
+    letzte_messung = kurz_tag(max(kurz_dj$date)),
+    erstellt = kurz_tag(Sys.Date()),
+    karte = list(bild = kurz_grund_name, lon = round(lon_range, 5), lat = round(lat_range, 5),
+                 verhaeltnis = round(karten_scaleratio, 5)),
+    punkte = kurz_punkte,
+    kurven = kurz_kurven,
+    mittel = unname(lapply(seq_len(nrow(kurz_mittel)), function(k) list(kurz_mittel$weeknum[k], round(kurz_mittel$m[k]), kurz_mittel$n[k]))),
+    referenz = unname(lapply(seq_len(nrow(standardkurven)), function(k)
+      list(standardkurven$weeknum[k], round(standardkurven[["Durchschnitt...700.m.ü.M...tiefgründig..frisch"]][k])))),
+    monate = kurz_monate
+  )
+)
+jsonlite::write_json(kurzansicht, file.path(out_dir, "Datenexplorer_kurz.json"), auto_unbox = TRUE, null = "null", na = "null")
+cat("Startansicht gespeichert in:", file.path(out_dir, "Datenexplorer_kurz.json"), "(", length(kurz_orte), "Standorte )\n")
 
 ########################################################################
 ## 5. Statische Vorschauseite (Klick-zum-Laden) ------------------------
