@@ -13,10 +13,10 @@
   var TEXTE = {
     de: {
       titel: 'Graswachstum', kw: 'KW', letzte: 'letzte Messung', aktualisiert: 'aktualisiert',
-      erkunden: 'Interaktiv erkunden', einheit: 'kg TS/ha/Tag',
+      erkunden: 'Interaktiv erkunden', regen: 'Niederschlagsmengen anzeigen', regen_titel: 'Niederschlag der letzten 28 Tage im Datenexplorer', einheit: 'kg TS/ha/Tag',
       zahl: 'Zahl = Graswachstum in kg TS/ha/Tag', grau: 'grauer Kreis = Messung einige Tage alt',
       frage: '? = diese Woche keine Messung', gemessen: 'gemessen', vor: 'vor', tagen: 'Tagen', heute: 'heute', gestern: 'gestern',
-      keine: 'diese Woche keine Messung', zuletzt: 'zuletzt', zeigen: 'Klicken: im Datenexplorer zeigen', antippen: 'Nochmals antippen: im Datenexplorer zeigen',
+      keine: 'diese Woche keine Messung', zuletzt: 'zuletzt', zeigen: 'Klicken: Kurve unten hervorheben', antippen: 'Antippen: Kurve unten hervorheben', loesen: 'Nochmals klicken: alle Kurven zeigen',
       mittel: 'Mittel aller Standorte', referenz: 'Durchschnitt Mittelland (langjährig)', woche: 'Woche ab',
       mehr_titel: 'Mehr entdecken im Datenexplorer',
       mehr_text: 'Jede Kalenderwoche seit 2024, alle Standorte, Wetter- und Bodenkarten, Vergleiche mit anderen Jahren und Berichte für Ihren Ort.',
@@ -32,10 +32,10 @@
     },
     fr: {
       titel: 'Croissance de l’herbe', kw: 'sem.', letzte: 'dernière mesure', aktualisiert: 'mis à jour',
-      erkunden: 'Explorer en interactif', einheit: 'kg MS/ha/jour',
+      erkunden: 'Explorer en interactif', regen: 'Afficher les précipitations', regen_titel: 'Précipitations des 28 derniers jours dans l’explorateur', einheit: 'kg MS/ha/jour',
       zahl: 'Chiffre = croissance en kg MS/ha/jour', grau: 'cercle gris = mesure de quelques jours',
       frage: '? = pas de mesure cette semaine', gemessen: 'mesuré le', vor: 'il y a', tagen: 'jours', heute: 'aujourd’hui', gestern: 'hier',
-      keine: 'pas de mesure cette semaine', zuletzt: 'dernière', zeigen: 'Cliquer : afficher dans l’explorateur', antippen: 'Toucher encore : afficher dans l’explorateur',
+      keine: 'pas de mesure cette semaine', zuletzt: 'dernière', zeigen: 'Cliquer : mettre en évidence la courbe', antippen: 'Toucher : mettre en évidence la courbe', loesen: 'Cliquer encore : toutes les courbes',
       mittel: 'Moyenne de tous les sites', referenz: 'Moyenne Plateau (pluriannuelle)', woche: 'semaine du',
       mehr_titel: 'Découvrir plus dans l’explorateur de données',
       mehr_text: 'Chaque semaine depuis 2024, tous les sites, cartes météo et sol, comparaisons avec d’autres années et rapports pour votre lieu.',
@@ -77,7 +77,8 @@
     var basis = opt.basis || '';
     var voll = opt.voll || function () {};
     var vorladen = opt.vorladen || function () {};
-    var farbe = {}, namenEls = [], hervorOrt = null;
+    // fixOrt: per Klick festgehaltener Standort, Zeigen hebt nur voruebergehend hervor
+    var farbe = {}, namenEls = [], hervorOrt = null, fixOrt = null;
     d.kurven.forEach(function (k) { farbe[k.ort] = k.farbe; });
 
     el.innerHTML = '';
@@ -110,11 +111,18 @@
         if (knopf) knopf.removeAttribute('aria-busy');
       });
     }
-    var haupt = h('button', 'gwk-knopf gwk-knopf--haupt', null, kopf);
+    var knopfLeiste = h('div', 'gwk-knoepfe', null, kopf);
+    var haupt = h('button', 'gwk-knopf gwk-knopf--haupt', null, knopfLeiste);
     haupt.type = 'button';
     haupt.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17l5-5 4 4 8-8M15 8h5v5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     h('span', null, T.erkunden, haupt);
     vollKnopf(haupt, '');
+    var regen = h('button', 'gwk-knopf gwk-knopf--regen', null, knopfLeiste);
+    regen.type = 'button';
+    regen.title = T.regen_titel;
+    regen.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 16a4 4 0 0 1-.6-7.95A5.5 5.5 0 0 1 17 7.5a3.5 3.5 0 0 1 .5 6.97M8 19l-1 2M12 18l-1 3M16 19l-1 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    h('span', null, T.regen, regen);
+    vollKnopf(regen, 'ebene=niederschlag&tage=28&kw=' + d.kw);
     var status = h('p', 'gwk-status', T.wird_geladen, wurzel);
     status.setAttribute('role', 'status');
     status.hidden = true;
@@ -169,7 +177,7 @@
         z.push(T.keine);
         if (p.letzte_datum) z.push(T.zuletzt + ' ' + p.letzte_datum + ': ' + p.letzte_wert + ' ' + T.einheit);
       }
-      z.push(letzterZeiger === 'touch' ? T.antippen : T.zeigen);
+      z.push(fixOrt === p.ort ? T.loesen : letzterZeiger === 'touch' ? T.antippen : T.zeigen);
       z.forEach(function (t, i) { h('span', i === z.length - 1 ? 'gwk-tipp-hinweis' : null, t, tipp); });
       tipp.hidden = false;
       var fr = karteFig.getBoundingClientRect(), kr = x.kreis.getBoundingClientRect();
@@ -180,6 +188,21 @@
       hervorheben(p.ort);
     }
     function versteckeTipp() { tipp.hidden = true; tippOrt = null; hervorheben(null); }
+    // Klick auf Standort: Kurve festhalten bzw. wieder loesen, kein Wechsel in den Datenexplorer
+    function festhalten(ort) {
+      fixOrt = fixOrt === ort ? null : ort;
+      hervorheben(null);
+      namenEls.forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.ort === fixOrt ? 'true' : 'false'); });
+      punktEls.forEach(function (x) { x.g.setAttribute('aria-pressed', x.p.ort === fixOrt ? 'true' : 'false'); });
+      // Kurve ausserhalb des Bildschirms (Handy): hinscrollen, damit die Hervorhebung sichtbar ist
+      if (fixOrt) {
+        var r = kurveFig.getBoundingClientRect();
+        if (r.top > window.innerHeight - 120) {
+          var ruhig = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+          kurveFig.scrollIntoView({ block: 'nearest', behavior: ruhig ? 'auto' : 'smooth' });
+        }
+      }
+    }
     punktEls.forEach(function (x) {
       x.g.addEventListener('pointerdown', function (e) { letzterZeiger = e.pointerType; });
       x.g.addEventListener('pointerenter', function (e) { if (e.pointerType === 'mouse') { letzterZeiger = 'mouse'; zeigeTipp(x); vorladen(); } });
@@ -187,16 +210,20 @@
       x.g.addEventListener('focus', function () { zeigeTipp(x); });
       x.g.addEventListener('blur', versteckeTipp);
       x.g.addEventListener('click', function () {
-        // Touch: erster Tipp zeigt die Angaben, der zweite oeffnet den Datenexplorer
-        if (letzterZeiger !== 'mouse' && tippOrt !== x.p.ort) { zeigeTipp(x); vorladen(); return; }
-        oeffnen('standort=' + encodeURIComponent(x.p.ort));
+        festhalten(x.p.ort);
+        if (fixOrt || letzterZeiger === 'mouse') zeigeTipp(x); else versteckeTipp();
       });
       x.g.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); oeffnen('standort=' + encodeURIComponent(x.p.ort)); }
-        if (e.key === 'Escape') versteckeTipp();
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); festhalten(x.p.ort); zeigeTipp(x); }
+        if (e.key === 'Escape') { if (fixOrt) festhalten(fixOrt); versteckeTipp(); }
       });
     });
-    document.addEventListener('pointerdown', function (e) { if (!tipp.hidden && !karteFig.contains(e.target)) versteckeTipp(); });
+    // Klick ausserhalb von Karte, Kurve und Namen: Tipp weg und Kurve wieder loesen
+    document.addEventListener('pointerdown', function (e) {
+      if (karteFig.contains(e.target) || kurveFig.contains(e.target) || namen.contains(e.target)) return;
+      if (!tipp.hidden) versteckeTipp();
+      if (fixOrt) festhalten(fixOrt);
+    });
 
     // Legende der Karte
     var leg = h('p', 'gwk-legende', null, wurzel);
@@ -306,6 +333,7 @@
     document.addEventListener('pointerdown', function (e) { if (!kurveFig.contains(e.target)) kurveWeg(); });
 
     function hervorheben(ort) {
+      ort = ort || fixOrt;
       hervorOrt = ort;
       Object.keys(linien).forEach(function (o) {
         linien[o].classList.toggle('gwk-blass', !!ort && o !== ort);
@@ -315,20 +343,21 @@
       namenEls.forEach(function (b) { b.classList.toggle('gwk-an', b.dataset.ort === ort); });
     }
 
-    // Namen unter der Kurve: Zeigen hebt hervor, Klick oeffnet den Standort im Datenexplorer
+    // Namen unter der Kurve: Zeigen hebt hervor, Klick haelt die Kurve fest
     var namen = h('ul', 'gwk-namen', null, wurzel);
     d.kurven.forEach(function (k) {
       if (!k.punkte.length) return;
       var li = h('li', null, null, namen), b = h('button', 'gwk-name', null, li);
       b.type = 'button';
       b.dataset.ort = k.ort;
+      b.setAttribute('aria-pressed', 'false');
       h('i', null, null, b).style.background = k.farbe;
       b.appendChild(document.createTextNode(k.ort));
       b.addEventListener('pointerenter', function () { hervorheben(k.ort); vorladen(); });
       b.addEventListener('pointerleave', function () { hervorheben(null); });
       b.addEventListener('focus', function () { hervorheben(k.ort); });
       b.addEventListener('blur', function () { hervorheben(null); });
-      b.addEventListener('click', function () { oeffnen('standort=' + encodeURIComponent(k.ort), b); });
+      b.addEventListener('click', function () { festhalten(k.ort); });
       namenEls.push(b);
     });
     [['gwk-name--mittel', T.mittel], ['gwk-name--ref', T.referenz]].forEach(function (e) {

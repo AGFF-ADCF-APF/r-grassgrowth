@@ -16,6 +16,10 @@
 .gwk-knopf svg { width: 20px; height: 20px; }
 .gwk-knopf--haupt { background: var(--gwk-gruen); color: #fff; box-shadow: 0 2px 8px rgba(47, 107, 98, .25); }
 .gwk-knopf--haupt:hover { background: var(--gwk-gruen-dunkel); border-color: var(--gwk-gruen-dunkel); }
+.gwk-knoepfe { display: flex; flex-wrap: wrap; gap: 8px; }
+/* zweiter Einstieg: Niederschlag, blau statt gruen */
+.gwk-knopf--regen { --gwk-blau: #1e5a8c; border-color: var(--gwk-blau); color: var(--gwk-blau); background: #eef4fa; }
+.gwk-knopf--regen:hover { background: var(--gwk-blau); color: #fff; }
 .gwk-knopf:focus-visible, .gwk-weg:focus-visible, .gwk-name:focus-visible, .gwk-punkt:focus-visible { outline: 3px solid #f2b705; outline-offset: 2px; }
 .gwk [aria-busy="true"] { cursor: progress; opacity: .75; }
 .gwk-status { margin: 0 0 8px; color: var(--gwk-gruen); font-weight: 600; }
@@ -30,6 +34,7 @@
 .gwk-punkt--frage text { fill: #666; }
 .gwk-punkt:hover circle, .gwk-punkt:focus circle { stroke: var(--gwk-gruen); stroke-dasharray: none; }
 .gwk-punkt.gwk-blass { opacity: .35; }
+.gwk-punkt[aria-pressed="true"] circle { stroke: var(--gwk-gruen); stroke-dasharray: none; stroke-width: 7; }
 
 .gwk-tipp { position: absolute; z-index: 5; max-width: 270px; padding: 8px 10px; border-radius: 8px; background: #fff; border: 1px solid #cfd8d4;
   box-shadow: 0 4px 14px rgba(0, 0, 0, .14); font-size: 0.8125rem; line-height: 1.35; pointer-events: none; }
@@ -71,6 +76,7 @@
 .gwk-name { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 4px 10px; border-radius: 999px; border: 1px solid transparent;
   background: none; color: var(--gwk-tinte); font-size: 0.8125rem; cursor: pointer; }
 .gwk-name:hover, .gwk-name.gwk-an { border-color: #cfd8d4; background: #f4f7f5; }
+.gwk-name[aria-pressed="true"] { border-color: var(--gwk-gruen); font-weight: 600; }
 .gwk-name i { width: 14px; height: 3px; border-radius: 2px; flex: none; }
 .gwk-name--fest { cursor: default; color: var(--gwk-grau); }
 .gwk-name--mittel i { height: 3px; background: repeating-linear-gradient(90deg, #000 0 5px, transparent 5px 8px); }
@@ -97,7 +103,8 @@
 .gwk-liste ul { margin: 6px 0 0; padding-left: 1.2em; }
 
 @media (max-width: 560px) {
-  .gwk-kopf .gwk-knopf--haupt { width: 100%; justify-content: center; }
+  .gwk-knoepfe { width: 100%; }
+  .gwk-kopf .gwk-knopf { flex: 1 1 100%; justify-content: center; }
   .gwk-mehr { padding: 16px; margin-left: 0; margin-right: 0; }
 }
 @media (prefers-reduced-motion: reduce) { .gwk * { transition: none !important; } }
