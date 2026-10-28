@@ -1080,6 +1080,9 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     hilfe: ['M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0', 'M12 17l0 .01', 'M12 13.5a1.5 1.5 0 0 1 1 -1.5a2.6 2.6 0 1 0 -3 -4'],
     runter: ['M6 9l6 6l6 -6'],
     zurueck: ['M5 12l14 0', 'M5 12l6 6', 'M5 12l6 -6'],
+    // Griff wie in Grafikprogrammen (Tabler grip-horizontal): zwei Reihen Punkte
+    griff: ['M5 9m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0', 'M5 15m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0', 'M12 9m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0',
+      'M12 15m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0', 'M19 9m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0', 'M19 15m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0'],
     drehen: ['M10 3h4a1 1 0 0 1 1 1v16a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1v-16a1 1 0 0 1 1 -1z', 'M17 7a4 4 0 0 1 4 4', 'M19 9l2 2l2 -2'],
     play: ['M7 4v16l13 -8z'],
     pause: ['M6 5m0 1a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1z', 'M14 5m0 1a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1z']
@@ -1183,8 +1186,8 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     text: ['Damit die Kurve beim Start übersichtlich bleibt, zeigt sie in der Gruppenansicht nur Standorte mit mindestens 8 Kalenderwochen mit Messung im gewählten Jahr. Das Mittel der Gruppe (schwarz gestrichelt) wird weiterhin aus allen Standorten berechnet.',
       'In der Legende blendet «+ … weitere (selten gemessen)» die übrigen Standorte mit Daten im Jahr ein, «Nur regelmässig messende Standorte» blendet sie wieder aus.'] });
   dokuEintrag({ id: 'ansicht', gruppe: 'Erste Schritte', titel: 'Ansicht anpassen (Desktop)',
-    alias: ['Grösse von Karte und Kurve verschieben'], stichworte: 'griff ziehen schieben pfeile gross klein vollbild ebenen einklappen layout tastatur',
-    text: ['Zwischen Karte und Kurve liegt ein Griff: Ziehen verschiebt die Grenze, der Pfeil nach oben macht die Kurve ganz gross, der Pfeil nach unten die Karte. Ein Doppelklick auf den Griff stellt die Standardgrösse wieder her. Mit der Tastatur: Griff anwählen, dann Pfeiltasten, Pos1 oder Ende.',
+    alias: ['Grösse von Karte und Kurve verschieben'], stichworte: 'griff ziehen schieben klicken zuklappen aufklappen pfeile gross klein vollbild ebenen einklappen layout tastatur',
+    text: ['Zwischen Karte und Kurve liegt ein Griff (die Lasche mit den Punkten): Ziehen verschiebt die Grenze, ein Klick ohne Ziehen klappt die Kurve zu, ein weiterer Klick wieder auf. Der Pfeil nach oben macht die Kurve ganz gross, der Pfeil nach unten die Karte. Mit der Tastatur: Griff anwählen, Enter klappt zu oder auf, Pfeiltasten, Pos1 oder Ende verschieben.',
       'Die Icon-Leiste links blendet die Ebenen und die Kurve ein und aus. Auf der Website vergrössert «Vollbild» den Datenexplorer auf den ganzen Bildschirm; Escape oder der Knopf beenden das Vollbild.'] });
   dokuEintrag({ id: 'handy', gruppe: 'Erste Schritte', titel: 'Auf dem Handy',
     stichworte: 'mobile smartphone teaser detail querformat quer drehen zurueck geste regionen',
@@ -1897,7 +1900,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     if (ort !== null) ortText = ort;
     if (kartenleisteZusatzEl) {
       kartenleisteZusatzEl.innerHTML = '';
-      if (ortText || koordText) kartenleisteZusatzEl.innerHTML = [ortText !== wertKurzText ? ortText : '', koordText ? koordText + ' (LV95)' : ''].filter(Boolean).join(' · ');
+      if (ortText || koordText) kartenleisteZusatzEl.innerHTML = [ortText !== wertKurzText ? ortText : '', koordText ? 'LV95 ' + koordText : ''].filter(Boolean).join(' · ');
     }
     aktualisiereLupe();
   }
@@ -2486,7 +2489,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     setzeWertText('Wert am Cursor: –');
     koordinatenEl = document.createElement('div');
     koordinatenEl.className = 'gw-layer-wert-anzeige gw-layer-wert-zusatz';
-    koordinatenEl.textContent = 'Koordinaten: –';
+    koordinatenEl.textContent = 'Koordinaten LV95: –';
     ortschaftEl = document.createElement('div');
     ortschaftEl.className = 'gw-layer-wert-anzeige gw-layer-wert-zusatz';
     ortschaftEl.textContent = 'Ort: –';
@@ -2604,7 +2607,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     if (!wertAnzeigeEl && !erzwingen) return;
     var lv95 = wgs84ZuLv95(lon, lat);
     if (koordinatenEl) {
-      koordinatenEl.textContent = 'Koordinaten: ' + Math.round(lv95.e) + ' / ' + Math.round(lv95.n) + ' (LV95)';
+      koordinatenEl.textContent = 'Koordinaten LV95: ' + Math.round(lv95.e) + ' / ' + Math.round(lv95.n);
     }
     if (ortschaftEl) ortschaftEl.innerHTML = 'Ort: ' + LADE_PUNKTE_HTML;
     setzeOrtUndKoordinaten(Math.round(lv95.e) + ' / ' + Math.round(lv95.n), LADE_PUNKTE_HTML);
@@ -2633,7 +2636,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   }
   function versteckeWertAnzeige() {
     setzeWertText('Wert am Cursor: –');
-    if (koordinatenEl) koordinatenEl.textContent = 'Koordinaten: –';
+    if (koordinatenEl) koordinatenEl.textContent = 'Koordinaten LV95: –';
     if (ortschaftEl) ortschaftEl.textContent = 'Ort: –';
     setzeOrtUndKoordinaten('', '');
     aktualisierePfeilPosition(null);
@@ -2966,7 +2969,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
           zeilen.push('Wert: ausserhalb der Schweiz');
         }
       }
-      zeilen.push('Koordinaten: ' + Math.round(lv95.e) + ' / ' + Math.round(lv95.n) + ' (LV95)');
+      zeilen.push('Koordinaten LV95: ' + Math.round(lv95.e) + ' / ' + Math.round(lv95.n));
       var hoverText = zeilen.join('<br>');
       if (fadenkreuzTraceIdx === null) {
         Plotly.addTraces(growthMapGd, {
@@ -3275,7 +3278,11 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     layerLegendeBox = document.createElement('div');
     layerLegendeBox.className = 'gw-layer-legende';
     layerLegendeBox.style.display = 'none';
-    layerPanel.appendChild(layerLegendeBox);
+    // Legende (Farbverlauf, Wert am Cursor, Koordinaten, Ort) samt Zeitraum-Regler ganz oben, noch vor «Ebenen»
+    var legendeOben = document.createElement('div');
+    legendeOben.className = 'gw-legende-oben';
+    [meteoFensterWrap, erholungWrap, layerLegendeBox].forEach(function(x) { if (x) legendeOben.appendChild(x); });
+    layerPanel.insertBefore(legendeOben, layerPanel.firstChild);
     mapControlsContainer.appendChild(layerPanel);
     aktualisiereLayerVerfuegbarkeit();
     aktualisiereLayerLegende();
@@ -3331,6 +3338,10 @@ GWDatenexplorer.kurve = function(el, x, daten) {
   kurveGriff.setAttribute('aria-valuemin', '0');
   kurveGriff.setAttribute('aria-valuemax', '100');
   kurveGriff.tabIndex = 0;
+  kurveGriff.title = 'Ziehen: Grösse ändern · Klicken: Kurve ein- oder ausklappen';
+  var kurveGriffPunkte = gwIcon('griff');
+  kurveGriffPunkte.setAttribute('class', 'gw-icon gw-kurve-griff-punkte');
+  kurveGriff.appendChild(kurveGriffPunkte);
   kurveGriff.appendChild(gwIcon('kurve'));
   var kurveGriffTitel = document.createElement('span');
   kurveGriffTitel.className = 'gw-kurve-griff-titel';
@@ -3514,6 +3525,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     if (max > 0) kurveAnteil = kurveHoehe / max;
     kurveInhalt.style.height = kurveHoehe + 'px';
     seiteEl.classList.toggle('gw-kurve-zu', kurveHoehe < 1);
+    kurveGriff.setAttribute('aria-expanded', String(kurveHoehe >= 1));
     seiteEl.classList.toggle('gw-kurve-voll', max > 0 && kurveHoehe >= max - 1);
     kurveGriff.setAttribute('aria-valuenow', String(max ? Math.round(100 * kurveHoehe / max) : 0));
     if (appLeisteKurveEl) appLeisteKurveEl.classList.toggle('aktiv', kurveHoehe > 0);
@@ -3535,8 +3547,13 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     kurveGriffInfo.textContent = text;
     if (detailOffen && detailTitelEl) detailTitelEl.textContent = auswahlText() + ' · ' + selectedYear;
   }
-  // Ziehen (Maus, Finger, Stift); ohne Bewegung = Klick: aus einem Extrem
-  // zurueck zur Standardhoehe. Doppelklick: Standardhoehe.
+  // Ziehen (Maus, Finger, Stift); ohne Bewegung = Klick: Kurve zuklappen bzw.
+  // wieder auf die vorige Hoehe aufklappen (Enter/Leertaste ebenso).
+  var kurveVorher = null;
+  function kurveUmschalten() {
+    if ((kurveHoehe || 0) >= 1) { kurveVorher = kurveHoehe; setzeKurvenHoehe(0); }
+    else setzeKurvenHoehe(kurveVorher && kurveVorher >= 80 ? Math.min(kurveVorher, kurveMax()) : kurveStandard());
+  }
   (function() {
     var startY = 0, startH = 0, bewegt = false, aktiv = false;
     kurveGriff.addEventListener('pointerdown', function(evt) {
@@ -3556,10 +3573,7 @@ GWDatenexplorer.kurve = function(el, x, daten) {
       aktiv = false;
       seiteEl.classList.remove('gw-griff-zieht');
       var max = kurveMax();
-      if (!bewegt) {
-        if (kurveHoehe < 1 || kurveHoehe >= max - 1) setzeKurvenHoehe(kurveStandard());
-        return;
-      }
+      if (!bewegt) { kurveUmschalten(); return; }
       // In die Extreme einrasten
       if (kurveHoehe < 70) setzeKurvenHoehe(0);
       else if (kurveHoehe > max - 70) setzeKurvenHoehe(max);
@@ -3567,8 +3581,8 @@ GWDatenexplorer.kurve = function(el, x, daten) {
     }
     kurveGriff.addEventListener('pointerup', ende);
     kurveGriff.addEventListener('pointercancel', ende);
-    kurveGriff.addEventListener('dblclick', function() { setzeKurvenHoehe(kurveStandard()); });
     kurveGriff.addEventListener('keydown', function(evt) {
+      if (evt.key === 'Enter' || evt.key === ' ') { evt.preventDefault(); kurveUmschalten(); return; }
       var h = kurveHoehe || 0, max = kurveMax();
       var neu = evt.key === 'ArrowUp' ? h + 40 : evt.key === 'ArrowDown' ? h - 40 : evt.key === 'Home' ? max : evt.key === 'End' ? 0 : null;
       if (neu === null) return;

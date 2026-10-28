@@ -44,6 +44,10 @@
 .gw-meteo-fenster-label { font-size: 11px; color: #555; margin-bottom: 3px; }
 .gw-meteo-fenster input[type=range] { width: 100%; margin: 0; }
 .gw-layer-legende { margin-top: 10px; }
+/* Legende ganz oben im Ebenen-Kasten, abgesetzt von den Ebenen darunter */
+.gw-legende-oben { margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid #e5e5e5; }
+.gw-legende-oben:empty, .gw-legende-oben:not(:has(> :not([style*="display: none"]))) { display: none; }
+.gw-legende-oben .gw-meteo-fenster:first-child, .gw-legende-oben .gw-layer-legende:first-child { margin-top: 0; }
 .gw-layer-legende-balken-wrap { position: relative; padding-bottom: 7px; }
 .gw-layer-legende-balken { height: 12px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.15); }
 .gw-legende-pfeil { position: absolute; top: 12px; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-bottom: 6px solid #333; transform: translateX(-50%); pointer-events: none; }
@@ -174,7 +178,11 @@ html.gw-app-seite, html.gw-app-seite body { margin: 0; height: 100%; overflow: h
 #gw-seite button:focus-visible, .gw-doku button:focus-visible, .gw-export button:focus-visible { outline: 2px solid var(--gw-akzent, #4a90d9); outline-offset: 2px; }
 .gw-kurve-griff { display: none; }
 #gw-seite.gw-app > .gw-kurvenbereich { grid-row: 3; grid-column: 1; border-top: 1px solid #ddd; background: white; min-width: 0; }
-#gw-seite.gw-app .gw-kurve-griff:before { content: ""; position: absolute; top: 3px; left: 50%; width: 36px; height: 3px; margin-left: -18px; border-radius: 2px; background: #ccc; }
+/* Griff wie in Grafikprogrammen: Punkte oben in der Mitte (statt Strich) */
+.gw-kurve-griff-punkte { display: none; }
+#gw-seite.gw-app .gw-kurve-griff-punkte { display: block; position: absolute; top: -10px; left: 50%; width: 48px; height: 20px; margin-left: -24px; padding: 1px 10px; box-sizing: border-box;
+  color: #888; stroke-width: 3.2; background: #fff; border: 1px solid #cfcfcf; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+#gw-seite.gw-app .gw-kurve-griff:hover .gw-kurve-griff-punkte, #gw-seite.gw-griff-zieht .gw-kurve-griff-punkte { color: var(--gw-akzent-dunkel, #2a6fbf); border-color: var(--gw-akzent, #4a90d9); }
 .gw-kurve-griff-titel { font-weight: 600; }
 .gw-kurve-griff-info { color: #666; font-size: 13px; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #gw-seite.gw-app .gw-kurve-inhalt > .gw-title { display: none; }
